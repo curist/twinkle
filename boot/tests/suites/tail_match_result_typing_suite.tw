@@ -155,8 +155,6 @@ pub fn suite() runner.Suite {
           phys_plan.empty(),
           repr0.typed_fields,
           repr0.typed_payloads,
-          repr0.capture_abi,
-          repr0.param_abi.typeable_return,
         ).funcs
         try assert.equal(repr0.param_abi.typeable_return.keys().len(), 0)
 
@@ -170,8 +168,6 @@ pub fn suite() runner.Suite {
           phys_plan.empty(),
           repr1.typed_fields,
           repr1.typed_payloads,
-          repr1.capture_abi,
-          repr1.param_abi.typeable_return,
         ).funcs
 
         try assert.ok(

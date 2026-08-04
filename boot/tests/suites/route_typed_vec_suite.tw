@@ -265,15 +265,7 @@ pub fn suite() runner.Suite {
         // Empty payload set: the payload binding stays boxed, so the gather
         // receiver is not typed, the swap must not fire, and no slot retypes.
         empty: Dict<String, Bool> = Dict.new()
-        routed_empty := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          phys_plan.empty(),
-          empty,
-          empty,
-          Dict.new(),
-          Dict.new(),
-        ).funcs
+        routed_empty := route_typed_vectors(p.funcs, p.builtins, phys_plan.empty(), empty, empty).funcs
         try assert.ok(
           !funcs_call_fid(routed_empty, gid),
           "gather_i64 must not fire without the typed payload set",
@@ -281,15 +273,7 @@ pub fn suite() runner.Suite {
 
         // Real set: the payload read `v` and the gather RESULT retype to PVecI64,
         // and the gather call routes to gather_i64.
-        routed := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          phys_plan.empty(),
-          tf,
-          tp,
-          Dict.new(),
-          Dict.new(),
-        ).funcs
+        routed := route_typed_vectors(p.funcs, p.builtins, phys_plan.empty(), tf, tp).funcs
         try assert.ok(funcs_call_fid(routed, gid), "expected gather to route to gather_i64")
         try assert.ok(
           pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),
@@ -309,15 +293,7 @@ pub fn suite() runner.Suite {
 
         // Baseline: empty plan AND empty legacy typeable_return -> boxed, the
         // call-result slot must NOT be PVecI64.
-        boxed := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          phys_plan.empty(),
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-        ).funcs
+        boxed := route_typed_vectors(p.funcs, p.builtins, phys_plan.empty(), Dict.new(), Dict.new()).funcs
         boxed_slot := try find_slot_info(boxed, caller.func_index, caller.slot).ok_or(
           "call-result slot missing after boxed route",
         )
@@ -331,15 +307,7 @@ pub fn suite() runner.Suite {
         plan := phys_plan.empty()
         plan.returns["${gid}"] = ElemRepr.I64
 
-        routed := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          plan,
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-        ).funcs
+        routed := route_typed_vectors(p.funcs, p.builtins, plan, Dict.new(), Dict.new()).funcs
         routed_slot := try find_slot_info(routed, caller.func_index, caller.slot).ok_or(
           "call-result slot missing after plan-driven route",
         )
@@ -357,15 +325,7 @@ pub fn suite() runner.Suite {
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
 
-        routed := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          phys_plan.empty(),
-          tf,
-          tp,
-          Dict.new(),
-          Dict.new(),
-        )
+        routed := route_typed_vectors(p.funcs, p.builtins, phys_plan.empty(), tf, tp)
 
         typed_slots := 0
 
@@ -412,15 +372,7 @@ pub fn suite() runner.Suite {
         plan := phys_plan.empty()
         plan.returns["${gid}"] = ElemRepr.I32
 
-        routed := route_typed_vectors(
-          p.funcs,
-          p.builtins,
-          plan,
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-          Dict.new(),
-        )
+        routed := route_typed_vectors(p.funcs, p.builtins, plan, Dict.new(), Dict.new())
 
         g_routed := try find_func(routed.funcs, "g").ok_or("g missing after route")
         phys_ret := try g_routed.phys_return.ok_or("g must expose a typed phys_return")

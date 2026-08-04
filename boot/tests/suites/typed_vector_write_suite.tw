@@ -37,8 +37,6 @@ fn route_src(src: String) Result<RouteInputs, String> {
     phys_plan.empty(),
     Dict.new(),
     Dict.new(),
-    Dict.new(),
-    Dict.new(),
   ).funcs
   .Ok(.{ funcs: routed, builtins: artifacts.builtins })
 }

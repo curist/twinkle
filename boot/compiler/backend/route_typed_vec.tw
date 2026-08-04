@@ -137,49 +137,49 @@ fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
   }
 }
 
-// Reconstruct route's `typeable_return` map (func_id.id String -> family
-// mono_key) from `plan.returns` (func_id.id String -> ElemRepr). Transitional
-// scaffolding: a map -> PhysPlan -> map round-trip. The target is route
-// querying `phys_plan.return_repr` at its decision sites directly; this
-// adapter and its caller-side legacy `typeable_return` parameter are dropped
-// once every call site moves to the point query (Task 9).
-fn typeable_return_from_plan(plan: phys_plan.PhysPlan) Dict<String, String> {
-  out: Dict<String, String> = Dict.new()
-
-  for key, elem in plan.returns {
-    out[key] = mono_key_of_elem_repr(elem)
-  }
-
-  out
+// Eligibility oracle. compute_eligible_v and its helpers ask exactly two
+// questions of the return/capture facts, both in family `mono_key` currency (so
+// the consumers' `fam_key == fam.mono_key` comparisons stay byte-for-byte
+// unchanged): "what family is this function's typed return?" and "what family is
+// this function's capture at index i?". The route path answers from the
+// whole-program `PhysPlan` (FromPlan); the analyses that COMPUTE the plan's
+// inputs answer from their in-flight maps (FromMaps), preserving today's exact
+// map semantics. Matched inside the helpers rather than dispatched through a
+// record of closures, so the hot analysis path allocates one oracle per query
+// group instead of a fresh closure per op.
+type EligSource = {
+  FromPlan(phys_plan.PhysPlan),
+  FromMaps(Dict<String, Dict<Int, String>>, Dict<String, String>),
 }
 
-// Reconstruct route's `capture_abi` map (func_id.id String -> capture index ->
-// family mono_key) from `plan.captures` (keyed by phys_plan.abi_key,
-// "${func_id}:${index}"). Transitional scaffolding: re-parses the interpolated
-// key with split/from_string, dropped once route queries `phys_plan.capture_repr`
-// at its decision sites directly (Task 9).
-fn capture_abi_from_plan(plan: phys_plan.PhysPlan) Dict<String, Dict<Int, String>> {
-  out: Dict<String, Dict<Int, String>> = Dict.new()
-
-  for key, elem in plan.captures {
-    parts := key.split(":")
-
-    if parts.len() == 2 {
-      func_key := parts[0]
-      idx := Int.from_string(parts[1]).unwrap_or(-1)
-
-      if idx >= 0 {
-        cur := case out[func_key] {
-          .Some(m) => m,
-          .None => Dict.new(),
-        }
-        cur[idx] = mono_key_of_elem_repr(elem)
-        out[func_key] = cur
-      }
-    }
+// The family mono_key of `fid`'s typed return, or `.None`. FromPlan derives it
+// from the plan's ElemRepr (same value the dropped typeable_return_from_plan
+// adapter produced); FromMaps is the exact `typeable_return["${fid}"]` lookup.
+fn elig_return_family(src: EligSource, fid: Int) String? {
+  case src {
+    .FromPlan(plan) => case plan.return_repr(fid) {
+      .Some(e) => .Some(mono_key_of_elem_repr(e)),
+      .None => .None,
+    },
+    .FromMaps(_, typeable_return) => typeable_return["${fid}"],
   }
+}
 
-  out
+// The family mono_key of `fid`'s capture at `idx`, or `.None`. FromPlan derives
+// it from the plan's ElemRepr (same value the dropped capture_abi_from_plan
+// adapter produced); FromMaps is the exact nested `capture_abi["${fid}"][idx]`
+// lookup.
+fn elig_capture_family(src: EligSource, fid: Int, idx: Int) String? {
+  case src {
+    .FromPlan(plan) => case plan.capture_repr(fid, idx) {
+      .Some(e) => .Some(mono_key_of_elem_repr(e)),
+      .None => .None,
+    },
+    .FromMaps(capture_abi, _) => case capture_abi["${fid}"] {
+      .Some(m) => m[idx],
+      .None => .None,
+    },
+  }
 }
 
 pub fn route_typed_vectors(
@@ -188,16 +188,13 @@ pub fn route_typed_vectors(
   plan: phys_plan.PhysPlan,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  typeable_return: Dict<String, String>,
 ) RoutedModule {
-  // Route's return/capture typing now comes from `plan`, not the separately
-  // passed `capture_abi` / `typeable_return` legacy maps (kept as parameters
-  // until Task 9 drops them). Behavior-preserving because the real prepare.tw
-  // path builds `plan` via phys_plan_from_analysis(repr) from these SAME maps,
-  // so the derived maps below round-trip to the originals.
-  route_capture_abi := capture_abi_from_plan(plan)
-  route_typeable_return := typeable_return_from_plan(plan)
+  // Route's return/capture typing comes from `plan` via the eligibility oracle;
+  // the func-id-keyed return/capture facts are no longer dual-carried as separate
+  // legacy maps. The real prepare.tw path builds `plan` via
+  // phys_plan_from_analysis(repr) from the analysis maps, so the oracle's FromPlan
+  // answers match what the dropped adapters produced.
+  src: EligSource = .FromPlan(plan)
   ids := route_ids(builtins)
   routed_funcs: Vector<PreparedFunc> = []
   swapped_sites: Vector<SwappedSetSite> = []
@@ -207,16 +204,7 @@ pub fn route_typed_vectors(
   acc_plan := plan
 
   for pf in funcs {
-    r := route_func(
-      pf,
-      ids,
-      builtins,
-      typed_fields,
-      typed_payloads,
-      route_capture_abi,
-      route_typeable_return,
-      plan,
-    )
+    r := route_func(pf, ids, builtins, typed_fields, typed_payloads, src, plan)
     routed_funcs = .append(r.func)
     swapped_sites = .concat(r.sites)
 
@@ -237,14 +225,14 @@ pub fn route_typed_vectors(
 // typed sources iff also consumed typed-only.
 fn collect_typed_return_call_results(
   body: PreparedExpr,
-  typeable_return: Dict<String, String>,
+  src: EligSource,
   fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   case body {
     .Let(s, op, rest) => {
       acc2 := case op {
-        .ACall(.AGlobalFunc(fid), _) => case typeable_return["${fid.id}"] {
+        .ACall(.AGlobalFunc(fid), _) => case src.elig_return_family(fid.id) {
           .Some(ret_key) => if ret_key == fam.mono_key {
             acc.append(s.id)
           } else {
@@ -253,21 +241,21 @@ fn collect_typed_return_call_results(
           .None => acc,
         },
         .AIf(_, then_e, else_e) => {
-          a := collect_typed_return_call_results(then_e, typeable_return, fam, acc)
-          collect_typed_return_call_results(else_e, typeable_return, fam, a)
+          a := collect_typed_return_call_results(then_e, src, fam, acc)
+          collect_typed_return_call_results(else_e, src, fam, a)
         },
         .AMatch(_, arms) => {
           for arm in arms {
-            acc = collect_typed_return_call_results(arm.body, typeable_return, fam, acc)
+            acc = collect_typed_return_call_results(arm.body, src, fam, acc)
           }
           acc
         },
-        .ALoop(inner) => collect_typed_return_call_results(inner, typeable_return, fam, acc),
-        .ADefer(inner) => collect_typed_return_call_results(inner, typeable_return, fam, acc),
+        .ALoop(inner) => collect_typed_return_call_results(inner, src, fam, acc),
+        .ADefer(inner) => collect_typed_return_call_results(inner, src, fam, acc),
         _ => acc,
       }
 
-      collect_typed_return_call_results(rest, typeable_return, fam, acc2)
+      collect_typed_return_call_results(rest, src, fam, acc2)
     },
     _ => acc,
   }
@@ -278,53 +266,52 @@ fn collect_typed_return_call_results(
 // such a slot is not an escape (M1b): the trampoline downcasts it to PVecI64.
 fn collect_relaxed_captures(
   body: PreparedExpr,
-  capture_abi: Dict<String, Dict<Int, String>>,
+  src: EligSource,
   fam: ElemFamily,
   acc: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
   case body {
     .Let(_, op, rest) => {
-      acc = relaxed_captures_op(op, capture_abi, fam, acc)
-      collect_relaxed_captures(rest, capture_abi, fam, acc)
+      acc = relaxed_captures_op(op, src, fam, acc)
+      collect_relaxed_captures(rest, src, fam, acc)
     },
     _ => acc,
   }
 }
 
-fn relaxed_captures_op(
-  op: PreparedOp,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  fam: ElemFamily,
-  acc: Dict<Int, Bool>,
-) Dict<Int, Bool> {
+fn relaxed_captures_op(op: PreparedOp, src: EligSource, fam: ElemFamily, acc: Dict<Int, Bool>) Dict<
+  Int,
+  Bool,
+> {
   case op {
     .AMakeClosure(fid, free_vars) => {
-      case capture_abi["${fid.id}"] {
-        .Some(indices) => {
-          for i, fam_key in indices {
-            if fam_key == fam.mono_key and i >= 0 and i < free_vars.len() {
-              acc[free_vars[i].id] = true
-            }
-          }
-        },
-        .None => {},
+      // Bounded 0..len iteration: the oracle answers .None for any index with no
+      // typed capture, so this visits the same (index, family) pairs the Dict
+      // iteration did. acc is a Set, so iteration order is irrelevant.
+      for i in range(free_vars.len()) {
+        case src.elig_capture_family(fid.id, i) {
+          .Some(fk) => if fk == fam.mono_key and i < free_vars.len() {
+            acc[free_vars[i].id] = true
+          },
+          .None => {},
+        }
       }
 
       acc
     },
     .AIf(_, then_e, else_e) => {
-      acc = collect_relaxed_captures(then_e, capture_abi, fam, acc)
-      collect_relaxed_captures(else_e, capture_abi, fam, acc)
+      acc = collect_relaxed_captures(then_e, src, fam, acc)
+      collect_relaxed_captures(else_e, src, fam, acc)
     },
     .AMatch(_, arms) => {
       for arm in arms {
-        acc = collect_relaxed_captures(arm.body, capture_abi, fam, acc)
+        acc = collect_relaxed_captures(arm.body, src, fam, acc)
       }
 
       acc
     },
-    .ALoop(inner) => collect_relaxed_captures(inner, capture_abi, fam, acc),
-    .ADefer(inner) => collect_relaxed_captures(inner, capture_abi, fam, acc),
+    .ALoop(inner) => collect_relaxed_captures(inner, src, fam, acc),
+    .ADefer(inner) => collect_relaxed_captures(inner, src, fam, acc),
     _ => acc,
   }
 }
@@ -332,22 +319,20 @@ fn relaxed_captures_op(
 // The slot ids of this function's own capture params that are typeable in the
 // active family `fam` per capture_abi — these get retyped so the trampoline
 // downcast + typed index reads apply inside the closure body.
-fn typeable_capture_slots(
-  pf: PreparedFunc,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  fam: ElemFamily,
-) Vector<Int> {
+fn typeable_capture_slots(pf: PreparedFunc, src: EligSource, fam: ElemFamily) Vector<Int> {
   out: Vector<Int> = []
 
-  case capture_abi["${pf.func_id.id}"] {
-    .Some(indices) => {
-      for i, fam_key in indices {
-        if fam_key == fam.mono_key and i >= 0 and i < pf.captures.len() {
-          out = .append(pf.captures[i].id)
-        }
-      }
-    },
-    .None => {},
+  // Bounded 0..len iteration (the oracle answers .None for untyped indices). The
+  // old code iterated the capture_abi Dict in insertion order; this yields
+  // ascending index order, but the only consumer (cap_slots) folds the result
+  // into a Set (eligible_v[sid] = true), so the order change is not observable.
+  for i in range(pf.captures.len()) {
+    case src.elig_capture_family(pf.func_id.id, i) {
+      .Some(fk) => if fk == fam.mono_key {
+        out = .append(pf.captures[i].id)
+      },
+      .None => {},
+    }
   }
 
   out
@@ -384,8 +369,7 @@ fn compute_eligible_v(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  typeable_return: Dict<String, String>,
+  src: EligSource,
 ) EligibleSets {
   empty: EligibleSets = .{ eligible_v: Dict.new(), eligible_b: Dict.new(), has_phys_return: false }
 
@@ -402,20 +386,20 @@ fn compute_eligible_v(
   // Slots bound from a call whose return family is fi.fam (its physical result is
   // that family's PVec), e.g. `keys := column.as_ints(col)`. A typed source when
   // consumed typed-only.
-  call_result_sids := collect_typed_return_call_results(pf.body, typeable_return, fi.fam, [])
+  call_result_sids := collect_typed_return_call_results(pf.body, src, fi.fam, [])
 
   // M1b: this function's own capture params typeable in fi.fam (retyped below),
   // and the free-var slots whose capture into another closure typeable in fi.fam
   // is not an escape (relaxed). A capture-only closure (e.g. a sort comparator
   // reading a captured key column) has no candidates/field/payload reads, so
   // include the capture set in the "anything to do" check.
-  cap_slots := typeable_capture_slots(pf, capture_abi, fi.fam)
-  relaxed := collect_relaxed_captures(pf.body, capture_abi, fi.fam, Dict.new())
+  cap_slots := typeable_capture_slots(pf, src, fi.fam)
+  relaxed := collect_relaxed_captures(pf.body, src, fi.fam, Dict.new())
 
   // A function whose return family is fi.fam gets a physical typed return ABI (the
   // typed-return bridge); its returned slot is retyped below like any other typed
   // source, so the return coercion becomes a no-op instead of a box.
-  has_phys_return := case typeable_return["${pf.func_id.id}"] {
+  has_phys_return := case src.elig_return_family(pf.func_id.id) {
     .Some(ret_key) => ret_key == fi.fam.mono_key,
     .None => false,
   }
@@ -654,8 +638,7 @@ fn route_func(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  typeable_return: Dict<String, String>,
+  src: EligSource,
   plan: phys_plan.PhysPlan,
 ) FuncRoute {
   cur := pf
@@ -664,17 +647,7 @@ fn route_func(
   return_plan: Vector<ReturnPlanEntry> = []
 
   for fi in families_ids(builtins) {
-    r := route_func_family(
-      cur,
-      fi,
-      ids,
-      builtins,
-      typed_fields,
-      typed_payloads,
-      capture_abi,
-      typeable_return,
-      plan,
-    )
+    r := route_func_family(cur, fi, ids, builtins, typed_fields, typed_payloads, src, plan)
     cur = r.func
     sites = .concat(r.sites)
     slot_plan = .concat(r.slot_plan)
@@ -691,20 +664,10 @@ fn route_func_family(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-  capture_abi: Dict<String, Dict<Int, String>>,
-  typeable_return: Dict<String, String>,
+  src: EligSource,
   plan: phys_plan.PhysPlan,
 ) FuncRoute {
-  sets := compute_eligible_v(
-    pf,
-    fi,
-    ids,
-    builtins,
-    typed_fields,
-    typed_payloads,
-    capture_abi,
-    typeable_return,
-  )
+  sets := compute_eligible_v(pf, fi, ids, builtins, typed_fields, typed_payloads, src)
   eligible_v := sets.eligible_v
   eligible_b := sets.eligible_b
   has_phys_return := sets.has_phys_return
@@ -818,18 +781,13 @@ pub fn materialize_slot_repr(
 ) Dict<String, Bool> {
   out: Dict<String, Bool> = Dict.new()
 
+  // Analysis path: the oracle answers from these in-flight maps (exactly today's
+  // map lookups), built once and shared across every func/family query.
+  src: EligSource = .FromMaps(capture_abi, typeable_return)
+
   for pf in funcs {
     for fi in families_ids(builtins) {
-      sets := compute_eligible_v(
-        pf,
-        fi,
-        ids,
-        builtins,
-        typed_fields,
-        typed_payloads,
-        capture_abi,
-        typeable_return,
-      )
+      sets := compute_eligible_v(pf, fi, ids, builtins, typed_fields, typed_payloads, src)
 
       for sid in sets.eligible_v.keys() {
         out["${pf.func_id.id}:${sid}"] = true
@@ -1818,17 +1776,13 @@ pub fn slot_typed_after_route(
 ) Bool {
   hit := false
 
+  // Empty capture map + threaded return: this query cannot see the capture ABI
+  // (it is computed from these very queries), matching the old empty-capture_abi
+  // call exactly.
+  src: EligSource = .FromMaps(Dict.new(), typeable_return)
+
   for fi in families_ids(builtins) {
-    sets := compute_eligible_v(
-      pf,
-      fi,
-      ids,
-      builtins,
-      typed_fields,
-      typed_payloads,
-      Dict.new(),
-      typeable_return,
-    )
+    sets := compute_eligible_v(pf, fi, ids, builtins, typed_fields, typed_payloads, src)
 
     if sets.eligible_v.has(slot) {
       hit = true
@@ -2480,6 +2434,10 @@ fn scan_func_producers_consumers(
   stats := stats0
   ok_map: Dict<String, Dict<Int, Bool>> = Dict.new()
 
+  // Analysis path: return facts come from the in-flight typeable_return map
+  // (capture facts are unused by collect_typed_return_call_results).
+  src: EligSource = .FromMaps(Dict.new(), typeable_return)
+
   for fam in all_families() {
     cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
 
@@ -2493,7 +2451,7 @@ fn scan_func_producers_consumers(
       c.v
     }
 
-    for s in collect_typed_return_call_results(pf.body, typeable_return, fam, []) {
+    for s in collect_typed_return_call_results(pf.body, src, fam, []) {
       producer_vs = .append(s)
     }
 
