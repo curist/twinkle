@@ -252,9 +252,10 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv, plan: phys
   pf
 }
 
-// Override the physical repr of every MutVec handle slot and freeze result across
-// the module. A no-op for functions with no mutvec op (the common case), so the
-// flag-off pipeline is unaffected.
+// Override the physical repr of every MutVec handle slot across the module (the
+// freeze *result* slot is route-owned, not touched here — see the module doc and
+// assign_in_func). A no-op for functions with no mutvec op (the common case), so
+// the flag-off pipeline is unaffected.
 pub fn assign_mutvec_reprs(
   funcs: Vector<PreparedFunc>,
   env: ResolvedEnv,

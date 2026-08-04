@@ -563,3 +563,16 @@ The native-sort plan is the near-term path to make `order_by` fast by using dens
 1. native sort proves the dense typed working-set performance model;
 2. typed vector representation reduces the cost of getting into those working sets and improves idiomatic numeric code generally;
 3. optimizer/lowering connects idiomatic source to the fast representation without user-visible escape hatches.
+
+---
+
+## Physical representation ownership contract
+
+- Three layers, one pipeline: `MonoType` (semantic) → `ReprKind` (physical repr) → `ValType`. `ReprKind` is the single repr vocabulary — `TypedVec(ElemRepr)` is live, and `ValType` is a pure function of it via `wasm_type_of_repr`. The invariant **`SlotInfo.wasm_type == wasm_type_of_repr(repr, mono)`** holds at every slot.
+- `route_typed_vec` **decides** the durable typed-vector physical sites (its `compute_eligible_v` fixpoint) and **applies** them by setting `repr = TypedVec(elem)` and deriving `wasm_type`; it never writes `wasm_type` independently.
+- `PhysPlan` is the **prepare-time decision record** (an `ElemRepr` per func-id-keyed site: slots, returns, captures — each single-family because functions monomorphize). Downstream reads `SlotInfo.repr` / `wasm_type` (consistent by the invariant), not the plan object.
+- Record-field / variant-payload physical family is **not** in `PhysPlan`. It is Layer-1 structural, owned by `wasm_layout`, derived per-instantiation from the concrete `(TypeId, type args)` — a `(TypeId, field)` key cannot name it. Field/payload *eligibility* lives in the `typed_fields` / `typed_payloads` presence maps.
+- `typed_param_abi` computes use/support facts and the return/capture PhysPlan projection; it does not mutate slots.
+- `mutvec_repr` owns only temporary `MutVec(ElemRepr)` handles (every family in `mutvec_families()`), setting `repr` and deriving `wasm_type` the same way. MutVec freeze results are typed producers in route, not frozen-slot overrides in mutvec_repr.
+- `emit` reads `repr` / `wasm_type` (trustworthy by the invariant) and inserts coercions only at declared boundaries. It re-derives **nothing** from `MonoType`; picking a family from a concrete element type in `wasm_layout` is permitted Layer-1 structural derivation.
+- `verify` asserts the invariant per slot, and rejects physical mismatches per edge class (non-coercing edges hard-fail; coercing edges must have an emitter coercion) before Wasm validation.

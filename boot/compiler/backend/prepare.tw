@@ -253,8 +253,8 @@ pub fn prepare_backend_with_mutable_decisions(
   funcs3 := routed.funcs
 
   // The materialized physical plan (returns/captures plus the typed-vector slot
-  // overrides route just applied). Not consumed downstream yet; later tasks query
-  // it in place of the drifting slot oracle.
+  // overrides route just applied). Consumed below by mutvec_repr, which guards
+  // against clobbering a route-owned typed slot.
   routed_plan := routed.plan
 
   // Remap the mutable-codegen decision for every site routing swapped
