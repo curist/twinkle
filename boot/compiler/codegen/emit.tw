@@ -23,9 +23,9 @@ use compiler.codegen.emit.anyref.{
 }
 use compiler.codegen.emit.arrays as array_emit
 use compiler.codegen.emit.bridge_funcs.{
-  emit_host_read_file_result_helper, emit_iterator_next_helper, emit_option_from_variant_helper,
-  emit_sum_to_variant_helper, emit_variant_to_sum_helper, iterator_next_helper_sym,
-  option_from_variant_helper_sym,
+  emit_host_read_file_result_helper, emit_host_read_file_string_result_helper,
+  emit_iterator_next_helper, emit_option_from_variant_helper, emit_sum_to_variant_helper,
+  emit_variant_to_sum_helper, iterator_next_helper_sym, option_from_variant_helper_sym,
 }
 use compiler.codegen.emit.calls as call_emit
 use compiler.codegen.emit.closures as closure_emit
@@ -81,6 +81,7 @@ fn extern_boundary_val_type(ty: MonoType, env: ResolvedEnv) ValType {
     .Vector(.Byte) => .Ref(true, .Named("rt_types__Array")),
     .Vector(.String) => .Ref(true, .Named("rt_types__Array")),
     .Result(.Vector(.Byte), .String) => .Ref(true, .Named("rt_types__Variant")),
+    .Result(.String, .String) => .Ref(true, .Named("rt_types__Variant")),
     _ => val_type_of_mono(ty, env),
   }
 }
@@ -192,6 +193,8 @@ pub fn emit_module(
   }
 
   funcs = .append(emit_host_read_file_result_helper(backend)).append(
+    emit_host_read_file_string_result_helper(backend),
+  ).append(
     emit_option_from_variant_helper(MonoType.String, backend),
   ).append(emit_option_from_variant_helper(MonoType.Int, backend)).append(
     emit_option_from_variant_helper(MonoType.Float, backend),

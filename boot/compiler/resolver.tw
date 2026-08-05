@@ -2051,6 +2051,7 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
     .Vector(.Byte) => true,
     .Vector(.String) => true,
     .Result(.Vector(.Byte), .String) => true,
+    .Result(.String, .String) => true,
     // Diverging host fns (e.g. proc.exit) emit no Wasm result, like Void.
     .Never => true,
     _ => false,

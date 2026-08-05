@@ -707,7 +707,7 @@ type DirEntry = .{ name: String, kind: EntryKind }
 |----------|-----------|-------------|
 | `read_bytes` | `fn(path: String) Vector<Byte>!FsError` | Read raw file bytes |
 | `read_buffer` | `fn(path: String) Buffer!FsError` | Read raw file bytes directly into a linear-memory buffer |
-| `read_text` | `fn(path: String) String!FsError` | Read UTF-8 text (`read_bytes` + decode) |
+| `read_text` | `fn(path: String) String!FsError` | Read UTF-8 text straight to a `String` (host-validated; skips the `Vector<Byte>` round-trip). Use `read_bytes` for raw bytes |
 | `write_text` | `fn(path: String, content: String) !FsError` | Write string to file |
 | `write_bytes` | `fn(path: String, bytes: Vector<Byte>) !FsError` | Write bytes to file |
 | `write_buffer` | `fn(path: String, buf: Buffer) !FsError` | Write bytes directly from a linear-memory buffer |

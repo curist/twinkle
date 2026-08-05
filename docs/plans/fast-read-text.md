@@ -183,6 +183,29 @@ embedded `fs.tw` source string changes — so the gate is behavioral, not diff:
   token; documented as an internal host↔wrapper protocol. Acceptable given the
   op has a single wrapper caller.
 
+## Outcome (landed)
+
+`fs.read_text` over the boot tree dropped from ~100 ms to **~18 ms** (~5.6×) —
+faster even than the `read_buffer` path, since it avoids the `Buffer`
+alloc/free and the double disk read. Self-host fixed point reached
+(stage3 == stage4); boot suite green (3430 passed); functional cases verified
+(valid → `.Ok`, invalid → `FsError.InvalidUtf8`, missing → `FsError.Other`).
+
+The flagged call-boundary risk **materialized as a boot/stage0 representation
+asymmetry**, resolved as follows:
+
+- **Stage0** represents *every* sum type as the erased `$rt_types__Variant`, so
+  the host's fully-formed variant crosses with **no conversion** — only the
+  `resolve.rs` extern-safety allowlist entry was needed (no builtin/emit change).
+- **Boot** represents `Result` as a *typed sum struct*, so a raw erased variant
+  from the host is a GC type mismatch (the observed "type incompatibility when
+  transforming from/to JS"). Boot needed a dedicated erased→typed helper
+  (`emit_host_read_file_string_result_helper`) plus a new `ExternResultConv`
+  arm and an `extern_boundary_val_type` entry mapping `Result<String,String>` to
+  `$Variant` — mirroring `read_file` but skipping the `$Array`→`$PVec` rewrite
+  (the payload is already a `String`). This is why `read_file` was special-cased
+  in the first place.
+
 ## Relationship to other plans
 
 Complementary to `mutvec-later-slices.md` Phase 4 (`PVecByte`), which unboxes the

@@ -7,7 +7,8 @@ use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
   emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, host_read_file_result_helper_sym,
-  is_builder_buffer_arg, is_builder_seed, is_builder_void_push, is_host_vector_arg,
+  host_read_file_string_result_helper_sym, is_builder_buffer_arg, is_builder_seed,
+  is_builder_void_push, is_host_vector_arg,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
@@ -114,13 +115,19 @@ fn extern_param_needs_to_array(ty: MonoType) Bool {
   }
 }
 
-type ExternResultConv = { ConvNone, ConvFromArray, ConvFromReadFileResult }
+type ExternResultConv = {
+  ConvNone,
+  ConvFromArray,
+  ConvFromReadFileResult,
+  ConvFromReadFileStringResult,
+}
 
 fn extern_result_conv(return_ty: MonoType?) ExternResultConv {
   case return_ty {
     .Some(.Vector(.Byte)) => .ConvFromArray,
     .Some(.Vector(.String)) => .ConvFromArray,
     .Some(.Result(.Vector(.Byte), .String)) => .ConvFromReadFileResult,
+    .Some(.Result(.String, .String)) => .ConvFromReadFileStringResult,
     _ => .ConvNone,
   }
 }
@@ -164,6 +171,12 @@ fn emit_direct_call(
           .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call("rt_arr__from_read_file_result"))
           .append(.Call(host_read_file_result_helper_sym)),
+        // read_file_string: the host returns an erased Variant whose payload[0]
+        // is already a String (no $Array→$PVec rewrite needed); the helper
+        // builds the typed Result<String, String> struct.
+        .ConvFromReadFileStringResult => out
+          .append(.RefCast(true, .Named("rt_types__Variant")))
+          .append(.Call(host_read_file_string_result_helper_sym)),
         .ConvNone => out,
       }
 

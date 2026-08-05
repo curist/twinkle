@@ -344,6 +344,7 @@ fn builtin_abi(name: String) AbiContract {
     "dict$remove" => abi([dict_n(), .Anyref], [dict_()]),
     "dict$remove_in_place" => abi([dict_n(), .Anyref], [dict_()]),
     "host_read_file" => abi([str_n()], [variant_null()]),
+    "host_read_file_string" => abi([str_n()], [variant_null()]),
     "host_write_file" => abi([str_n(), str_n()], []),
     "host_write_bytes" => abi([str_n(), arr_n()], []),
     "host_mkdirp" => abi([str_n()], []),
@@ -716,6 +717,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("int$from_string", .Some("Int.from_string")),
     intr("float$from_string", .Some("Float.from_string")),
     rt("host_read_file", "twinkle_runtime", "read_file", .None),
+    rt("host_read_file_string", "twinkle_runtime", "read_file_string", .None),
     rt("host_write_file", "twinkle_runtime", "write_file", .None),
     rt_closure(
       "host_write_bytes",

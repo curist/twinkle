@@ -3,6 +3,7 @@ use @std.buffer.{Buffer}
 
 extern twinkle_runtime {
   fn read_file(path: String) Vector<Byte>!String
+  fn read_file_string(path: String) String!String
   fn write_file(path: String, text: String) Void
   fn write_bytes(path: String, bytes: Vector<Byte>) Void
   fn mkdirp(path: String) Void
@@ -31,12 +32,19 @@ pub fn read_bytes(path: String) Vector<Byte>!FsError {
 }
 
 /// Read a file as UTF-8 text.
+///
+/// Reads straight to a `String` via the host, skipping the `Vector<Byte>` +
+/// `String.from_utf8` round-trip. The host validates UTF-8 and signals invalid
+/// bytes with a fixed `"invalid-utf8"` error token (an internal host protocol
+/// this wrapper is the sole consumer of); any other host error is an I/O error.
 pub fn read_text(path: String) String!FsError {
-  bytes := try read_bytes(path)
-
-  case String.from_utf8(bytes) {
-    .Some(text) => .Ok(text),
-    .None => .Err(FsError.InvalidUtf8),
+  case twinkle_runtime.read_file_string(path) {
+    .Ok(text) => .Ok(text),
+    .Err(msg) => if msg == "invalid-utf8" {
+      .Err(FsError.InvalidUtf8)
+    } else {
+      .Err(FsError.Other(msg))
+    },
   }
 }
 

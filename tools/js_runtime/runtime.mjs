@@ -43,6 +43,8 @@ export class HostExit extends Error {
 // ---------------------------------------------------------------------------
 
 const textDecoder = new TextDecoder();
+// Rejects invalid UTF-8 by throwing; used to validate file bytes in read_file_string.
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 
 const PAGE_SIZE = 65536;
@@ -517,6 +519,33 @@ function makeHostImports(b, runtime) {
         const msg = `twinkle_runtime.read_file failed for '${filePath}': ${e.message}`;
         return makeResultErr(b, encodeString(b, msg));
       }
+    },
+    // Read a file straight to a GC String (Result<String, String>), skipping the
+    // Vector<Byte> trie that read_file + String.from_utf8 build. Validates UTF-8
+    // here; on invalid bytes the Err payload is the fixed "invalid-utf8" token so
+    // the sole caller (fs.read_text) can map it back to FsError.InvalidUtf8.
+    read_file_string: (pathRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      let bytes;
+      try {
+        bytes = runtime.host.readFile(filePath);
+      } catch (e) {
+        const msg = `twinkle_runtime.read_file_string failed for '${filePath}': ${e.message}`;
+        return makeResultErr(b, encodeString(b, msg));
+      }
+      try {
+        strictUtf8Decoder.decode(bytes); // validation only; result discarded
+      } catch {
+        return makeResultErr(b, encodeString(b, "invalid-utf8"));
+      }
+      let str;
+      if (bytes.length === 0) {
+        str = b.string_new(0);
+      } else {
+        ensureMemory(b, bytes.length).set(bytes);
+        str = b.bulk_string_new(bytes.length);
+      }
+      return makeResultOk(b, str);
     },
     write_file: (pathRef, contentRef) => {
       const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));

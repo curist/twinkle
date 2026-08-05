@@ -569,6 +569,15 @@ impl Resolver {
             {
                 Ok(())
             }
+            // Result<String, String> is the read_file_string return shape
+            MonoType::Named { type_id, args }
+                if *type_id == crate::types::ty::RESULT_TYPE_ID
+                    && args.len() == 2
+                    && matches!(args[0], MonoType::String)
+                    && matches!(args[1], MonoType::String) =>
+            {
+                Ok(())
+            }
             MonoType::Void if allow_void => Ok(()),
             // Diverging host fns (e.g. proc.exit) emit no Wasm result, like Void.
             MonoType::Never => Ok(()),

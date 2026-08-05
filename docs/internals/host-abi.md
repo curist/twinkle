@@ -58,7 +58,11 @@ where a parameter or result is a `Vector<…>`, inserts the `$PVec`↔`$Array`
 conversions (`rt_arr__to_array` / `rt_arr__from_array`) around the call so the
 host always sees the flat `$Array` representation. `Vector<Byte>!String`
 (the `read_file` shape) crosses as a `$Variant` and is rebuilt into the typed
-`Result` after the call. Diverging fns may be declared `Never` (emits no result).
+`Result` after the call. `String!String` (the `read_file_string` shape) likewise
+crosses as a `$Variant`; the host returns it fully formed with a `String`
+payload, so the rebuild helper only unwraps `payload[0]` into the typed `Result`
+struct (no `$Array`→`$PVec` step). Diverging fns may be declared `Never` (emits
+no result).
 
 The JS runtime provides all of `twinkle_runtime.*` from `makeHostImports`. The
 generic extern bridge can also marshal `bytes`/`strvec`/`readfile` kinds for
@@ -130,6 +134,7 @@ Declared via `extern twinkle_runtime` in the stdlib.
 | Import | Signature | Description |
 |---|---|---|
 | `twinkle_runtime.read_file` | `(ref null $String) → (ref null $Variant)` | Read file as bytes; returns `Result<Vector<Byte>, String>` |
+| `twinkle_runtime.read_file_string` | `(ref null $String) → (ref null $Variant)` | Read file straight to a host-validated `String`; returns `Result<String, String>` (Err payload `"invalid-utf8"` for invalid UTF-8, else the I/O message). Backs `fs.read_text` |
 | `twinkle_runtime.write_file` | `(ref null $String, ref null $String) → ()` | Write string to file (path, content) |
 | `twinkle_runtime.write_bytes` | `(ref null $String, ref null $Array) → ()` | Write byte array to file (path, bytes) |
 | `twinkle_runtime.mkdirp` | `(ref null $String) → ()` | Create directory and parents |
