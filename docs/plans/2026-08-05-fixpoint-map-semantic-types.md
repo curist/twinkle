@@ -470,27 +470,37 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 13: Review checkpoint — STOP and plan the next family**
 
-Do not continue to other maps yet. With the pattern and all three gates
-(byte-identical, `make stage2`, boot-test) proven on `processed`, plan the
-remaining families next, each its own task with the same gate sequence (Steps 6–12
-above). **Before typing any `Dict<Int,Bool>`, grep it for a `= false` write and
-apply the classification rule above** (any `= false` ⇒ `*Map<Bool>`, not `*Set`):
+Adopt the remaining families one task at a time, each with the same gate sequence
+(Steps 6–12 above; note the gate is `make stage2` fixed point + boot-test, **not** a
+golden-sha compare). **Before typing any `Dict<Int,Bool>`, grep it for a `= false`
+write and apply the classification rule** (any `= false` ⇒ `*Map<Bool>`, not `*Set`).
 
-1. **Genuine `LocalSet` sets** (insert-only, `= true` only — verify with grep):
-   `moves` (`ownership.tw:405/553`), `unique_locals`, per-block owned sets. Verify
-   each has no `= false` write before typing it as a set.
-2. **`BlockMap<Bool>` / `LocalMap<Bool>` bool-maps** (they *do* write `= false`, so
-   NOT sets): `prev_seen` (`= false` at `6224`), `dirty` (`= false` at `6278`).
-3. **`LocalMap<T>`** — `join_entry_ownership`/`_valid`/`_prov` results, the per-block
-   own/valid/prov values, and `merge_targeted` (note: `merge_targeted` is `pub` and
-   called with `Dict<Int,…>` literals at ~12 sites in
-   `boot/tests/suites/cfg_lattice_suite.tw` — migrating those call sites is part of
-   this task; retype its `old`/`next`/`prev` params to `LocalMap<T>` and its `MergeOut`).
-4. **`BlockMap<T>`** — the `exits` family (`exits`, `exit_valid`, `exit_prov`,
-   `exit_field_own`, `exit_path_prov`, `prev_exits`/`_valid`/`_prov`,
-   `changed_visits`) and `succ`. Nested cases read as `BlockMap<LocalMap<Int>>`.
-   Include the `field_own`/`path_prov` bespoke merges (`merge_field_own_exit`,
-   `merge_path_prov_exit`).
+**Execution status (as executed — supersedes the original outline):**
+- **F3 — DONE** (commit `6369a465`): `prev_seen`, `dirty` → `BlockMap<Bool>` (bool-maps).
+- **F4 — in progress**: `changed_visits` → `BlockMap<Int>`; `succ`, `locked_own`/`_valid`/`_prov`
+  → `BlockMap<Vector<Int>>` (independent block-keyed value maps).
+- **F5 — TODO (the coupled core):** `own`/`valid`/`prov` inner maps (`join_entry_*` results
+  + per-block values) as `LocalMap<T>` **together with** `merge_targeted` (retype its
+  `old`/`next`/`prev` params + `MergeOut` to `LocalMap<T>`) — these share the inner-map
+  type and must convert **in one task** to typecheck. Also migrate `merge_targeted`'s ~12
+  `Dict<Int,…>` call sites in `boot/tests/suites/cfg_lattice_suite.tw`.
+- **F6 — TODO (the `exits` family):** `exits`, `exit_valid`, `exit_prov`, `exit_field_own`,
+  `exit_path_prov`, `prev_exits`/`_valid`/`_prov` as nested `BlockMap<LocalMap<…>>`, plus
+  the `field_own`/`path_prov` bespoke merges (`merge_field_own_exit`, `merge_path_prov_exit`).
+  Depends on F5's inner-map types. **Use type aliases for the nested types** —
+  `type OwnExits = BlockMap<LocalMap<Int>>`, `type ValidExits = BlockMap<LocalMap<Bool>>`,
+  `type ProvExits = BlockMap<LocalMap<Vector<Int>>>` (and the deeper `exit_path_prov`) —
+  defined in `ownership.tw`. **Type aliases are confirmed supported** (spike: simple,
+  nested, and generic `type X<T> = …` aliases all compile; they are non-nominal, zero-cost,
+  interchangeable with the underlying type, and method-transparent). Aliases here are pure
+  readability — the key/value distinction is already carried by `BlockMap`/`LocalMap`; do
+  **not** use nominal wrappers for the nested types (extra alloc per nested value, and a
+  module each, for no added safety).
+
+**Deferred (separate follow-up, not this plan):** the ~30+ adjacent-analysis
+`Dict<Int,Bool>` cataloged in the [Follow-up section](#follow-up-deferred-ownershiptw-internal-setflag-maps)
+— `moves`/`unique_locals`/`suppress`/`region`/`lineage`/… → shared `LocalSet`/`BlockSet`
+(+ `LocalMap<Bool>` for `valid`), concept in the variable name, not per-concept types.
 
 Each family that iterates a map with `.keys()` and re-looks-up can keep that shape
 (`for k in m.keys() { v := m.get_or(k, dflt) }`) since the wrappers expose
