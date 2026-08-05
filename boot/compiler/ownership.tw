@@ -5153,20 +5153,17 @@ fn is_dirty(dirty: BlockMap<Bool>, id: Int) Bool {
   dirty.get_or(id, false)
 }
 
-fn succ_get(succ: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
-  case succ.get(id) {
-    .Some(v) => v,
-    .None => [],
-  }
+fn succ_get(succ: BlockMap<Vector<Int>>, id: Int) Vector<Int> {
+  succ.get_or(id, [])
 }
 
 // Transpose of blk.preds: pred_id -> [successor block ids]. Used to push the
 // dirty frontier forward during incremental re-propagation.
-fn build_succ_map(blocks: Vector<CfgBlock>) Dict<Int, Vector<Int>> {
-  succ: Dict<Int, Vector<Int>> = Dict.new()
+fn build_succ_map(blocks: Vector<CfgBlock>) BlockMap<Vector<Int>> {
+  succ: BlockMap<Vector<Int>> = block_map.block_map()
   for blk in blocks {
     for pe in blk.preds {
-      succ[pe.target.id] = succ_get(succ, pe.target.id).append(blk.id.id)
+      succ = .set(pe.target.id, succ_get(succ, pe.target.id).append(blk.id.id))
     }
   }
   succ
@@ -5407,11 +5404,8 @@ fn int_eq(a: Int, b: Int) Bool {
   a == b
 }
 
-fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
-  case locks.get(block_id) {
-    .Some(v) => v,
-    .None => [],
-  }
+fn locked_get(locks: BlockMap<Vector<Int>>, block_id: Int) Vector<Int> {
+  locks.get_or(block_id, [])
 }
 
 // After the fixpoint every reachable block is processed, so materialize/join
@@ -5789,11 +5783,11 @@ type FixState = .{
   prev_exits: Dict<Int, Dict<Int, Int>>,
   prev_exit_valid: Dict<Int, Dict<Int, Bool>>,
   prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
-  locked_own: Dict<Int, Vector<Int>>,
-  locked_valid: Dict<Int, Vector<Int>>,
-  locked_prov: Dict<Int, Vector<Int>>,
+  locked_own: BlockMap<Vector<Int>>,
+  locked_valid: BlockMap<Vector<Int>>,
+  locked_prov: BlockMap<Vector<Int>>,
   prev_seen: BlockMap<Bool>,
-  changed_visits: Dict<Int, Int>,
+  changed_visits: BlockMap<Int>,
   processed: BlockMap<Bool>,
 }
 
@@ -6039,11 +6033,8 @@ fn prev_seen_get(seen: BlockMap<Bool>, id: Int) Bool {
   seen.get_or(id, false)
 }
 
-fn change_count_get(counts: Dict<Int, Int>, id: Int) Int {
-  case counts.get(id) {
-    .Some(v) => v,
-    .None => 0,
-  }
+fn change_count_get(counts: BlockMap<Int>, id: Int) Int {
+  counts.get_or(id, 0)
 }
 
 fn validate_loop_seed(blocks: Vector<CfgBlock>, fx: FixResult, blk: CfgBlock, lid: Int) Bool {
@@ -6204,25 +6195,25 @@ fn run_fixpoint(
     .Some(w) => w.prev_exit_prov,
     .None => Dict.new(),
   }
-  locked_own: Dict<Int, Vector<Int>> = case warm_state {
+  locked_own: BlockMap<Vector<Int>> = case warm_state {
     .Some(w) => w.locked_own,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  locked_valid: Dict<Int, Vector<Int>> = case warm_state {
+  locked_valid: BlockMap<Vector<Int>> = case warm_state {
     .Some(w) => w.locked_valid,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  locked_prov: Dict<Int, Vector<Int>> = case warm_state {
+  locked_prov: BlockMap<Vector<Int>> = case warm_state {
     .Some(w) => w.locked_prov,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
   prev_seen: BlockMap<Bool> = case warm_state {
     .Some(w) => w.prev_seen,
     .None => block_map.block_map(),
   }
-  changed_visits: Dict<Int, Int> = case warm_state {
+  changed_visits: BlockMap<Int> = case warm_state {
     .Some(w) => w.changed_visits,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
   processed: BlockMap<Bool> = case warm_state {
     .Some(w) => w.processed,
@@ -6238,11 +6229,11 @@ fn run_fixpoint(
       prev_exits[blk.id.id] = Dict.new()
       prev_exit_valid[blk.id.id] = Dict.new()
       prev_exit_prov[blk.id.id] = Dict.new()
-      locked_own[blk.id.id] = []
-      locked_valid[blk.id.id] = []
-      locked_prov[blk.id.id] = []
+      locked_own = .set(blk.id.id, [])
+      locked_valid = .set(blk.id.id, [])
+      locked_prov = .set(blk.id.id, [])
       prev_seen = .set(blk.id.id, false)
-      changed_visits[blk.id.id] = 0
+      changed_visits = .set(blk.id.id, 0)
       processed = .set(blk.id.id, false)
     }
   }
@@ -6398,9 +6389,9 @@ fn run_fixpoint(
           next_own = own_merge.map
           next_valid = valid_merge.map
           next_prov = prov_merge.map
-          locked_own[blk.id.id] = own_merge.locked
-          locked_valid[blk.id.id] = valid_merge.locked
-          locked_prov[blk.id.id] = prov_merge.locked
+          locked_own = .set(blk.id.id, own_merge.locked)
+          locked_valid = .set(blk.id.id, valid_merge.locked)
+          locked_prov = .set(blk.id.id, prov_merge.locked)
 
           // field_own widening: conservative meet (key-intersection + per-path meet)
           next_field = merge_field_own_exit(old_field, st.field_own)
@@ -6440,7 +6431,7 @@ fn run_fixpoint(
             prev_exit_valid[blk.id.id] = old_valid
             prev_exit_prov[blk.id.id] = old_prov
             prev_seen = .set(blk.id.id, true)
-            changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
+            changed_visits = .set(blk.id.id, change_count_get(changed_visits, blk.id.id) + 1)
           }
           exits[blk.id.id] = next_own
           exit_valid[blk.id.id] = next_valid
