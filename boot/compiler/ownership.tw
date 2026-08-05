@@ -5149,11 +5149,8 @@ fn is_processed(processed: BlockMap<Bool>, id: Int) Bool {
   processed.get_or(id, false)
 }
 
-fn is_dirty(dirty: Dict<Int, Bool>, id: Int) Bool {
-  case dirty.get(id) {
-    .Some(v) => v,
-    .None => false,
-  }
+fn is_dirty(dirty: BlockMap<Bool>, id: Int) Bool {
+  dirty.get_or(id, false)
 }
 
 fn succ_get(succ: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
@@ -5795,7 +5792,7 @@ type FixState = .{
   locked_own: Dict<Int, Vector<Int>>,
   locked_valid: Dict<Int, Vector<Int>>,
   locked_prov: Dict<Int, Vector<Int>>,
-  prev_seen: Dict<Int, Bool>,
+  prev_seen: BlockMap<Bool>,
   changed_visits: Dict<Int, Int>,
   processed: BlockMap<Bool>,
 }
@@ -6038,11 +6035,8 @@ fn render_fix_result(fx: FixResult) String {
   )}]fo[${fixv_outer_fm(fx.exit_field_own)}]pp[${fixv_outer_pp(fx.exit_path_prov)}]"
 }
 
-fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
-  case seen.get(id) {
-    .Some(v) => v,
-    .None => false,
-  }
+fn prev_seen_get(seen: BlockMap<Bool>, id: Int) Bool {
+  seen.get_or(id, false)
 }
 
 fn change_count_get(counts: Dict<Int, Int>, id: Int) Int {
@@ -6091,15 +6085,14 @@ fn retain_valid_loop_seeds(blocks: Vector<CfgBlock>, fx: FixResult, seeds: LoopS
 // Blocks whose optimistic loop-seed was dropped this rerun (seeds -> kept).
 // Exactly the blocks whose entry assumption changes, i.e. the initial dirty set
 // for incremental re-propagation.
-fn removed_seed_blocks(blocks: Vector<CfgBlock>, seeds: LoopSeedSet, kept: LoopSeedSet) Dict<
-  Int,
+fn removed_seed_blocks(blocks: Vector<CfgBlock>, seeds: LoopSeedSet, kept: LoopSeedSet) BlockMap<
   Bool,
 > {
-  dirty: Dict<Int, Bool> = Dict.new()
+  dirty: BlockMap<Bool> = block_map.block_map()
   for blk in blocks {
     for lid in blk.entry.live {
       if loop_seed_active(seeds, blk.id.id, lid) and !loop_seed_active(kept, blk.id.id, lid) {
-        dirty[blk.id.id] = true
+        dirty = .set(blk.id.id, true)
       }
     }
   }
@@ -6162,7 +6155,7 @@ fn run_fixpoint(
   seeds: LoopSeedSet,
   label: String,
   warm_state: FixState?,
-  dirty0: Dict<Int, Bool>?,
+  dirty0: BlockMap<Bool>?,
   resolve: VariantResolver,
 ) FixRun {
   timed := timings_enabled()
@@ -6223,9 +6216,9 @@ fn run_fixpoint(
     .Some(w) => w.locked_prov,
     .None => Dict.new(),
   }
-  prev_seen: Dict<Int, Bool> = case warm_state {
+  prev_seen: BlockMap<Bool> = case warm_state {
     .Some(w) => w.prev_seen,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
   changed_visits: Dict<Int, Int> = case warm_state {
     .Some(w) => w.changed_visits,
@@ -6248,7 +6241,7 @@ fn run_fixpoint(
       locked_own[blk.id.id] = []
       locked_valid[blk.id.id] = []
       locked_prov[blk.id.id] = []
-      prev_seen[blk.id.id] = false
+      prev_seen = .set(blk.id.id, false)
       changed_visits[blk.id.id] = 0
       processed = .set(blk.id.id, false)
     }
@@ -6268,12 +6261,12 @@ fn run_fixpoint(
     .None => !cold_worklist,
     .Some(_) => false,
   }
-  dirty: Dict<Int, Bool> = Dict.new()
+  dirty: BlockMap<Bool> = block_map.block_map()
   case dirty0 {
     .Some(d) => dirty = d,
     .None => if cold_worklist {
       for blk in blocks {
-        dirty[blk.id.id] = true
+        dirty = .set(blk.id.id, true)
       }
     },
   }
@@ -6302,7 +6295,7 @@ fn run_fixpoint(
     for blk in blocks {
       do_block := all_dirty or is_dirty(dirty, blk.id.id)
       if do_block {
-        dirty[blk.id.id] = false
+        dirty = .set(blk.id.id, false)
         if timed {
           block_visits = block_visits + 1
         }
@@ -6446,7 +6439,7 @@ fn run_fixpoint(
             prev_exits[blk.id.id] = old_own
             prev_exit_valid[blk.id.id] = old_valid
             prev_exit_prov[blk.id.id] = old_prov
-            prev_seen[blk.id.id] = true
+            prev_seen = .set(blk.id.id, true)
             changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
           }
           exits[blk.id.id] = next_own
@@ -6456,7 +6449,7 @@ fn run_fixpoint(
           exit_path_prov[blk.id.id] = next_pp
           if !all_dirty {
             for s in succ_get(succ, blk.id.id) {
-              dirty[s] = true
+              dirty = .set(s, true)
             }
           }
         }
@@ -6552,7 +6545,7 @@ fn stabilize_seeds(
       } else {
         .None
       }
-      dirty0: Dict<Int, Bool>? = if allow_incremental {
+      dirty0: BlockMap<Bool>? = if allow_incremental {
         .Some(dirty)
       } else {
         .None
