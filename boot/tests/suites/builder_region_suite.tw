@@ -595,33 +595,40 @@ pub fn suite() runner.Suite {
     .test(
       "non-empty vector seed round-trips, forces a tail promotion, and leaves a shared-root base unchanged (Plan 3 vector half)",
       fn() Result<Void, String> {
-        // `base` has 40 elements (> rt_BF=32), so it has a non-null trie root
-        // and an 8-element tail. `xs` has 30 elements: appending them to the
-        // builder's 8-element tail crosses the 32-element boundary (8 + 24 =
-        // 32), forcing `promote_full_tail` to path-copy the base's shared root
-        // at least once before the remaining 6 elements land in the new tail.
-        // This is the path that is genuinely new with the vector-half rewrite
-        // (a base with 3 elements never leaves the tail, so it never shares or
-        // promotes a root) — a 40/30 split forces both.
-        base := collect x in range(40) {
+        // `base` has 70 elements, so tail_len = ((70-1) % 32) + 1 = 6 and
+        // tailoff = 70 - 6 = 64: the trie root holds indices [0,64) (a
+        // genuine 2-level root of 2 leaves) and the tail holds [64,70).
+        // `xs` has 40 elements: appending them to the builder's 6-element
+        // tail crosses the 32-element boundary at append #26 (6 + 26 = 32),
+        // forcing `promote_full_tail` to path-copy base's shared root once
+        // before the remaining 14 elements land in the fresh tail.
+        //
+        // base[31] and base[63] are BOTH root-resident (below tailoff=64)
+        // AND above the 32-element tail-boundary that promote_full_tail
+        // operates over, so asserting them unchanged after the append is
+        // exactly the check that proves the shared trie root was not
+        // mutated in place.
+        base := collect x in range(70) {
           x
         }
-        xs := collect x in range_from(40, 70) {
+        xs := collect x in range_from(70, 110) {
           x
         }
         out := seeded_append(base, xs)
-        try assert.equal(out.len(), 70)
+        try assert.equal(out.len(), 110)
         try assert.equal(out[0], 0)
-        try assert.equal(out[39], 39)
-        try assert.equal(out[40], 40)
+        try assert.equal(out[63], 63)
         try assert.equal(out[69], 69)
+        try assert.equal(out[109], 109)
 
         // The rewrite must copy the tail and only ever path-copy (never
-        // mutate) the shared root: base is still 0..39, including reads past
-        // the rt_BF=32 boundary that live in the trie root, not the tail.
-        try assert.equal(base.len(), 40)
+        // mutate) the shared root: base is still 0..69, including base[31]
+        // and base[63], which are root-resident reads past the rt_BF=32
+        // tail-promotion boundary.
+        try assert.equal(base.len(), 70)
         try assert.equal(base[0], 0)
-        try assert.equal(base[39], 39)
+        try assert.equal(base[31], 31)
+        try assert.equal(base[63], 63)
         .Ok({})
       },
     )
