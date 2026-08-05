@@ -274,3 +274,4 @@ Related historical context outside this folder:
 | [unify-js-runtime.md](unify-js-runtime.md) | Shared Node Wasm runtime (`runtime.mjs`) between library tools and SEA CLI |
 | [boot-jspi-runtime.md](boot-jspi-runtime.md) | JSPI entry ABI, async runtime path, suspending host/extern imports, browser async APIs (timer, fetch, fetch-backed VFS) |
 | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) | Fix nested variant pattern lowering — concrete type substitution for generic variant fields in both stage0 lowerer and emitter |
+| [fast-read-text.md](fast-read-text.md) | Direct-to-String `twinkle_runtime.read_file_string` host op backing `fs.read_text` — skips the `Vector<Byte>` PVec rebuild; ~5.6× faster reads. Boot needed an erased→typed `Result<String,String>` helper (stage0 uses erased variants, needed only the extern-safety allowlist) |
