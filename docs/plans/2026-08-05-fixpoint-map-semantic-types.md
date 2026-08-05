@@ -416,25 +416,42 @@ Expected: idempotent format; lint reports nothing new.
 Run: `target/twk build boot/main.tw -o /tmp/t2.wasm`
 Expected: compiles. If it errors on a residual `processed[...]`/`.get(...)` site, fix that site to the `BlockMap` API (`get_or`/`set`) and rebuild.
 
-- [ ] **Step 8: Byte-identity gate**
+- [ ] **Step 8: Establish the baseline is green BEFORE the change (measure the delta)**
 
-Run: `shasum /tmp/t2.wasm /tmp/golden.wasm`
-Expected: **equal**. `BlockMap<Bool>` delegates to the same `Dict` and `get_or(id,false)` reproduces `is_processed`'s `.None => false` exactly, so behavior — and thus emitted output — is unchanged. If it differs, stop and diff: an unequal sha means a behavior change slipped in (most likely an iteration-order or accessor-semantics mistake), not an acceptable variant.
+`processed` is used by `boot/main.tw` (the compiler itself), so this task changes
+the compiler *source* — `boot/main.tw`'s compiled output legitimately differs from
+any pre-change golden. **A golden-sha comparison is therefore NOT the gate here** (it
+only worked for Task 1 because those types were unused). The behavior-preserving gate
+is the self-host fixed point plus the test suite. Because the base branch also carries
+unrelated in-flight work, confirm the base is green *first* so a failure is
+attributable to this task:
 
-- [ ] **Step 9: Self-host fixed point**
+Run (on the commit BEFORE your change): `make stage2`
+Expected: prints `Fixed point reached: stage3 == stage4`. If the base already fails,
+stop and report — do not attribute it to this task.
+
+- [ ] **Step 9: Self-host fixed point AFTER the change (primary gate)**
 
 Run: `make stage2`
-Expected: stage3 == stage4 fixed point holds (the newly-compiled compiler rebuilds itself to a fixed point).
+Expected: `Fixed point reached: stage3 == stage4`. Because `BlockMap<Bool>` delegates
+to the same `Dict` and `get_or(id,false)` reproduces `is_processed`'s `.None => false`
+exactly, the refactored compiler must still reach the fixed point. A `make stage2`
+failure here means a behavior change slipped in (most likely an accessor-semantics or
+write-site mistake) — fix it, don't accept it.
 
-- [ ] **Step 10: Boot test suite**
+- [ ] **Step 10: Rebuild the CLI and run the boot suite**
 
-Run: `make boot-test`
-Expected: green.
+Run: `make quick-bundle-cli && make boot-test`
+Expected: green (the fixed-point compiler compiles and passes the full suite).
 
-- [ ] **Step 11: Perf gate — no regression from the wrapper**
+- [ ] **Step 11: Perf sanity — no regression from the wrapper**
 
-Run: `for i in 1 2 3; do TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/t2.wasm 2>&1 | grep -E '^\[time\] (variant_specialize|produce_mutable_decisions):'; /usr/bin/time -p target/twk build boot/main.tw -o /tmp/t2.wasm 2>&1 | grep real; done`
-Expected: medians within noise (±~15% on the phases is normal) of the Task 0 baseline. A single `BlockMap<Bool>` should be immeasurable; this step establishes the perf-gate habit for the larger families where the wrapper-allocation count grows. If a clear regression appears, record it — it informs whether later families need the alias fallback (design spec, "Wrapper-cost note").
+Run: `for i in 1 2; do TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/t2.wasm 2>&1 | grep -E '^\[time\] (variant_specialize|produce_mutable_decisions):'; done`
+Expected: medians within noise (±~15% on the phases is normal) of the Task 0 baseline
+(`variant_specialize` ~8.6–9.1s). A single `BlockMap<Bool>` should be immeasurable;
+this establishes the perf-sanity habit for the larger families where the
+wrapper-allocation count grows. If a clear regression appears, record it — it informs
+whether later families need the alias fallback (design spec, "Wrapper-cost note").
 
 - [ ] **Step 12: Commit**
 
@@ -444,8 +461,9 @@ git commit -m "refactor(ownership): type the fixpoint 'processed' map as BlockMa
 
 Replace the raw Dict<Int,Bool> 'processed' map with the BlockMap<Bool> semantic
 type (reads via get_or(id,false), writes via set(id, true|false) — 'processed' is
-a bool map, not a set: it is written =false). Backing Dict unchanged; output is
-byte-identical and make stage2 holds. First adoption of the semantic id-map types.
+a bool map, not a set: it is written =false). Backing Dict unchanged; behavior-
+preserving, so the make stage2 fixed point still holds and boot-test is green.
+First adoption of the semantic id-map types.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
