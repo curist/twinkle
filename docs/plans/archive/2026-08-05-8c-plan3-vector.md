@@ -1,5 +1,7 @@
 # 8C Plan 3 (Vector Half) — Non-Empty Vector Seeds Implementation Plan
 
+> **STATUS: LANDED 2026-08-05** (branch `8c-plan3-vector`, commits `f719c5ff` → `16e5cd95` → `f4e14575` → `c82a60cb` → `d73b2c06`). Non-empty `Vector<_>` local/param seeds now certify and lower to `vector$builder_from(base)`; self-host fixed point holds; census moved ~452→375 refold rejections into 115 certified vector regions. Regions stay boxed — **Plan 4 (typed routing)** is the next step. Archived for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the builder-region pass certify and rewrite a loop that folds a **non-empty**, locally-bound `Vector<T>` accumulator (`acc := base; for x in xs { acc = acc.append(x) }`), lowering it to `vector$builder_from(base)` → `builder_push*` → `builder_freeze` instead of leaving it as a persistent `Vector.append` loop.

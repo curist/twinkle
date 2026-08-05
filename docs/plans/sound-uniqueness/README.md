@@ -57,10 +57,11 @@ recursion) to it, so the boot compiler's owned recursive vector/record updates e
 in-place end to end; `twk ir --census --sites` renders the `variant routes` table and
 self-host reaches a fixed point. Records (Phase 8F, local record shell update
 emission) is done,
-alongside the builder-region first slice (8C Plans 1–2) plus 8C Plan 3's string half
-(non-empty string seeds now certify and rewrite); the remaining 8C follow-ups
-(non-empty *vector* seeds / typed routing / conditional folds, Plan 3 vector half + Plans 4–9)
-are still open. Phase 8C Plans 1–2 have
+alongside the builder-region first slice (8C Plans 1–2) plus 8C Plan 3 in full
+(non-empty string **and vector** seeds now certify and rewrite via `builder_from(seed)`;
+the vector half landed 2026-08-05, moving ~452→375 refold rejections into 115 certified
+vector regions, self-host green); the remaining 8C follow-ups (typed routing / conditional
+folds, Plans 4–9) are still open, with Plan 4 (typed routing) the verified next step. Phase 8C Plans 1–2 have
 landed: string and vector empty-seed accumulator loops (`acc = ""` / `acc = []`) now
 lower end-to-end to builder regions (`builder_from`/`builder_new` → `builder_extend`/
 `builder_push` → `builder_freeze`) via an ANF-to-ANF rewrite run at the top of
@@ -148,8 +149,8 @@ and nested (Phase 8B) vector indexed updates, owned `Dict.set` (Phase 8D) and
 local record shell update emission (Phase 8F), and ownership-specialized function
 variants + call-site routing (Phase 8G) are complete. Record-backed field
 collections (Phase 8H) and the Phase 8I verification gate are done; the
-codegen track is complete, with 8C Plan 3's string half landed (non-empty string
-seeds) and the remaining 8C follow-up slices (Plan 3 vector half + Plans 4–9) and the
+codegen track is complete, with 8C Plan 3 landed in full (non-empty string and vector
+seeds) and the remaining 8C follow-up slices (Plans 4–9, typed routing next) and the
 8H follow-ups (transport/`Set` in-place, field-tier recursive self-routing) still
 open. Remaining performance work moves to the storage-representation track.
 

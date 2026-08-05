@@ -10,8 +10,9 @@
 > numeric code (the Float family — see the value ranking below). **For a general
 > boot-compiler speedup, this is the wrong plan** — advance the 8C builder-region
 > follow-up slices instead (`docs/plans/sound-uniqueness/codegen/README.md` →
-> "Where the general boot-compiler win is"; Plans 3-vector / 4 / 5). Note that **8C
-> Plan 4 (typed routing)** is the *append-side* analog of MutVec's typed storage — it
+> "Where the general boot-compiler win is"; Plan 3-vector landed 2026-08-05, so the open
+> follow-ups are Plans 4 / 5, with **Plan 4 (typed routing)** the verified next step).
+> Note that **8C Plan 4 (typed routing)** is the *append-side* analog of MutVec's typed storage — it
 > unboxes `Vector<Int>` builder accumulators to flat i64 — so the two plans are the
 > two halves of the same typed-storage story (MutVec = index-write side, 8C Plan 4 =
 > append side).
