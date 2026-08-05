@@ -20,10 +20,11 @@ use compiler.field_facts as ff
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
-  SummaryTable, VariantRequirementResolver, VariantResolver, analyze_function_with_seed_resolved,
-  call_uniques_sited, empty_fix_cache, empty_summary_table, fix_cache_get, fix_cache_put,
-  summarize_function_cached, summarize_variant_resolved, summary_get, with_dedupe_helpers,
+  FixCache, LiveCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn,
+  Summary, SummaryTable, VariantRequirementResolver, VariantResolver,
+  analyze_function_with_seed_resolved, call_uniques_sited, empty_fix_cache, empty_live_cache,
+  empty_summary_table, fix_cache_get, fix_cache_put, live_cache_put, summarize_function_cached,
+  summarize_variant_resolved, summary_get, with_dedupe_helpers,
 }
 use compiler.variant_id as vid
 
@@ -46,6 +47,17 @@ fn summary_trace_enabled() Bool {
 // on the real module before the fast path is trusted.
 fn reuse_verify_enabled() Bool {
   case proc.env("TWINKLE_SUMMARY_REUSE_VERIFY") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+// When set, the summary fixpoint retains each function's computed liveness in a
+// LiveCache so later same-function passes (call_uniques in variant_specialize)
+// reuse it instead of recomputing. Off by default → empty cache → every consumer
+// recomputes exactly as before (byte-identical, no retention overhead).
+fn live_cache_enabled() Bool {
+  case proc.env("TWINKLE_LIVE_CACHE") {
     .Some(_) => true,
     .None => false,
   }
@@ -432,11 +444,11 @@ fn scc_callers(
 // processed in ascending id order.
 // run_scc threads a FixCache accumulator so the caller can collect reusable
 // members' FixResults captured during the summary fixpoint.
-type SccResult = .{ table: SummaryTable, cache: FixCache }
+type SccResult = .{ table: SummaryTable, cache: FixCache, live_cache: LiveCache }
 
 // compute_for_roots_cached returns the summary table plus the reuse cache built
 // for the candidate roots. See docs/plans/performance/fixresult-reuse-design.md.
-pub type SummaryCacheResult = .{ table: SummaryTable, fix_cache: FixCache }
+pub type SummaryCacheResult = .{ table: SummaryTable, fix_cache: FixCache, live_cache: LiveCache }
 
 fn run_scc(
   scc: Vector<Int>,
@@ -447,8 +459,11 @@ fn run_scc(
   sem: OptimizerSemantics,
   cache_ids: Dict<Int, Bool>,
   cache_in: FixCache,
+  live_in: LiveCache,
 ) SccResult {
   timed := timings_enabled()
+  lc_on := live_cache_enabled()
+  live_acc := live_in
   t0 := if timed {
     date.now()
   } else {
@@ -490,6 +505,9 @@ fn run_scc(
           .Some(true) => cache = fix_cache_put(cache, id, res.fx),
           _ => {},
         }
+      }
+      if lc_on {
+        live_acc = live_cache_put(live_acc, id, res.live)
       }
       if !same_summary(table_get(table, id), next) {
         if timed {
@@ -557,7 +575,7 @@ fn run_scc(
       )
     }
   }
-  SccResult.{ table, cache }
+  SccResult.{ table, cache, live_cache: live_acc }
 }
 
 // ── Variant (ownership-specialized) summaries ───────────────────────
@@ -1830,10 +1848,12 @@ pub fn compute_cached(
   }
 
   cache := empty_fix_cache()
+  live_cache := empty_live_cache()
   for scc in order_sccs(view, index, user_ids) {
-    r := run_scc(scc, index, user_ids, table, b, sem, cache_ids, cache)
+    r := run_scc(scc, index, user_ids, table, b, sem, cache_ids, cache, live_cache)
     table = r.table
     cache = r.cache
+    live_cache = r.live_cache
   }
   if trace {
     eprintln("[trace:summary:compute:dedupe:start]")
@@ -1842,7 +1862,7 @@ pub fn compute_cached(
   if trace {
     eprintln("[trace:summary:compute:end]")
   }
-  SummaryCacheResult.{ table, fix_cache: cache }
+  SummaryCacheResult.{ table, fix_cache: cache, live_cache }
 }
 
 // Transitive user-callee closure of `roots` (root ids included). Used to scope
@@ -1992,7 +2012,7 @@ pub fn compute_for_roots_cached(
     if run {
       run_sccs = run_sccs + 1
       run_members = run_members + scc.len()
-      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache)
+      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache, empty_live_cache())
       table = r.table
       cache = r.cache
     } else {
@@ -2016,7 +2036,7 @@ pub fn compute_for_roots_cached(
   if trace {
     eprintln("[trace:summary:roots:end]")
   }
-  SummaryCacheResult.{ table, fix_cache: cache }
+  SummaryCacheResult.{ table, fix_cache: cache, live_cache: empty_live_cache() }
 }
 
 // Like `compute_for_roots_cached`, but seeds the fixpoint from a whole-program
@@ -2193,7 +2213,7 @@ pub fn compute_for_roots_reusing(
     // fixed point) and roots keep the carried fix.
     if in_wanted and (!all_safe or root_missing_fix) {
       run_sccs = run_sccs + 1
-      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache)
+      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache, empty_live_cache())
       table = r.table
       cache = r.cache
     } else {
@@ -2229,5 +2249,5 @@ pub fn compute_for_roots_reusing(
     eprintln("[summary:reuse:verify] ok funcs=${view.functions.len()} reused=${reused}")
   }
 
-  SummaryCacheResult.{ table, fix_cache: cache }
+  SummaryCacheResult.{ table, fix_cache: cache, live_cache: empty_live_cache() }
 }

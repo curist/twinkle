@@ -638,7 +638,7 @@ fn same_live(a: Vector<Int>, b: Vector<Int>) Bool {
 }
 
 // ── Backward liveness ───────────────────────────────────────────────
-type BlockLive = .{ live_in: Vector<Int>, live_out: Vector<Int> }
+pub type BlockLive = .{ live_in: Vector<Int>, live_out: Vector<Int> }
 
 fn live_get(live: Dict<Int, BlockLive>, id: Int) BlockLive {
   case live.get(id) {
@@ -5828,13 +5828,41 @@ pub fn fix_cache_get(c: FixCache, func_id: Int) FixResult? {
   c.by_func.get(func_id)
 }
 
+// Per-function backward-liveness cache, keyed by func id. Liveness is a pure,
+// seed-independent function of a function's blocks, so a map computed by one pass
+// (the summary fixpoint) is byte-identical for any later pass over the SAME
+// pre-clone function (call_uniques in collect_groups / recursive_routes). Mirrors
+// FixCache; populated only when TWINKLE_LIVE_CACHE is set so the off-path keeps an
+// empty cache and every consumer recomputes exactly as before.
+pub type LiveCache = .{ by_func: Dict<Int, Dict<Int, BlockLive>> }
+
+pub fn empty_live_cache() LiveCache {
+  LiveCache.{ by_func: Dict.new() }
+}
+
+pub fn live_cache_put(c: LiveCache, func_id: Int, live: Dict<Int, BlockLive>) LiveCache {
+  c.by_func[func_id] = live
+  c
+}
+
+pub fn live_cache_get(c: LiveCache, func_id: Int) Dict<Int, BlockLive>? {
+  c.by_func.get(func_id)
+}
+
 // Result of summarize_seeded: the whole-function Summary plus the FixResult it
-// was derived from (so the SCC driver can cache a reusable fx).
-type SeededResult = .{ summary: Summary, fx: FixResult }
+// was derived from (so the SCC driver can cache a reusable fx), and the block
+// liveness it computed (so the driver can cache it for later same-function passes).
+type SeededResult = .{ summary: Summary, fx: FixResult, live: Dict<Int, BlockLive> }
 
 // summarize_function_cached: a generic Summary plus its fx and whether that fx is
-// analyze-equivalent (reusable). See summarize_function_cached below.
-pub type CachedSummary = .{ summary: Summary, fx: FixResult, reusable: Bool }
+// analyze-equivalent (reusable), and the liveness map it computed. See
+// summarize_function_cached below.
+pub type CachedSummary = .{
+  summary: Summary,
+  fx: FixResult,
+  reusable: Bool,
+  live: Dict<Int, BlockLive>,
+}
 
 // Diagnostics/verify: canonical serialization of a FixResult (all five fields,
 // sorted keys) so a cached fx can be compared against a fresh recompute under
@@ -6992,6 +7020,48 @@ pub fn call_uniques_sited_with_field_seed(
   resolve: VariantResolver,
 ) Vector<SitedCallUniq> {
   live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
+  call_uniques_sited_with_live(
+    f, live, table, b, sem, suppress, unique_seed, field_seed, resolve,
+  )
+}
+
+// Cache-aware twin: reuse a precomputed liveness map for `f.func_id` when present
+// (populated by the summary fixpoint over the same pre-clone function), else
+// compute it. Liveness is a pure, seed-independent function of `f.blocks`, so a
+// cached map is byte-identical to recomputing — the reuse is transparent.
+pub fn call_uniques_sited_with_field_seed_cached(
+  f: CfgFunction,
+  live_cache: LiveCache,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
+  resolve: VariantResolver,
+) Vector<SitedCallUniq> {
+  live := case live_cache_get(live_cache, f.func_id) {
+    .Some(l) => l,
+    .None => compute_liveness_labeled(f.blocks, "call_uniques:${f.name}"),
+  }
+  call_uniques_sited_with_live(
+    f, live, table, b, sem, suppress, unique_seed, field_seed, resolve,
+  )
+}
+
+// Liveness-injecting core (mirrors collect_field_reqs_with_live): the whole
+// call-uniqueness scan given precomputed liveness for `f.blocks`.
+fn call_uniques_sited_with_live(
+  f: CfgFunction,
+  live: Dict<Int, BlockLive>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
+  resolve: VariantResolver,
+) Vector<SitedCallUniq> {
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
@@ -8343,7 +8413,12 @@ pub fn summarize_function_cached(
     generic_only_resolver,
     generic_only_requirement_resolver,
   )
-  CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
+  CachedSummary.{
+    summary: r.summary,
+    fx: r.fx,
+    reusable: !calls_suppressed(f.blocks, suppress),
+    live: r.live,
+  }
 }
 
 // Owned-entry (ownership-specialized) summary for a VariantId key (Stage 3): re-run the
@@ -8719,5 +8794,5 @@ fn summarize_seeded(
       )
     }
   }
-  SeededResult.{ summary: Summary.{ params, ret, ret_paths: ret_paths_final }, fx }
+  SeededResult.{ summary: Summary.{ params, ret, ret_paths: ret_paths_final }, fx, live }
 }

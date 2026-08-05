@@ -220,6 +220,7 @@ fn collect_groups(
   sem: OptimizerSemantics,
   vt: summary.VariantSummaryTable,
   published: Dict<Int, Bool>,
+  live_cache: ownership.LiveCache,
 ) Vector<Group> {
   order: Vector<String> = []
   by_key: Dict<String, Group> = Dict.new()
@@ -228,8 +229,9 @@ fn collect_groups(
       // Variant-aware scan: resolving the field tier at a return-carrying call lets
       // its `ret_paths` recover `.f` on the result, so a subsequent (sequential or
       // loop-carried) call proves the field tier from `arg_paths`.
-      sited := ownership.call_uniques_sited_with_field_seed(
+      sited := ownership.call_uniques_sited_with_field_seed_cached(
         f,
+        live_cache,
         table,
         b,
         sem,
@@ -344,6 +346,7 @@ pub fn specialize_module_with_cap_sem(
   sc := summary.compute_cached(view, b, sem, cache_ids)
   table := sc.table
   fix_cache := sc.fix_cache
+  live_cache := sc.live_cache
   t1 := date.now()
   spec_phase("begin variant_table")
   vt := summary.compute_variants(view, b, sem, table)
@@ -365,7 +368,7 @@ pub fn specialize_module_with_cap_sem(
 
   spec_phase("begin collect_groups")
   published := published_callee_set(vt)
-  groups0 := collect_groups(view, table, b, sem, vt, published)
+  groups0 := collect_groups(view, table, b, sem, vt, published, live_cache)
   t3 := date.now()
   spec_phase("begin updatable_filter")
   capped := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), cap)
@@ -468,7 +471,7 @@ pub fn specialize_module_with_cap_sem(
   spec_phase("begin recursive_routes survivors=${survivors.len()}")
   routes: Vector<variant_route.VariantRoute> = []
   for g in survivors {
-    rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone)
+    rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone, live_cache)
     rec_keys: Vector<Int> = []
     for r in rec {
       site_to_clone[r.site_key] = r.target
@@ -555,6 +558,7 @@ fn recursive_routes_for(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   variant_to_clone: Dict<String, Int>,
+  live_cache: ownership.LiveCache,
 ) Vector<RecRoute> {
   ccfg := case cfg_func_of(view, g.callee) {
     .Some(cf) => cf,
@@ -562,8 +566,9 @@ fn recursive_routes_for(
   }
   seed := summary.seed_for_variant(ccfg, g.variant)
   field_seed := summary.field_seed_for_variant(ccfg, g.variant)
-  sited := ownership.call_uniques_sited_with_field_seed(
+  sited := ownership.call_uniques_sited_with_field_seed_cached(
     ccfg,
+    live_cache,
     table,
     b,
     sem,
