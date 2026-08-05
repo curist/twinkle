@@ -1,0 +1,42 @@
+//! A map from local id to `T`, backed by a persistent `Dict<Int, T>` (raw int
+//! keys). Names the key's meaning (local id) that a bare `Dict<Int, T>` cannot.
+
+pub type LocalMap<T> = .{ inner: Dict<Int, T> }
+
+/// Empty local-keyed map.
+pub fn local_map<T>() LocalMap<T> {
+  LocalMap.{ inner: Dict.new() }
+}
+
+/// Value for a local id, or `.None`.
+pub fn get<T>(m: LocalMap<T>, k: Int) Option<T> {
+  m.inner.get(k)
+}
+
+/// Value for a local id, or `default` when absent.
+pub fn get_or<T>(m: LocalMap<T>, k: Int, default: T) T {
+  case m.inner.get(k) {
+    .Some(v) => v,
+    .None => default,
+  }
+}
+
+/// True when the local id is present.
+pub fn has<T>(m: LocalMap<T>, k: Int) Bool {
+  m.inner.has(k)
+}
+
+/// Bind a local id (persistent: returns a new map).
+pub fn set<T>(m: LocalMap<T>, k: Int, v: T) LocalMap<T> {
+  LocalMap.{ inner: m.inner.set(k, v) }
+}
+
+/// The local ids, in the backing dict's iteration order.
+pub fn keys<T>(m: LocalMap<T>) Vector<Int> {
+  m.inner.keys()
+}
+
+/// Number of entries.
+pub fn len<T>(m: LocalMap<T>) Int {
+  m.inner.len()
+}

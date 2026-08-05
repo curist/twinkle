@@ -1,0 +1,30 @@
+//! A set of block ids, backed by a persistent `Dict<Int, Bool>` (raw int keys).
+//! The type names the intent a bare `Dict<Int, Bool>` cannot: this is a SET, and
+//! its ids are BLOCK ids. Backing/perf identical to the Dict it wraps.
+
+pub type BlockSet = .{ inner: Dict<Int, Bool> }
+
+/// Empty block-id set.
+pub fn block_set() BlockSet {
+  BlockSet.{ inner: Dict.new() }
+}
+
+/// Add a block id (persistent: returns a new set).
+pub fn insert(s: BlockSet, id: Int) BlockSet {
+  BlockSet.{ inner: s.inner.set(id, true) }
+}
+
+/// True when the block id is present.
+pub fn contains(s: BlockSet, id: Int) Bool {
+  s.inner.has(id)
+}
+
+/// Number of ids in the set.
+pub fn len(s: BlockSet) Int {
+  s.inner.len()
+}
+
+/// The block ids, in the backing dict's iteration order.
+pub fn ids(s: BlockSet) Vector<Int> {
+  s.inner.keys()
+}

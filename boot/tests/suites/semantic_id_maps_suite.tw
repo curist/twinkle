@@ -1,0 +1,56 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.block_set
+use compiler.block_set.{BlockSet}
+use compiler.local_map
+use compiler.local_map.{LocalMap}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("semantic_id_maps")
+    .test(
+      "BlockSet insert/contains/len",
+      fn() {
+        s := block_set.block_set()
+        s = .insert(3)
+        s = .insert(7)
+        s = .insert(3)
+        try assert.is_true(s.contains(3))
+        try assert.is_true(s.contains(7))
+        try assert.is_false(s.contains(4))
+        try assert.equal(s.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "LocalMap get/get_or/set/has/len",
+      fn() {
+        m: LocalMap<Int> = local_map.local_map()
+        m = .set(5, 50)
+        m = .set(9, 90)
+        try assert.equal(m.get_or(5, 0 - 1), 50)
+        try assert.equal(m.get_or(42, 0 - 1), 0 - 1)
+        try assert.is_true(m.has(9))
+        try assert.is_false(m.has(9999))
+        try assert.equal(m.len(), 2)
+        v := case m.get(9) {
+          .Some(x) => x,
+          .None => 0 - 1,
+        }
+        try assert.equal(v, 90)
+        .Ok({})
+      },
+    )
+    .test(
+      "set is persistent — old value unchanged after fork",
+      fn() {
+        m0: LocalMap<Int> = local_map.local_map()
+        m0 = .set(1, 100)
+        m1 := m0.set(1, 200)
+        try assert.equal(m0.get_or(1, 0), 100)
+        try assert.equal(m1.get_or(1, 0), 200)
+        .Ok({})
+      },
+    )
+}

@@ -123,6 +123,7 @@ use .suites.scripting_string_suite
 use .suites.scripting_vector_suite
 use .suites.semantic_closure_rebinding_suite
 use .suites.semantic_control_flow_suite
+use .suites.semantic_id_maps_suite
 use .suites.semantic_suite
 use .suites.semantic_tree_stringify_suite
 use .suites.signature_drift_suite
@@ -302,6 +303,7 @@ runner.run_all([
   scripting_vector_suite.suite(),
   cfg_field_facts_suite.suite(),
   cfg_lattice_suite.suite(),
+  semantic_id_maps_suite.suite(),
   cfg_ownership_suite.suite(),
   cfg_ownership_facts_suite.suite(),
   cfg_return_paths_suite.suite(),

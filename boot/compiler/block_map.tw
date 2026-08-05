@@ -1,0 +1,42 @@
+//! A map from block id to `T`, backed by a persistent `Dict<Int, T>` (raw int
+//! keys). Names the key's meaning (block id).
+
+pub type BlockMap<T> = .{ inner: Dict<Int, T> }
+
+/// Empty block-keyed map.
+pub fn block_map<T>() BlockMap<T> {
+  BlockMap.{ inner: Dict.new() }
+}
+
+/// Value for a block id, or `.None`.
+pub fn get<T>(m: BlockMap<T>, k: Int) Option<T> {
+  m.inner.get(k)
+}
+
+/// Value for a block id, or `default` when absent.
+pub fn get_or<T>(m: BlockMap<T>, k: Int, default: T) T {
+  case m.inner.get(k) {
+    .Some(v) => v,
+    .None => default,
+  }
+}
+
+/// True when the block id is present.
+pub fn has<T>(m: BlockMap<T>, k: Int) Bool {
+  m.inner.has(k)
+}
+
+/// Bind a block id (persistent: returns a new map).
+pub fn set<T>(m: BlockMap<T>, k: Int, v: T) BlockMap<T> {
+  BlockMap.{ inner: m.inner.set(k, v) }
+}
+
+/// The block ids, in the backing dict's iteration order.
+pub fn keys<T>(m: BlockMap<T>) Vector<Int> {
+  m.inner.keys()
+}
+
+/// Number of entries.
+pub fn len<T>(m: BlockMap<T>) Int {
+  m.inner.len()
+}

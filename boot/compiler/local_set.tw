@@ -1,0 +1,28 @@
+//! A set of local ids, backed by a persistent `Dict<Int, Bool>` (raw int keys).
+
+pub type LocalSet = .{ inner: Dict<Int, Bool> }
+
+/// Empty local-id set.
+pub fn local_set() LocalSet {
+  LocalSet.{ inner: Dict.new() }
+}
+
+/// Add a local id (persistent: returns a new set).
+pub fn insert(s: LocalSet, id: Int) LocalSet {
+  LocalSet.{ inner: s.inner.set(id, true) }
+}
+
+/// True when the local id is present.
+pub fn contains(s: LocalSet, id: Int) Bool {
+  s.inner.has(id)
+}
+
+/// Number of ids in the set.
+pub fn len(s: LocalSet) Int {
+  s.inner.len()
+}
+
+/// The local ids, in the backing dict's iteration order.
+pub fn ids(s: LocalSet) Vector<Int> {
+  s.inner.keys()
+}
