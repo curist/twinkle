@@ -1,0 +1,229 @@
+//! Tier-0 spike round 2: does the sorted-pair-array actually beat the persistent
+//! HAMT on the ownership fixpoint's *real* access mix, or only on the flat-favorable
+//! M=W extreme the first spike measured?
+//!
+//! Two independent reviews converged on the same gap: a persistent sorted-array
+//! fork is O(W) *regardless of divergence*, while a HAMT fork is O(M·log W) with
+//! structural sharing. Near fixpoint convergence most merges change FEW keys
+//! (M ≪ W), where the HAMT should win. The first spike only measured M=W.
+//!
+//! This bench isolates the three paths the fixpoint actually runs, each keyed by a
+//! sparse (sorted) key set of width W — the sorted-pair-array shares the key vector
+//! and stores a parallel value vector; the Dict is the persistent HAMT:
+//!
+//!   BUILD  (join_entry shape): build a fresh width-W map from scratch.
+//!   MERGE  (merge_targeted shape): fork a width-W map changing only M keys, old
+//!          kept alive (true persistent fork on both sides). Sweep M.
+//!   READ   (fact_of_local shape): point lookups by raw key.
+//!
+//! For the array: keys are shared across a fork (same live set), so a fork copies
+//! only the O(W) value vector; reads binary-search the sparse key vector. For the
+//! Dict: build = W inserts, fork = M persistent sets (structural sharing), read =
+//! hash+traverse. Guards match array-vs-dict per phase (correctness self-check).
+
+use @std.date
+
+// Sparse, ascending keys so the array read genuinely binary-searches (not index).
+fn key_of(i: Int) Int {
+  i * 16 + 3
+}
+
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn bin_search(keys: Vector<Int>, k: Int) Int {
+  lo := 0
+  hi := keys.len()
+  res := 0 - 1
+  done := false
+  for !done and lo < hi {
+    mid := (lo + hi) / 2
+    kv := keys[mid]
+    cond {
+      kv == k => {
+        res = mid
+        done = true
+      },
+      kv < k => lo = mid + 1,
+      _ => hi = mid,
+    }
+  }
+  res
+}
+
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+// ── BUILD: fresh width-W map from scratch (own/valid/prov are rebuilt per visit) ─
+fn build_dict(w: Int, iters: Int) Int {
+  acc := 0
+  n := 0
+  for n < iters {
+    m := Dict.new()
+    i := 0
+    for i < w {
+      m[key_of(i)] = i
+      i = i + 1
+    }
+    acc = acc + dget(m, key_of(n % w))
+    n = n + 1
+  }
+  acc
+}
+
+fn build_array(w: Int, iters: Int) Int {
+  acc := 0
+  n := 0
+  for n < iters {
+    keys := collect i in range(w) {
+      key_of(i)
+    }
+    vals := collect i in range(w) {
+      i
+    }
+    acc = acc + vals[bin_search(keys, key_of(n % w))]
+    n = n + 1
+  }
+  acc
+}
+
+// ── MERGE: fork changing M of W keys, old kept alive (real persistent fork) ──────
+fn merge_dict(w: Int, m: Int, iters: Int) Int {
+  base := Dict.new()
+  i := 0
+  for i < w {
+    base[key_of(i)] = i
+    i = i + 1
+  }
+  sink := 0
+  n := 0
+  for n < iters {
+    out := base
+    j := 0
+    for j < m {
+      out[key_of(j)] = j + 100
+      j = j + 1
+    }
+
+    // read old (base) AND new (out) so the fork is genuinely persistent, not
+    // in-place, and neither is optimized away.
+    sink = sink + dget(base, key_of(0)) + dget(out, key_of(n % w))
+    n = n + 1
+  }
+  sink
+}
+
+fn merge_array(w: Int, m: Int, iters: Int) Int {
+  base_keys := collect i in range(w) {
+    key_of(i)
+  }
+  base_vals := collect i in range(w) {
+    i
+  }
+  sink := 0
+  n := 0
+  for n < iters {
+    // fork = O(W) copy of the value vector; key vector shared (same live set).
+    out_vals := collect v in base_vals {
+      v
+    }
+    j := 0
+    for j < m {
+      out_vals[j] = base_vals[j] + 100
+      j = j + 1
+    }
+    sink = sink + base_vals[0] + out_vals[bin_search(base_keys, key_of(n % w))]
+    n = n + 1
+  }
+  sink
+}
+
+// ── READ: point lookups by raw key (fact_of_local, high volume) ──────────────────
+fn read_dict(w: Int, iters: Int) Int {
+  m := Dict.new()
+  i := 0
+  for i < w {
+    m[key_of(i)] = i
+    i = i + 1
+  }
+  acc := 0
+  s := 1
+  n := 0
+  for n < iters {
+    s = next_lcg(s)
+    acc = acc + dget(m, key_of(s % w))
+    n = n + 1
+  }
+  acc
+}
+
+fn read_array(w: Int, iters: Int) Int {
+  keys := collect i in range(w) {
+    key_of(i)
+  }
+  vals := collect i in range(w) {
+    i
+  }
+  acc := 0
+  s := 1
+  n := 0
+  for n < iters {
+    s = next_lcg(s)
+    acc = acc + vals[bin_search(keys, key_of(s % w))]
+    n = n + 1
+  }
+  acc
+}
+
+fn ms(a: Float, b: Float) Float {
+  b - a
+}
+
+fn run_build(w: Int, iters: Int) Void {
+  t0 := date.now()
+  g1 := build_dict(w, iters)
+  t1 := date.now()
+  g2 := build_array(w, iters)
+  t2 := date.now()
+  println("  BUILD  dict=${ms(t0, t1)}ms  array=${ms(t1, t2)}ms  (g ${g1}/${g2})")
+}
+
+fn run_read(w: Int, iters: Int) Void {
+  t0 := date.now()
+  g1 := read_dict(w, iters)
+  t1 := date.now()
+  g2 := read_array(w, iters)
+  t2 := date.now()
+  println("  READ   dict=${ms(t0, t1)}ms  array=${ms(t1, t2)}ms  (g ${g1}/${g2})")
+}
+
+fn run_merge(w: Int, m: Int, iters: Int) Void {
+  t0 := date.now()
+  g1 := merge_dict(w, m, iters)
+  t1 := date.now()
+  g2 := merge_array(w, m, iters)
+  t2 := date.now()
+  ratio := m * 100 / w
+  println(
+    "  MERGE  M=${m} (M/W=${ratio}%)  dict=${ms(t0, t1)}ms  array=${ms(t1, t2)}ms  (g ${g1}/${g2})",
+  )
+}
+
+fn sweep(w: Int) Void {
+  println("── width W=${w} ──")
+  run_build(w, 300000)
+  run_read(w, 3000000)
+  run_merge(w, 1, 300000)
+  run_merge(w, w / 8, 300000)
+  run_merge(w, w / 4, 300000)
+  run_merge(w, w / 2, 300000)
+  run_merge(w, w, 300000)
+}
+
+sweep(32)
+sweep(64)

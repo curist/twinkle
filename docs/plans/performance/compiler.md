@@ -242,6 +242,21 @@ change touches codegen.
   that gives user programs large wins doesn't apply: the compiler's hot loops
   accumulate via `Vector.append` (builder) and `Dict`, with only ~9 `.set_at`
   sites total, all off the compile hot path.
+- **Ownership-fixpoint map backing swap (HAMT → sorted-pair-array)** — rejected on
+  measurement. The dominant analysis phases thread `Dict<Int,T>` maps of width
+  32–60; the intuition was that HAMT hash+traverse+`.keys()`-union overhead could be
+  cut with a width-compact flat backing. Round-1 spike
+  (`boot/bench/fixpoint_map_spike.tw`) showed 13–19× — but only for fork-everything
+  (M=W) and no reads. Round-2 spike (`fixpoint_map_divergence_spike.tw`) measured the
+  real mix: **the HAMT wins point reads 7–12×** (at these widths it is 1–2 levels
+  deep, so a get is ≈ one hash + a hop, vs 5–6 branchy binary-search iterations) and
+  wins low-divergence merges (M/W ≲ 20%, the convergence common case — O(M·log W)
+  structural sharing beats an O(W) array rebuild). Only fresh builds favor the array,
+  and one backing can't win builds *and* reads. *Lesson: at small/shallow widths a
+  persistent HAMT get is near-constant, not a traverse tax — a flat/sorted backing
+  only pays off for build-heavy, read-light, high-divergence maps, which these are
+  not.* (The named-type refactor over these maps proceeds for readability, keeping the
+  HAMT backing — `docs/plans/fixpoint-map-intmap.md`.)
 
 ## Historical lessons (still apply)
 

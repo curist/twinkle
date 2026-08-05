@@ -1,0 +1,168 @@
+//! Tier-0 spike: can the ownership fixpoint's per-block maps avoid the HAMT
+//! traverse cost, the way MutDict avoids it for user dicts?
+//!
+//! The fixpoint keeps a small `Dict<Int,T>` per block (keyed by dense LocalIds,
+//! width ~32-60) and, each round, FORKS a merged copy while keeping the old one
+//! (`merge_targeted`: keys-union of old+next, ~3 lat_get per key, out[k]=join).
+//! Unlike MutDict there is no external HAMT consumer, so there is no
+//! representation-change freeze — the only question is whether direct-indexed
+//! flat storage beats the HAMT on this fork+read pattern at realistic widths.
+//!
+//!   dict        : persistent `Dict<Int,Int>`, base kept alive so out[k]= forks
+//!                 (true HAMT rebuild) — the current representation.
+//!   flat_clone  : `Vector<Int>` sized to width; fork = one O(w) clone, then W
+//!                 direct-index writes into the owned fresh copy (the "clone"
+//!                 tier: old snapshot preserved, no hashing, no keys-union).
+//!   flat_inplace: mutate an owned width-w Vector directly, no fork copy — the
+//!                 ceiling when ownership proves the block map uniquely owned.
+//!   flat_sparse : flat_clone but the live keys are spread across a span 8x the
+//!                 width (models LocalIds sparse over a wide range: the fork copy
+//!                 and scan pay for dead slots).
+//!
+//! Each strategy applies the identical per-key join, so the printed guard must
+//! match across strategies (the correctness self-check).
+
+use @std.date
+
+fn join2(a: Int, b: Int) Int {
+  if a > b {
+    a
+  } else {
+    b
+  }
+}
+
+// ── dict: persistent HAMT, forced fork ───────────────────────────────────────
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0,
+  }
+}
+
+fn build_dict(w: Int) Dict<Int, Int> {
+  m := Dict.new()
+  i := 0
+  for i < w {
+    m[i] = i
+    i = i + 1
+  }
+  m
+}
+
+fn run_dict(w: Int, iters: Int) Int {
+  base := build_dict(w)
+  acc := 0
+  i := 0
+  for i < iters {
+    // merge_targeted shape: materialize keys, out starts as base, diverge every
+    // key. base is never reassigned -> aliased -> each out[k]= is a HAMT rebuild.
+    keys := base.keys()
+    out := base
+    for k in keys {
+      out[k] = join2(dget(base, k), i)
+    }
+    acc = acc + dget(out, i % w)
+    i = i + 1
+  }
+  acc
+}
+
+// ── flat_clone: direct-index array, fork = O(w) clone + owned writes ──────────
+fn build_flat(w: Int) Vector<Int> {
+  collect x in range(w) {
+    x
+  }
+}
+
+fn run_flat_clone(w: Int, iters: Int) Int {
+  base := build_flat(w)
+  acc := 0
+  i := 0
+  for i < iters {
+    out := collect x in base {
+      x
+    }
+    k := 0
+    for k < w {
+      out[k] = join2(base[k], i)
+      k = k + 1
+    }
+    acc = acc + out[i % w]
+    i = i + 1
+  }
+  acc
+}
+
+// ── flat_inplace: owned, no fork copy (ceiling) ──────────────────────────────
+fn run_flat_inplace(w: Int, iters: Int) Int {
+  m := build_flat(w)
+  acc := 0
+  i := 0
+  for i < iters {
+    k := 0
+    for k < w {
+      m[k] = join2(m[k], i)
+      k = k + 1
+    }
+    acc = acc + m[i % w]
+    i = i + 1
+  }
+  acc
+}
+
+// ── flat_sparse: live keys spread across span = w*8 (sparse-over-wide) ────────
+fn run_flat_sparse(w: Int, iters: Int) Int {
+  span := w * 8
+  base := collect x in range(span) {
+    x
+  }
+  acc := 0
+  i := 0
+  for i < iters {
+    out := collect x in base {
+      x
+    }
+
+    // touch only w live slots, strided across the span
+    k := 0
+    for k < w {
+      idx := k * 8
+      out[idx] = join2(base[idx], i)
+      k = k + 1
+    }
+    acc = acc + out[i % w * 8]
+    i = i + 1
+  }
+  acc
+}
+
+fn run(w: Int, total_ops: Int) Void {
+  iters := total_ops / w
+  println("── width=${w}  iters=${iters}  (~${total_ops} key-ops) ──")
+
+  t0 := date.now()
+  g1 := run_dict(w, iters)
+  t1 := date.now()
+  g2 := run_flat_clone(w, iters)
+  t2 := date.now()
+  g3 := run_flat_inplace(w, iters)
+  t3 := date.now()
+  g4 := run_flat_sparse(w, iters)
+  t4 := date.now()
+
+  d_ms := t1 - t0
+  fc_ms := t2 - t1
+  fi_ms := t3 - t2
+  fs_ms := t4 - t3
+  println("  dict         ${d_ms}ms  guard=${g1}")
+  println("  flat_clone   ${fc_ms}ms  guard=${g2}")
+  println("  flat_inplace ${fi_ms}ms  guard=${g3}")
+  println("  flat_sparse  ${fs_ms}ms  guard=${g4}")
+}
+
+total: Int = 20000000
+run(16, total)
+run(32, total)
+run(64, total)
+run(128, total)
