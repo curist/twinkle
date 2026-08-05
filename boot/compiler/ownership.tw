@@ -7021,7 +7021,7 @@ pub fn call_uniques_sited_with_field_seed_cached(
   field_seed: Dict<Int, ff.FieldMap>,
   resolve: VariantResolver,
 ) Vector<SitedCallUniq> {
-  live := case live_cache_get(live_cache, f.func_id) {
+  live := case live_cache.live_cache_get(f.func_id) {
     .Some(l) => l,
     .None => compute_liveness_labeled(f.blocks, "call_uniques:${f.name}"),
   }
