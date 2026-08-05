@@ -514,3 +514,42 @@ Each family that iterates a map with `.keys()` and re-looks-up can keep that sha
 - **Type consistency:** method names are consistent across tasks (`insert`/`contains`
   for sets; `get`/`get_or`/`has`/`set`/`keys`/`len` for maps); constructors are
   `block_set()`/`local_set()`/`local_map()`/`block_map()`.
+
+---
+
+## Follow-up (deferred): `ownership.tw` internal set/flag maps
+
+Beyond the run_fixpoint dataflow maps, `ownership.tw` carries ~30+ `Dict<Int,Bool>`
+scattered through its *adjacent* analyses (copy-carrier, loop-region detection,
+combinator lineage, ownership-specialization seeds). These are arguably the *worse*
+semantic offenders: a bare `Dict<Int,Bool>` in a helper reveals neither what the
+`Int` is (LocalId vs block id) nor that it is a set — and, unlike the fixpoint maps,
+most have no named accessor lifting the intent. **Deferred** (keeps the fixpoint
+refactor focused); wrap them in the *same* `LocalSet`/`BlockSet` types (plus one new
+`LocalMap<Bool>` for the genuine bool-maps). No new machinery — only reach.
+
+Cataloged from commit `61d1c353` (131 `Dict<Int,Bool>` occurrences; classify each
+against the rule — any `= false` write ⇒ `*Map<Bool>`, else a set; **confirm each
+key-kind at adoption**):
+
+| Group / analysis | Identifiers (usage count) | Likely key | Kind → type |
+|---|---|---|---|
+| Forward-transfer suppression/seeds (in `ForwardState` + transfer fns) | `suppress` (21), `unique_seed` (16), `cc_suppress` (9), `selected` (2), `no_suppress` | LocalId | set → `LocalSet` |
+| Copy-carrier facts (`CopyCarrierFacts`) | `suppress_alias`, `suppress_read`, `seed_params`, `write_keys` (2) | LocalId | set → `LocalSet` |
+| Quartet / transport / moves (`BlockPrep`) | `moves` (3), `transport` (4), `quartet` (2) | LocalId | set → `LocalSet` |
+| Loop-region detection | `region` (10), `checked_blocks`, `seen` (loop ones) | block id | set → `BlockSet` |
+| Combinator lineage (`CombinatorLineage.locals`) | `lineage` (5), `locals` | LocalId | set → `LocalSet` |
+| Ownership-spec seeds (`EntrySeedFacts`) | `unique_locals`, `reusable_shell` (2), `field_backing_reusable` (2) | LocalId | set → `LocalSet` |
+| Local-def analysis (`LocalDefCounts`) | `assign_targets` (2) | LocalId | set → `LocalSet` |
+| CFG prune | `changed`, `selected` | block id | set → `BlockSet` |
+| Binding validity | `valid` (4) | LocalId | **bool-map** (writes false) → `LocalMap<Bool>` |
+
+Also present (secondary, `Dict<Int, *>` value maps — same opacity, out of this
+catalog's `Bool` focus): `LocalDefCounts.counts: Dict<Int,Int>`, various
+`Dict<Int, Vector<Int>>`, etc. — fold into the sweep if pursued.
+
+**Scope caveat:** several of these ride the `ForwardState` transfer record and are
+threaded through many functions (hence the high counts), so wrapping them is a
+larger, more cross-cutting change than the localized run_fixpoint maps — do it as its
+own staged effort after the fixpoint families land, one analysis-group per task with
+the same `make stage2` + boot-test gate.
