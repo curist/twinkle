@@ -9,6 +9,8 @@ use @std.date
 use @std.proc
 
 use compiler.anf.{AnfOp, Atom}
+use compiler.block_map
+use compiler.block_map.{BlockMap}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{
   BlockId, CfgBlock, CfgEdge, CfgFunction, CfgInstruction, CfgView, Terminator, empty_block_facts,
@@ -5143,11 +5145,8 @@ fn fact_of_local(own: Dict<Int, Int>, id: Int) Ownership {
   }
 }
 
-fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
-  case processed.get(id) {
-    .Some(v) => v,
-    .None => false,
-  }
+fn is_processed(processed: BlockMap<Bool>, id: Int) Bool {
+  processed.get_or(id, false)
 }
 
 fn is_dirty(dirty: Dict<Int, Bool>, id: Int) Bool {
@@ -5255,7 +5254,7 @@ fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
 //  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
 // Only processed predecessors contribute (unprocessed back-edges are skipped so an
 // uninitialized back-edge does not poison a loop header: Unique ⊔ Unknown = Unknown).
-fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: Dict<Int, Bool>) Dict<
+fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: BlockMap<Bool>) Dict<
   Int,
   Int,
 > {
@@ -5292,7 +5291,7 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
 fn join_entry_ownership_assumed(
   blk: CfgBlock,
   exits: Dict<Int, Dict<Int, Int>>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
   seeds: LoopSeedSet,
 ) Dict<Int, Int> {
   entry := join_entry_ownership(blk, exits, processed)
@@ -5420,10 +5419,10 @@ fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
 
 // After the fixpoint every reachable block is processed, so materialize/join
 // with an all-true processed map.
-fn all_processed(blocks: Vector<CfgBlock>) Dict<Int, Bool> {
-  done: Dict<Int, Bool> = Dict.new()
+fn all_processed(blocks: Vector<CfgBlock>) BlockMap<Bool> {
+  done: BlockMap<Bool> = block_map.block_map()
   for blk in blocks {
-    done[blk.id.id] = true
+    done = .set(blk.id.id, true)
   }
   done
 }
@@ -5442,7 +5441,7 @@ fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
 fn join_entry_valid(
   blk: CfgBlock,
   exit_valid: Dict<Int, Dict<Int, Bool>>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
 ) Dict<Int, Bool> {
   entry: Dict<Int, Bool> = Dict.new()
   for lid in blk.entry.live {
@@ -5479,7 +5478,7 @@ fn join_entry_valid(
 fn join_entry_prov(
   blk: CfgBlock,
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
 ) Dict<Int, Vector<Int>> {
   entry: Dict<Int, Vector<Int>> = Dict.new()
   for lid in blk.entry.live {
@@ -5593,7 +5592,7 @@ fn join_entry_field_own(
   blk: CfgBlock,
   exit_field: Dict<Int, Dict<Int, ff.FieldMap>>,
   entry_own: Dict<Int, Int>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
 ) Dict<Int, ff.FieldMap> {
   entry: Dict<Int, ff.FieldMap> = Dict.new()
   for lid in blk.entry.live {
@@ -5656,7 +5655,7 @@ fn pp_of_atom(pp: Dict<Int, Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<I
 fn join_entry_path_prov(
   blk: CfgBlock,
   exit_pp: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
 ) Dict<Int, Dict<Int, Vector<Int>>> {
   entry: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
   for lid in blk.entry.live {
@@ -5798,7 +5797,7 @@ type FixState = .{
   locked_prov: Dict<Int, Vector<Int>>,
   prev_seen: Dict<Int, Bool>,
   changed_visits: Dict<Int, Int>,
-  processed: Dict<Int, Bool>,
+  processed: BlockMap<Bool>,
 }
 
 // Inner fixpoint result: the projected FixResult, the full carry-over state (for
@@ -6232,9 +6231,9 @@ fn run_fixpoint(
     .Some(w) => w.changed_visits,
     .None => Dict.new(),
   }
-  processed: Dict<Int, Bool> = case warm_state {
+  processed: BlockMap<Bool> = case warm_state {
     .Some(w) => w.processed,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
   if !warm_started {
     for blk in blocks {
@@ -6251,7 +6250,7 @@ fn run_fixpoint(
       locked_prov[blk.id.id] = []
       prev_seen[blk.id.id] = false
       changed_visits[blk.id.id] = 0
-      processed[blk.id.id] = false
+      processed = .set(blk.id.id, false)
     }
   }
   succ := build_succ_map(blocks)
@@ -6461,7 +6460,7 @@ fn run_fixpoint(
             }
           }
         }
-        processed[blk.id.id] = true
+        processed = .set(blk.id.id, true)
       }
     }
   }
@@ -7020,9 +7019,7 @@ pub fn call_uniques_sited_with_field_seed(
   resolve: VariantResolver,
 ) Vector<SitedCallUniq> {
   live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
-  call_uniques_sited_with_live(
-    f, live, table, b, sem, suppress, unique_seed, field_seed, resolve,
-  )
+  call_uniques_sited_with_live(f, live, table, b, sem, suppress, unique_seed, field_seed, resolve)
 }
 
 // Cache-aware twin: reuse a precomputed liveness map for `f.func_id` when present
@@ -7044,9 +7041,7 @@ pub fn call_uniques_sited_with_field_seed_cached(
     .Some(l) => l,
     .None => compute_liveness_labeled(f.blocks, "call_uniques:${f.name}"),
   }
-  call_uniques_sited_with_live(
-    f, live, table, b, sem, suppress, unique_seed, field_seed, resolve,
-  )
+  call_uniques_sited_with_live(f, live, table, b, sem, suppress, unique_seed, field_seed, resolve)
 }
 
 // Liveness-injecting core (mirrors collect_field_reqs_with_live): the whole
@@ -8067,7 +8062,7 @@ fn join_fact(a: FlowFact, b: FlowFact) FlowFact {
 // same id (dominance). Only PROCESSED preds contribute (fixpoint correctness for
 // back-edges), so branches/merges/loops union their dirty sets under the same proven
 // logic as the ownership fixpoint.
-fn flow_join_entry(blk: CfgBlock, exits: Dict<Int, Dict<Int, FlowFact>>, processed: Dict<Int, Bool>) Dict<
+fn flow_join_entry(blk: CfgBlock, exits: Dict<Int, Dict<Int, FlowFact>>, processed: BlockMap<Bool>) Dict<
   Int,
   FlowFact,
 > {
@@ -8293,10 +8288,10 @@ pub fn collect_field_reqs_with_live(
     blk
   }
   exits: Dict<Int, Dict<Int, FlowFact>> = Dict.new()
-  processed: Dict<Int, Bool> = Dict.new()
+  processed: BlockMap<Bool> = block_map.block_map()
   for blk in blocks {
     exits[blk.id.id] = Dict.new()
-    processed[blk.id.id] = false
+    processed = .set(blk.id.id, false)
   }
   changed := true
   for changed {
@@ -8320,7 +8315,7 @@ pub fn collect_field_reqs_with_live(
         exits[blk.id.id] = st
         changed = true
       }
-      processed[blk.id.id] = true
+      processed = .set(blk.id.id, true)
     }
   }
   reqs: Dict<Int, vid.PathSet> = Dict.new()
