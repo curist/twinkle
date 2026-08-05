@@ -1,11 +1,19 @@
 # Storage Representation Track
 
-**Status:** Planned / in progress. MutVec slice 1 is currently at an inert
-checkpoint: runtime substrate, physical repr plumbing, and analysis-only region
-detection have landed; emit/flag wiring, backend region-record handoff, census,
-and performance validation remain pending. Representation decisions for S2/S3/S5
-and vector append settled 2026-08-01 (see [Settled decisions](#settled-decisions));
-crossover thresholds inside them are spike-gated.
+**Status:** In progress. **MutVec slice 1 has landed and runs unconditionally.** The
+S1/S2/S3 first vector slice — an owned, locally-born `collect`/`make` region with ≥1
+indexed write, lowered to flat typed `MutVec<fam>` and frozen back to a typed
+`PVec<fam>` — now compiles end-to-end for **Int, Bool, Float, and Byte** (typed
+`array<i64>` / `array<i32>` / `array<f64>` / packed `array<i8>`); the self-host fixed
+point holds and boot-test is green. See [../../mutvec-checklist.md](../../mutvec-checklist.md)
+for the per-family ledger and [../../mutvec-later-slices.md](../../mutvec-later-slices.md)
+for the family-fold mechanism. Remaining storage work: the boxed/record element family (spike
+done, ~2× lever, deferred pending a workload) and Float/Byte **param-sourced**
+`set_in_place` write-routing; and the later packages **S4** (owned-specialized mutable
+ABI / param-sourced thaw-from-`PVec`), **S5** (`MutDict`), and **S6** (Buffer-retirement
+perf gate) are not started. Representation decisions for S2/S3/S5 and vector append
+settled 2026-08-01 (see [Settled decisions](#settled-decisions)); crossover thresholds
+inside them are spike-gated.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:
@@ -293,6 +301,11 @@ Acceptance examples:
 
 ### S2 — Scoped mutable vector/builder regions
 
+**First slice LANDED** (MutVec slice 1, unconditional for Int/Bool/Float/Byte): an
+owned locally-born region with ≥1 indexed write lowers to `MutVec<fam>` and freezes
+at a single boundary (no-escape scratch regions freeze-free). Param-sourced /
+written-outside-a-claimable-region cases are **S4** and still open.
+
 Introduce the first private mutable-region lowering within a local vector scope:
 
 ```text
@@ -327,6 +340,11 @@ Acceptance requirements:
 dedicated region pass, converging to a unified typed-vector-region pass).
 
 ### S3 — Private mutable vector storage targets
+
+**LANDED for Int/Bool/Float/Byte** (MutVec slice 1): each family has a typed
+`MutVec<fam>` GC struct + runtime ops, family-generated off `PVecFamily`, freezing to
+the matching typed `PVec<fam>`. The boxed/record element family (`array<anyref>`) is
+spike-done but deferred pending a workload.
 
 The primary private vector storage target is **`MutVec<T>` — a growable mutable
 Wasm GC `array` plus a length field, grown by doubling** (decision folded into
