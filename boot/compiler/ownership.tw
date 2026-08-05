@@ -5831,8 +5831,8 @@ pub fn fix_cache_get(c: FixCache, func_id: Int) FixResult? {
 // seed-independent function of a function's blocks, so a map computed by one pass
 // (the summary fixpoint) is byte-identical for any later pass over the SAME
 // pre-clone function (call_uniques in collect_groups / recursive_routes). Mirrors
-// FixCache; populated only when TWINKLE_LIVE_CACHE is set so the off-path keeps an
-// empty cache and every consumer recomputes exactly as before.
+// FixCache; always populated during the summary fixpoint so every consumer
+// reuses it instead of recomputing.
 pub type LiveCache = .{ by_func: Dict<Int, Dict<Int, BlockLive>> }
 
 pub fn empty_live_cache() LiveCache {

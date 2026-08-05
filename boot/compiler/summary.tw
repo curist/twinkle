@@ -52,17 +52,6 @@ fn reuse_verify_enabled() Bool {
   }
 }
 
-// When set, the summary fixpoint retains each function's computed liveness in a
-// LiveCache so later same-function passes (call_uniques in variant_specialize)
-// reuse it instead of recomputing. Off by default → empty cache → every consumer
-// recomputes exactly as before (byte-identical, no retention overhead).
-fn live_cache_enabled() Bool {
-  case proc.env("TWINKLE_LIVE_CACHE") {
-    .Some(_) => true,
-    .None => false,
-  }
-}
-
 fn scc_stats(members: Vector<Int>, index: Dict<Int, CfgFunction>) String {
   blocks := 0
   insts := 0
@@ -462,7 +451,6 @@ fn run_scc(
   live_in: LiveCache,
 ) SccResult {
   timed := timings_enabled()
-  lc_on := live_cache_enabled()
   live_acc := live_in
   t0 := if timed {
     date.now()
@@ -506,9 +494,7 @@ fn run_scc(
           _ => {},
         }
       }
-      if lc_on {
-        live_acc = live_cache_put(live_acc, id, res.live)
-      }
+      live_acc = live_cache_put(live_acc, id, res.live)
       if !same_summary(table_get(table, id), next) {
         if timed {
           changed_summaries = changed_summaries + 1
