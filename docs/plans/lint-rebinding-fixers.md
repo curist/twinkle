@@ -40,6 +40,17 @@ rewrite is expressible as safe byte-range edits.
 
 ## Pattern A — Named constructor → contextual anonymous `.{ }` (new rule)
 
+**Landed.** Shipped as rule `redundant-record-prefix` with auto-fix under
+`--fix-redundant-record-prefix`, covering all four expected-typed positions
+(annotated `let`, declared return, record-field value, call argument) plus
+flow-through into `if`/`case`/`cond` arms and block tails. Applied across the
+boot compiler's own source (2026-08-06); self-host stayed green and
+byte-identical, confirming the rewrite is behavior-preserving. Three
+call-argument sites were left prefixed — cases where the expected type itself
+resolves through an unresolved generic type parameter, which the rule's
+syntactic "known expected type" gate doesn't yet distinguish from true
+positives (see commit `9ff74d08` for the specifics).
+
 **Rewrite.** `TypeName.{ … }` → `.{ … }` where the expected record type is
 already known. The edit is trivial: delete the `TypeName` prefix span, keep
 `.{ … }`.
