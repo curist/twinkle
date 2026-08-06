@@ -1121,12 +1121,11 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-record-prefix: a call argument fires even inside a := binding",
+      "redundant-record-prefix: a call argument is not anchored in v1 (does not fire)",
       fn() {
-        src := "d := process(Config.{ a: 1 })\n"
-        fs := rp_findings(src)
-        try assert.equal(fs.len(), 1)
-        try assert.equal(apply_first_edit(src, fs[0]), "d := process(.{ a: 1 })\n")
+        // Call args can be generic (type-variable) positions where a bare .{ } would
+        // not typecheck, so v1 does not anchor them.
+        try assert.equal(rp_findings("d := process(Config.{ a: 1 })\n").len(), 0)
         .Ok({})
       },
     )
@@ -1135,8 +1134,8 @@ pub fn suite() runner.Suite {
       fn() {
         fs := rp_findings("c: Config = mod.Config.{ a: 1 }\n")
 
-        // The NamedRecord name is `Config`, but the source at the literal's start is
-        // `mod.Config`, so `source.slice(start, start+len) != name` — no edit.
+        // The NamedRecord name is the folded dotted path `mod.Config`, so the
+        // `name.contains(".")` guard declines up front — no edit.
         try assert.equal(fs.len(), 0)
         .Ok({})
       },

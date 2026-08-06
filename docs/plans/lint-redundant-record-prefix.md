@@ -109,7 +109,7 @@ This refuses qualified constructor paths (`pt.Point.{ … }`), and any case wher
 comments/whitespace sit between the name and `.{`. Sound: an un-stripped literal
 is never wrong, only a missed opportunity.
 
-## The four expected-type sources
+## The three expected-type sources
 
 Each sets `expected_typed = true` for the child position. No env lookup — the
 `NamedRecord` node witnesses the record type if one appears there.
@@ -128,10 +128,11 @@ Each sets `expected_typed = true` for the child position. No env lookup — the
    every field value is walked with `expected_typed = true`. Fields always carry
    a declared type, so this holds regardless of whether the enclosing literal was
    itself in an expected-typed position.
-4. **Call argument** — `Call(callee, args)`: the callee sub-expression is walked
-   with `false`; every argument is walked with `expected_typed = true`. Function
-   parameters always carry declared types, so any argument position is
-   expected-typed — no callee resolution needed.
+
+A fourth candidate source, **call argument** (`Call(callee, args)`: walk every
+argument with `expected_typed = true` on the theory that "parameters always
+carry declared types"), was tried and **dropped from v1** — see "Out of scope
+for v1" below. `Call` args are always walked with `expected_typed = false`.
 
 ### Flow-through positions
 
@@ -209,6 +210,14 @@ where no expected type exists — is correctly never fired on.
 - Bare rebind anchoring (`p = Config.{ … }` where `p` is a known-typed local).
 - Closure return positions — a closure body's tail is walked with
   `expected_typed = false` (nested field/arg anchors inside still fire).
+- **Call-argument anchoring** — tried in an earlier cut and dropped from v1:
+  when the callee is generic, a parameter's declared type can be a type
+  variable resolved by inference (often from a later argument), so a bare
+  `.{ … }` in that position has no known expected type and would not
+  typecheck. Self-application surfaced real instances of this (e.g. a
+  `Vector.fold(State.{ … }, …)`-shaped call, where the accumulator param is
+  `B`). A sound version would need callee signature resolution to
+  distinguish concrete-typed params from generic ones; left as a follow-up.
 
 ## Sequencing (for the implementation plan)
 

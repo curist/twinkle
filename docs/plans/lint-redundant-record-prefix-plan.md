@@ -8,6 +8,8 @@
 
 **Tech Stack:** Twinkle (`.tw`) boot compiler. Tests via the boot test suite (`make boot-test` / `target/twk run boot/tests/main.tw`). Design spec: [lint-redundant-record-prefix.md](lint-redundant-record-prefix.md).
 
+**v1 scope amendment (post-Task-6 corrective, Task 7):** Task 3 shipped call-argument anchoring alongside record-field anchoring, and Task 6's boot self-application applied it. Self-application surfaced a real false-positive class — a generic callee's parameter type can be a type variable resolved by inference (often from a later argument), so a bare `.{ … }` in that position has no known expected type and would not typecheck. Call-argument anchoring was **dropped from v1**; the rule now anchors three positions (annotated `let`, declared return, record-field value). The historical task steps below are left as written for the record; the corrective is tracked separately as Task 7.
+
 ## Global Constraints
 
 - Boot-only change: no Rust/stage0 edits, no bundled-payload regen.

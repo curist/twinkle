@@ -41,15 +41,19 @@ rewrite is expressible as safe byte-range edits.
 ## Pattern A — Named constructor → contextual anonymous `.{ }` (new rule)
 
 **Landed.** Shipped as rule `redundant-record-prefix` with auto-fix under
-`--fix-redundant-record-prefix`, covering all four expected-typed positions
-(annotated `let`, declared return, record-field value, call argument) plus
-flow-through into `if`/`case`/`cond` arms and block tails. Applied across the
-boot compiler's own source (2026-08-06); self-host stayed green and
-byte-identical, confirming the rewrite is behavior-preserving. Three
-call-argument sites were left prefixed — cases where the expected type itself
-resolves through an unresolved generic type parameter, which the rule's
-syntactic "known expected type" gate doesn't yet distinguish from true
-positives (see commit `9ff74d08` for the specifics).
+`--fix-redundant-record-prefix`, covering three expected-typed positions
+(annotated `let`, declared return, record-field value) plus flow-through into
+`if`/`case`/`cond` arms and block tails. Applied across the boot compiler's
+own source (2026-08-06); self-host stayed green and byte-identical,
+confirming the rewrite is behavior-preserving. Call-argument anchoring was
+in the initial cut (commit `9ff74d08`) but was **dropped from v1**: self-
+application surfaced a real false-positive class where the callee is generic
+and the param's declared type is a type variable resolved by inference
+(often from a later argument), so a bare `.{ … }` there has no known
+expected type at lint time and would not typecheck. The boot self-
+application was redone from clean source with call-argument anchoring
+removed. Left as a documented follow-up (see the spec's "Out of scope for
+v1").
 
 **Rewrite.** `TypeName.{ … }` → `.{ … }` where the expected record type is
 already known. The edit is trivial: delete the `TypeName` prefix span, keep
@@ -85,7 +89,8 @@ provable subset** covers most real cases without full type inference:
 **Relationship to existing rules.** None — genuinely new.
 
 **Spec.** Scoped in [lint-redundant-record-prefix.md](lint-redundant-record-prefix.md)
-(rule `redundant-record-prefix`, all four expected-type positions, auto-fix under
+(rule `redundant-record-prefix`, three expected-type positions in v1
+(call-argument anchoring deferred), auto-fix under
 `--fix-redundant-record-prefix`).
 
 ---

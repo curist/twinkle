@@ -327,7 +327,7 @@ fn constant_fn_edits(decl: FunctionDecl, module: Module, def_replacement: String
   ]
 
   for span in refs.call_spans {
-    edits = .append(.{ start: span.start, end: span.end, replacement: decl.name })
+    edits = .append(FixEdit.{ start: span.start, end: span.end, replacement: decl.name })
   }
 
   edits
@@ -1597,9 +1597,12 @@ fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, ctx: LintCtx) 
 type PrefixCtx = .{ source: String, returns_typed: Bool }
 
 /// Strip edit for `NamedRecord(name, …)` at `expr`: delete the `name` prefix,
-/// leaving `.{ … }`. Declines (empty) unless the literal is spelled exactly
-/// `name.{` at the expr's start — refusing qualified paths (`pt.Point.{ … }`)
-/// and any trivia between the name and `.{`. Type names are ASCII, so
+/// leaving `.{ … }`. Qualified paths (`pt.Point.{ … }`) are refused up front
+/// by the `name.contains(".")` guard, since `dotted_name_expr` folds the
+/// whole qualifier into `name`. Beyond that, declines (empty) unless the
+/// literal is spelled exactly `name.{` at the expr's start — the byte-slice
+/// equality check guards against trivia between `name` and `.{` and against
+/// a span that does not start at `name`. Type names are ASCII, so
 /// `name.len()` matches the byte span; the equality check declines on any
 /// mismatch, so a wrong size can never produce a bad edit.
 fn prefix_strip_edits(source: String, expr: Expr, name: String) Vector<FixEdit> {
@@ -1675,9 +1678,12 @@ fn walk_expr(ctx: PrefixCtx, expr: Expr, expected: Bool) Vector<LintFinding> {
     .Call(callee, args) => {
       out := ctx.walk_expr(callee, false)
 
-      // Function parameters always carry declared types.
+      // Call arguments are NOT anchored in v1: when the callee is generic, a
+      // parameter's declared type can be a type variable resolved by inference
+      // (often from a later argument), so a bare `.{ … }` there has no known
+      // expected type and would not typecheck. Left as a documented follow-up.
       for a in args {
-        out = .concat(ctx.walk_expr(a, true))
+        out = .concat(ctx.walk_expr(a, false))
       }
 
       out
