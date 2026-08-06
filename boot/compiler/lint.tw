@@ -69,9 +69,13 @@ pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<Lint
             .{ types: param_types(decl), values: param_values(decl), source, env },
           ),
         )
+        out = .concat(lint_redundant_prefix_decl(decl, source))
       },
       .Stmt(stmt) => {
         out = .concat(lint_stmt(stmt, cur))
+
+        top_ctx := PrefixCtx.{ source, returns_typed: false }
+        out = .concat(top_ctx.walk_stmt(stmt))
 
         // Top-level lets shadow later sink calls too.
         case stmt {
@@ -1579,6 +1583,248 @@ fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, ctx: LintCtx) 
     },
     _ => .None,
   }
+}
+
+// ── redundant-record-prefix ──────────────────────────────────────────
+/// A `NamedRecord` literal `T.{ … }` sitting where an expected record type is
+/// already known can drop its `T` prefix for the contextual `.{ … }` form. A
+/// `NamedRecord` node witnesses that its name is a record type (you cannot spell
+/// `Enum.{ … }` / `Int.{ … }`), so no env lookup is needed — the walk threads
+/// only whether the current position is expected-typed.
+/// Per-function invariants for the walk. `returns_typed` is whether the enclosing
+/// function declares a return type (making its tail/return positions
+/// expected-typed).
+type PrefixCtx = .{ source: String, returns_typed: Bool }
+
+/// Strip edit for `NamedRecord(name, …)` at `expr`: delete the `name` prefix,
+/// leaving `.{ … }`. Declines (empty) unless the literal is spelled exactly
+/// `name.{` at the expr's start — refusing qualified paths (`pt.Point.{ … }`)
+/// and any trivia between the name and `.{`. Type names are ASCII, so
+/// `name.len()` matches the byte span; the equality check declines on any
+/// mismatch, so a wrong size can never produce a bad edit.
+fn prefix_strip_edits(source: String, expr: Expr, name: String) Vector<FixEdit> {
+  start := expr.span.start
+  stop := start + name.len()
+
+  if source.slice(start, stop) != name {
+    return []
+  }
+  if source.slice(stop, stop + 2) != ".{" {
+    return []
+  }
+
+  [.{ start, end: stop, replacement: "" }]
+}
+
+fn prefix_finding(ctx: PrefixCtx, expr: Expr, name: String) Vector<LintFinding> {
+  edits := prefix_strip_edits(ctx.source, expr, name)
+
+  if edits.len() == 0 {
+    return []
+  }
+
+  [
+    .{
+      span: expr.span,
+      message: "`${name}.{ }` is in a position with a known expected type; drop the `${name}` prefix and use `.{ }`",
+      rule: "redundant-record-prefix",
+      edits,
+    },
+  ]
+}
+
+fn walk_expr(ctx: PrefixCtx, expr: Expr, expected: Bool) Vector<LintFinding> {
+  case expr.kind {
+    .NamedRecord(name, entries) => {
+      out: Vector<LintFinding> = if expected {
+        ctx.prefix_finding(expr, name)
+      } else {
+        []
+      }
+
+      // A record field always carries a declared type.
+      for en in entries {
+        case en.value {
+          .Some(v) => out = .concat(ctx.walk_expr(v, true)),
+          .None => {},
+        }
+      }
+
+      out
+    },
+    .Record(entries) => {
+      out: Vector<LintFinding> = []
+
+      for en in entries {
+        case en.value {
+          .Some(v) => out = .concat(ctx.walk_expr(v, true)),
+          .None => {},
+        }
+      }
+
+      out
+    },
+    .Call(callee, args) => {
+      out := ctx.walk_expr(callee, false)
+
+      // Function parameters always carry declared types.
+      for a in args {
+        out = .concat(ctx.walk_expr(a, true))
+      }
+
+      out
+    },
+    .If(c, then_blk, else_e) => {
+      out := ctx.walk_expr(c, false)
+      out = .concat(ctx.walk_block(then_blk, expected))
+
+      case else_e {
+        .Some(e) => out = .concat(ctx.walk_expr(e, expected)),
+        .None => {},
+      }
+
+      out
+    },
+    .Case(scrut, arms) => {
+      out := ctx.walk_expr(scrut, false)
+
+      for arm in arms {
+        out = .concat(ctx.walk_expr(arm.expr, expected))
+      }
+
+      out
+    },
+    .Cond(arms) => {
+      out: Vector<LintFinding> = []
+
+      for arm in arms {
+        case arm.condition {
+          .Some(c) => out = .concat(ctx.walk_expr(c, false)),
+          .None => {},
+        }
+        out = .concat(ctx.walk_expr(arm.body, expected))
+      }
+
+      out
+    },
+    .BlockExpr(block) => ctx.walk_block(block, expected),
+    .Binary(_, l, r) => ctx.walk_expr(l, false).concat(ctx.walk_expr(r, false)),
+    .Unary(_, inner) => ctx.walk_expr(inner, false),
+    .Field(base, _) => ctx.walk_expr(base, false),
+    .Index(a, b) => ctx.walk_expr(a, false).concat(ctx.walk_expr(b, false)),
+    .Array(elems) => {
+      out: Vector<LintFinding> = []
+
+      for el in elems {
+        out = .concat(ctx.walk_expr(el, false))
+      }
+
+      out
+    },
+    .Variant(_, args) => {
+      out: Vector<LintFinding> = []
+
+      for a in args {
+        out = .concat(ctx.walk_expr(a, false))
+      }
+
+      out
+    },
+    .Closure(_, _, body) => ctx.walk_block(body, false),
+    .StringInterp(parts) => {
+      out: Vector<LintFinding> = []
+
+      for p in parts {
+        case p {
+          .Interpolation(e) => out = .concat(ctx.walk_expr(e, false)),
+          .Literal(_) => {},
+        }
+      }
+
+      out
+    },
+    .Collect(ce) => {
+      out: Vector<LintFinding> = []
+
+      case ce.iter {
+        .Some(e) => out = .concat(ctx.walk_expr(e, false)),
+        .None => {},
+      }
+      case ce.condition {
+        .Some(e) => out = .concat(ctx.walk_expr(e, false)),
+        .None => {},
+      }
+      out = .concat(ctx.walk_block(ce.body, false))
+
+      out
+    },
+    _ => [],
+  }
+}
+
+fn walk_block(ctx: PrefixCtx, block: Block, tail_expected: Bool) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+
+  for stmt in block.stmts {
+    out = .concat(ctx.walk_stmt(stmt))
+  }
+
+  case block.tail {
+    .Some(e) => out = .concat(ctx.walk_expr(e, tail_expected)),
+    .None => {},
+  }
+
+  out
+}
+
+fn walk_stmt(ctx: PrefixCtx, stmt: Stmt) Vector<LintFinding> {
+  case stmt {
+    .Let(ls) => {
+      annotated := case ls.ty {
+        .Some(_) => true,
+        .None => false,
+      }
+      ctx.walk_expr(ls.value, annotated)
+    },
+    .Return(rs) => case rs.value {
+      .Some(e) => ctx.walk_expr(e, ctx.returns_typed),
+      .None => [],
+    },
+    .Expr(es) => ctx.walk_expr(es.expr, false),
+    .For(fs) => {
+      out: Vector<LintFinding> = []
+
+      case fs.iter {
+        .Some(e) => out = .concat(ctx.walk_expr(e, false)),
+        .None => {},
+      }
+      case fs.condition {
+        .Some(e) => out = .concat(ctx.walk_expr(e, false)),
+        .None => {},
+      }
+      out = .concat(ctx.walk_block(fs.body, false))
+
+      out
+    },
+    .Break(bs) => case bs.value {
+      .Some(e) => ctx.walk_expr(e, false),
+      .None => [],
+    },
+    .Continue(_) => [],
+    .Defer(ds) => ctx.walk_expr(ds.expr, false),
+    .ErrorStmt(_) => [],
+  }
+}
+
+/// Entry point per function: the body's tail/return positions are expected-typed
+/// exactly when the function declares a return type.
+fn lint_redundant_prefix_decl(decl: FunctionDecl, source: String) Vector<LintFinding> {
+  returns_typed := case decl.return_type {
+    .Some(_) => true,
+    .None => false,
+  }
+  ctx := PrefixCtx.{ source, returns_typed }
+  ctx.walk_block(decl.body, returns_typed)
 }
 
 // ── L3: record-copy-helper ───────────────────────────────────────────

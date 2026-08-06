@@ -35,6 +35,30 @@ fn cf_findings(src: String) Vector<lint.LintFinding> {
   }
 }
 
+// record-copy-helper now legitimately coexists with redundant-record-prefix on
+// the same `T.{ … }` node in a declared-return tail position (one flags the
+// syntactic prefix, the other the semantic self-copy) — filter to the rule
+// under test rather than asserting a bare `findings()` count.
+fn rc_findings(src: String) Vector<lint.LintFinding> {
+  collect f in findings(src) {
+    if f.rule == "record-copy-helper" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
+fn rp_findings(src: String) Vector<lint.LintFinding> {
+  collect f in findings(src) {
+    if f.rule == "redundant-record-prefix" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
 fn apply_first_edit(src: String, finding: lint.LintFinding) String {
   edit := finding.edits[0]
   src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
@@ -135,7 +159,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: flags a named-record copy",
       fn() {
-        fs := findings(
+        fs := rc_findings(
           "fn dup(state: State) State {\n  State.{ initialized: state.initialized }\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -172,7 +196,7 @@ pub fn suite() runner.Suite {
       "L3: autofixes a single-field wrapper update to direct rebinding",
       fn() {
         src := "fn set(m: BlockMap, k: Int, v: Int) BlockMap {\n  BlockMap.{ inner: m.inner.set(k, v) }\n}\n"
-        fs := findings(src)
+        fs := rc_findings(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 1)
         try assert.equal(
@@ -186,7 +210,7 @@ pub fn suite() runner.Suite {
       "L3: autofixes a multi-field record with one updated field",
       fn() {
         src := "fn f(p: State) State {\n  State.{ x: p.x, y: p.y, z: p.z + 1 }\n}\n"
-        fs := findings(src)
+        fs := rc_findings(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(
           apply_first_edit(src, fs[0]),
@@ -199,7 +223,7 @@ pub fn suite() runner.Suite {
       "L3: autofixes multiple field updates when a field is also preserved",
       fn() {
         src := "fn f(p: State) State {\n  State.{ a: p.a, x: p.x + 1, y: p.y + 1 }\n}\n"
-        fs := findings(src)
+        fs := rc_findings(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(
           apply_first_edit(src, fs[0]),
@@ -211,7 +235,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: does not flag a multi-field record that recomputes every field",
       fn() {
-        fs := findings("fn f(p: State) State {\n  State.{ x: p.x + 1, y: p.y + 1 }\n}\n")
+        fs := rc_findings("fn f(p: State) State {\n  State.{ x: p.x + 1, y: p.y + 1 }\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
@@ -219,7 +243,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: does not autofix when an update reads another updated field (order hazard)",
       fn() {
-        fs := findings(
+        fs := rc_findings(
           "fn f(c: Ctx) Ctx {\n  Ctx.{ tag: c.tag, depth: c.depth + 1, levels: c.levels.set(k, c.depth) }\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -230,7 +254,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: does not autofix a multi-line update RHS (keeps rebinds single-line)",
       fn() {
-        fs := findings("fn f(p: State) State {\n  State.{ n: p.n\n    + 1 }\n}\n")
+        fs := rc_findings("fn f(p: State) State {\n  State.{ n: p.n\n    + 1 }\n}\n")
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -239,7 +263,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: flags but does not autofix when a sibling field is a pass-through",
       fn() {
-        fs := findings(
+        fs := rc_findings(
           "fn f(p: State, docs: Int) State {\n  State.{ a: p.a, docs, z: p.z + 1 }\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -258,7 +282,7 @@ pub fn suite() runner.Suite {
     .test(
       "L3: flags a single-field wrapper updating its field from the same field",
       fn() {
-        fs := findings(
+        fs := rc_findings(
           "fn set(m: BlockMap, k: Int, v: Int) BlockMap {\n  BlockMap.{ inner: m.inner.set(k, v) }\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -1007,6 +1031,38 @@ pub fn suite() runner.Suite {
 
         // Fully converged: no findings remain.
         try assert.equal(findings(fixed).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: annotated top-level let fires and strips the prefix",
+      fn() {
+        src := "c: Config = Config.{ a: 1, b: 2 }\n"
+        fs := rp_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(apply_first_edit(src, fs[0]), "c: Config = .{ a: 1, b: 2 }\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: annotated let inside a function fires",
+      fn() {
+        fs := rp_findings("fn f() {\n  c: Config = Config.{ a: 1 }\n  print(1)\n}\n")
+        try assert.equal(fs.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: inferred := binding does not fire",
+      fn() {
+        try assert.equal(rp_findings("d := Config.{ a: 1 }\n").len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: an already-anonymous literal does not fire",
+      fn() {
+        try assert.equal(rp_findings("c: Config = .{ a: 1 }\n").len(), 0)
         .Ok({})
       },
     )
