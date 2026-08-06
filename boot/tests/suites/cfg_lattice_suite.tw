@@ -1,6 +1,8 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.block_map
+use compiler.block_map.{BlockMap}
 use compiler.local_map
 use compiler.local_map.{LocalMap}
 use compiler.ownership
@@ -234,10 +236,10 @@ pub fn suite() runner.Suite {
     .test(
       "nested_get: absent id yields empty inner map",
       fn() {
-        outer: Dict<Int, LocalMap<Int>> = Dict.new()
+        outer: BlockMap<LocalMap<Int>> = block_map.block_map()
         inner: LocalMap<Int> = local_map.local_map()
         inner = .set(2, 9)
-        outer[10] = inner
+        outer = .set(10, inner)
         try assert.equal(ownership.nested_get(outer, 10).len(), 1)
         try assert.equal(ownership.nested_get(outer, 99).len(), 0)
         .Ok({})

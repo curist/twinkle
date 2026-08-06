@@ -5204,8 +5204,8 @@ fn loop_header_has_backedge(blocks: Vector<CfgBlock>, blk: CfgBlock) Bool {
 }
 
 fn pred_local_contribution(
-  exits: Dict<Int, LocalMap<Int>>,
-  exit_valid: Dict<Int, LocalMap<Bool>>,
+  exits: OwnExits,
+  exit_valid: ValidExits,
   pe: CfgEdge,
   pidx: Int?,
   lid: Int,
@@ -5247,9 +5247,7 @@ fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
 //  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
 // Only processed predecessors contribute (unprocessed back-edges are skipped so an
 // uninitialized back-edge does not poison a loop header: Unique ⊔ Unknown = Unknown).
-fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, LocalMap<Int>>, processed: BlockMap<Bool>) LocalMap<
-  Int,
-> {
+fn join_entry_ownership(blk: CfgBlock, exits: OwnExits, processed: BlockMap<Bool>) LocalMap<Int> {
   entry: LocalMap<Int> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
@@ -5282,7 +5280,7 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, LocalMap<Int>>, processe
 
 fn join_entry_ownership_assumed(
   blk: CfgBlock,
-  exits: Dict<Int, LocalMap<Int>>,
+  exits: OwnExits,
   processed: BlockMap<Bool>,
   seeds: LoopSeedSet,
 ) LocalMap<Int> {
@@ -5377,7 +5375,7 @@ pub fn same_map<T>(a: LocalMap<T>, b: LocalMap<T>, eq: fn(T, T) Bool) Bool {
 }
 
 // Inner map for a block id, empty if absent (replaces *_map_get).
-pub fn nested_get<T>(m: Dict<Int, LocalMap<T>>, id: Int) LocalMap<T> {
+pub fn nested_get<T>(m: BlockMap<LocalMap<T>>, id: Int) LocalMap<T> {
   case m.get(id) {
     .Some(v) => v,
     .None => local_map.local_map(),
@@ -5427,9 +5425,7 @@ fn valid_of_local(pv: LocalMap<Bool>, id: Int) Bool {
 // binding_valid meet over every live-in local (mirroring the ownership join):
 // block params meet through the positional edge arg's source-local validity;
 // live-through non-param locals meet the same id's validity. Absent => valid.
-fn join_entry_valid(blk: CfgBlock, exit_valid: Dict<Int, LocalMap<Bool>>, processed: BlockMap<Bool>) LocalMap<
-  Bool,
-> {
+fn join_entry_valid(blk: CfgBlock, exit_valid: ValidExits, processed: BlockMap<Bool>) LocalMap<Bool> {
   entry: LocalMap<Bool> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
@@ -5462,11 +5458,9 @@ fn join_entry_valid(blk: CfgBlock, exit_valid: Dict<Int, LocalMap<Bool>>, proces
 // entry.prov for every live-in local (mirroring the ownership join): a block
 // param unions the origins its positional edge arg carries; a live-through
 // non-param local unions the same id's origins. Absent => empty.
-fn join_entry_prov(
-  blk: CfgBlock,
-  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
-  processed: BlockMap<Bool>,
-) LocalMap<Vector<Int>> {
+fn join_entry_prov(blk: CfgBlock, exit_prov: ProvExits, processed: BlockMap<Bool>) LocalMap<
+  Vector<Int>,
+> {
   entry: LocalMap<Vector<Int>> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
@@ -5576,7 +5570,7 @@ fn field_of_atom(fo: LocalMap<ff.FieldMap>, a: Atom) ff.FieldMap {
 // when the joined shell (entry_own) is non-Unique.
 fn join_entry_field_own(
   blk: CfgBlock,
-  exit_field: Dict<Int, LocalMap<ff.FieldMap>>,
+  exit_field: FieldExits,
   entry_own: LocalMap<Int>,
   processed: BlockMap<Bool>,
 ) LocalMap<ff.FieldMap> {
@@ -5638,11 +5632,9 @@ fn pp_of_atom(pp: LocalMap<Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<In
 // EVERY contributing pred; on origin conflict across preds, keep the UNION of the
 // origin vectors (a divergent origin makes the path multi-origin, which a later
 // classifier drops — sound).
-fn join_entry_path_prov(
-  blk: CfgBlock,
-  exit_pp: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
-  processed: BlockMap<Bool>,
-) LocalMap<Dict<Int, Vector<Int>>> {
+fn join_entry_path_prov(blk: CfgBlock, exit_pp: PathExits, processed: BlockMap<Bool>) LocalMap<
+  Dict<Int, Vector<Int>>,
+> {
   entry: LocalMap<Dict<Int, Vector<Int>>> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
@@ -5753,15 +5745,28 @@ fn merge_path_prov_exit(
   result
 }
 
+// Block-keyed exit maps for the ownership/validity/provenance/field-ownership/
+// path-provenance fixpoint: block id -> LocalMap<X> of per-local facts at the
+// block's exit.
+type OwnExits = BlockMap<LocalMap<Int>>
+
+type ValidExits = BlockMap<LocalMap<Bool>>
+
+type ProvExits = BlockMap<LocalMap<Vector<Int>>>
+
+type FieldExits = BlockMap<LocalMap<ff.FieldMap>>
+
+type PathExits = BlockMap<LocalMap<Dict<Int, Vector<Int>>>>
+
 // Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
 // point (they share ForwardState and forward_block). The single live driver
 // (guardrail G1).
 pub type FixResult = .{
-  exits: Dict<Int, LocalMap<Int>>,
-  exit_valid: Dict<Int, LocalMap<Bool>>,
-  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
-  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>>,
-  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
+  exits: OwnExits,
+  exit_valid: ValidExits,
+  exit_prov: ProvExits,
+  exit_field_own: FieldExits,
+  exit_path_prov: PathExits,
 }
 
 // Full inner-fixpoint solver state: the five dataflow exit maps plus the
@@ -5769,14 +5774,14 @@ pub type FixResult = .{
 // processed flags. Carried unchanged across seed-finding reruns so a rerun
 // continues the prior fixpoint instead of restarting cold.
 type FixState = .{
-  exits: Dict<Int, LocalMap<Int>>,
-  exit_valid: Dict<Int, LocalMap<Bool>>,
-  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
-  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>>,
-  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
-  prev_exits: Dict<Int, LocalMap<Int>>,
-  prev_exit_valid: Dict<Int, LocalMap<Bool>>,
-  prev_exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
+  exits: OwnExits,
+  exit_valid: ValidExits,
+  exit_prov: ProvExits,
+  exit_field_own: FieldExits,
+  exit_path_prov: PathExits,
+  prev_exits: OwnExits,
+  prev_exit_valid: ValidExits,
+  prev_exit_prov: ProvExits,
   locked_own: BlockMap<Vector<Int>>,
   locked_valid: BlockMap<Vector<Int>>,
   locked_prov: BlockMap<Vector<Int>>,
@@ -5944,7 +5949,7 @@ fn fixv_int_vec(m: Dict<Int, Vector<Int>>) String {
   s
 }
 
-fn fixv_outer_ii(m: Dict<Int, LocalMap<Int>>) String {
+fn fixv_outer_ii(m: OwnExits) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -5955,7 +5960,7 @@ fn fixv_outer_ii(m: Dict<Int, LocalMap<Int>>) String {
   s
 }
 
-fn fixv_outer_bb(m: Dict<Int, LocalMap<Bool>>) String {
+fn fixv_outer_bb(m: ValidExits) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -5966,7 +5971,7 @@ fn fixv_outer_bb(m: Dict<Int, LocalMap<Bool>>) String {
   s
 }
 
-fn fixv_outer_vv(m: Dict<Int, LocalMap<Vector<Int>>>) String {
+fn fixv_outer_vv(m: ProvExits) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -5977,7 +5982,7 @@ fn fixv_outer_vv(m: Dict<Int, LocalMap<Vector<Int>>>) String {
   s
 }
 
-fn fixv_outer_fm(m: Dict<Int, LocalMap<ff.FieldMap>>) String {
+fn fixv_outer_fm(m: FieldExits) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -5997,7 +6002,7 @@ fn fixv_outer_fm(m: Dict<Int, LocalMap<ff.FieldMap>>) String {
   s
 }
 
-fn fixv_outer_pp(m: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>) String {
+fn fixv_outer_pp(m: PathExits) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -6157,37 +6162,37 @@ fn run_fixpoint(
     .Some(_) => true,
     .None => false,
   }
-  exits: Dict<Int, LocalMap<Int>> = case warm_state {
+  exits: OwnExits = case warm_state {
     .Some(w) => w.exits,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  exit_valid: Dict<Int, LocalMap<Bool>> = case warm_state {
+  exit_valid: ValidExits = case warm_state {
     .Some(w) => w.exit_valid,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  exit_prov: Dict<Int, LocalMap<Vector<Int>>> = case warm_state {
+  exit_prov: ProvExits = case warm_state {
     .Some(w) => w.exit_prov,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>> = case warm_state {
+  exit_field_own: FieldExits = case warm_state {
     .Some(w) => w.exit_field_own,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>> = case warm_state {
+  exit_path_prov: PathExits = case warm_state {
     .Some(w) => w.exit_path_prov,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  prev_exits: Dict<Int, LocalMap<Int>> = case warm_state {
+  prev_exits: OwnExits = case warm_state {
     .Some(w) => w.prev_exits,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  prev_exit_valid: Dict<Int, LocalMap<Bool>> = case warm_state {
+  prev_exit_valid: ValidExits = case warm_state {
     .Some(w) => w.prev_exit_valid,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
-  prev_exit_prov: Dict<Int, LocalMap<Vector<Int>>> = case warm_state {
+  prev_exit_prov: ProvExits = case warm_state {
     .Some(w) => w.prev_exit_prov,
-    .None => Dict.new(),
+    .None => block_map.block_map(),
   }
   locked_own: BlockMap<Vector<Int>> = case warm_state {
     .Some(w) => w.locked_own,
@@ -6215,14 +6220,14 @@ fn run_fixpoint(
   }
   if !warm_started {
     for blk in blocks {
-      exits[blk.id.id] = local_map.local_map()
-      exit_valid[blk.id.id] = local_map.local_map()
-      exit_prov[blk.id.id] = local_map.local_map()
-      exit_field_own[blk.id.id] = local_map.local_map()
-      exit_path_prov[blk.id.id] = local_map.local_map()
-      prev_exits[blk.id.id] = local_map.local_map()
-      prev_exit_valid[blk.id.id] = local_map.local_map()
-      prev_exit_prov[blk.id.id] = local_map.local_map()
+      exits = .set(blk.id.id, local_map.local_map())
+      exit_valid = .set(blk.id.id, local_map.local_map())
+      exit_prov = .set(blk.id.id, local_map.local_map())
+      exit_field_own = .set(blk.id.id, local_map.local_map())
+      exit_path_prov = .set(blk.id.id, local_map.local_map())
+      prev_exits = .set(blk.id.id, local_map.local_map())
+      prev_exit_valid = .set(blk.id.id, local_map.local_map())
+      prev_exit_prov = .set(blk.id.id, local_map.local_map())
       locked_own = .set(blk.id.id, [])
       locked_valid = .set(blk.id.id, [])
       locked_prov = .set(blk.id.id, [])
@@ -6421,17 +6426,17 @@ fn run_fixpoint(
             changed_blocks = changed_blocks + 1
           }
           if already {
-            prev_exits[blk.id.id] = old_own
-            prev_exit_valid[blk.id.id] = old_valid
-            prev_exit_prov[blk.id.id] = old_prov
+            prev_exits = .set(blk.id.id, old_own)
+            prev_exit_valid = .set(blk.id.id, old_valid)
+            prev_exit_prov = .set(blk.id.id, old_prov)
             prev_seen = .set(blk.id.id, true)
             changed_visits = .set(blk.id.id, change_count_get(changed_visits, blk.id.id) + 1)
           }
-          exits[blk.id.id] = next_own
-          exit_valid[blk.id.id] = next_valid
-          exit_prov[blk.id.id] = next_prov
-          exit_field_own[blk.id.id] = next_field
-          exit_path_prov[blk.id.id] = next_pp
+          exits = .set(blk.id.id, next_own)
+          exit_valid = .set(blk.id.id, next_valid)
+          exit_prov = .set(blk.id.id, next_prov)
+          exit_field_own = .set(blk.id.id, next_field)
+          exit_path_prov = .set(blk.id.id, next_pp)
           if !all_dirty {
             for s in succ_get(succ, blk.id.id) {
               dirty = .set(s, true)
