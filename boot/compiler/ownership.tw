@@ -17,6 +17,8 @@ use compiler.cfg.{
 }
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
+use compiler.local_map
+use compiler.local_map.{LocalMap}
 use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{
   CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive,
@@ -3564,7 +3566,7 @@ pub fn join_own(a: Ownership, b: Ownership) Ownership {
 }
 
 // ownership of an atom against a working map: locals resolve; non-locals Unknown.
-fn fact_of(own: Dict<Int, Int>, a: Atom) Ownership {
+fn fact_of(own: LocalMap<Int>, a: Atom) Ownership {
   case atom_local_id(a) {
     .Some(id) => case own.get(id) {
       .Some(tag) => own_of_tag(tag),
@@ -3574,8 +3576,8 @@ fn fact_of(own: Dict<Int, Int>, a: Atom) Ownership {
   }
 }
 
-fn set_own(own: Dict<Int, Int>, id: Int, o: Ownership) Dict<Int, Int> {
-  own[id] = o.own_tag()
+fn set_own(own: LocalMap<Int>, id: Int, o: Ownership) LocalMap<Int> {
+  own = .set(id, o.own_tag())
   own
 }
 
@@ -3603,11 +3605,11 @@ fn is_last_use(last: Vector<Int>, id: Int) Bool {
 }
 
 type ForwardState = .{
-  own: Dict<Int, Int>,
-  valid: Dict<Int, Bool>,
-  prov: Dict<Int, Vector<Int>>,
-  field_own: Dict<Int, ff.FieldMap>,
-  path_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  own: LocalMap<Int>,
+  valid: LocalMap<Bool>,
+  prov: LocalMap<Vector<Int>>,
+  field_own: LocalMap<ff.FieldMap>,
+  path_prov: LocalMap<Dict<Int, Vector<Int>>>,
 }
 
 fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
@@ -3618,12 +3620,12 @@ fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
 }
 
 fn set_field_own(st: ForwardState, id: Int, m: ff.FieldMap) ForwardState {
-  st.field_own[id] = m
+  st.field_own = .set(id, m)
   st
 }
 
 fn clear_field_own(st: ForwardState, id: Int) ForwardState {
-  st.field_own[id] = ff.empty()
+  st.field_own = .set(id, ff.empty())
   st
 }
 
@@ -3635,12 +3637,12 @@ fn path_prov_get(st: ForwardState, id: Int) Dict<Int, Vector<Int>> {
 }
 
 fn set_path_prov(st: ForwardState, id: Int, m: Dict<Int, Vector<Int>>) ForwardState {
-  st.path_prov[id] = m
+  st.path_prov = .set(id, m)
   st
 }
 
 fn clear_path_prov(st: ForwardState, id: Int) ForwardState {
-  st.path_prov[id] = Dict.new()
+  st.path_prov = .set(id, Dict.new())
   st
 }
 
@@ -3657,7 +3659,7 @@ fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
 }
 
 // Provenance (param-origin) of an atom against a working prov map.
-fn prov_of(prov: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
+fn prov_of(prov: LocalMap<Vector<Int>>, a: Atom) Vector<Int> {
   case atom_local_id(a) {
     .Some(id) => case prov.get(id) {
       .Some(v) => v,
@@ -3675,7 +3677,7 @@ fn atom_field_own(st: ForwardState, a: Atom) ff.FieldMap {
 }
 
 fn set_prov_st(st: ForwardState, id: Int, origins: Vector<Int>) ForwardState {
-  st.prov[id] = origins
+  st.prov = .set(id, origins)
   st
 }
 
@@ -3684,7 +3686,7 @@ fn set_result(st: ForwardState, id: Int, o: Ownership) ForwardState {
 }
 
 fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
-  st.valid[id] = v
+  st.valid = .set(id, v)
   st
 }
 
@@ -3922,12 +3924,9 @@ fn escape_retained_call_args(
 // is the exact `arg_unique` gate `transfer_summarized_call` uses for its move and
 // return-path recovery, factored so `transfer_call`, `block_verdicts`, and the
 // summarized transfer all compute selection from one definition.
-fn call_arg_unique(
-  own: Dict<Int, Int>,
-  valid: Dict<Int, Bool>,
-  args: Vector<Atom>,
-  last: Vector<Int>,
-) Vector<Bool> {
+fn call_arg_unique(own: LocalMap<Int>, valid: LocalMap<Bool>, args: Vector<Atom>, last: Vector<Int>) Vector<
+  Bool,
+> {
   collect a in args {
     case atom_local_id(a) {
       .Some(id) => local_reusable(own, valid, id, last) and store_count(args, id) == 1,
@@ -4268,18 +4267,18 @@ fn record_ret_path(
   .{ fields: fields2, pp }
 }
 
-fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
+fn own_is_unique(own: LocalMap<Int>, id: Int) Bool {
   case fact_of_local(own, id) {
     .Unique => true,
     _ => false,
   }
 }
 
-fn local_valid_at_last(valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+fn local_valid_at_last(valid: LocalMap<Bool>, id: Int, last: Vector<Int>) Bool {
   valid_of_local(valid, id) and is_last_use(last, id)
 }
 
-fn local_reusable(own: Dict<Int, Int>, valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+fn local_reusable(own: LocalMap<Int>, valid: LocalMap<Bool>, id: Int, last: Vector<Int>) Bool {
   own_is_unique(own, id) and local_valid_at_last(valid, id, last)
 }
 
@@ -4406,7 +4405,7 @@ fn remove_prefix_pp(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) Dict<Int, Vecto
 }
 
 // Per-local field_own lookup against a pred's exit map, empty default.
-fn field_map_of(m: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+fn field_map_of(m: LocalMap<ff.FieldMap>, id: Int) ff.FieldMap {
   case m.get(id) {
     .Some(fm) => fm,
     .None => ff.empty(),
@@ -4427,9 +4426,9 @@ fn field_map_of(m: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
 fn seed_payload_binding(
   st: ForwardState,
   blk: CfgBlock,
-  pred_field: Dict<Int, ff.FieldMap>,
-  pred_pp: Dict<Int, Dict<Int, Vector<Int>>>,
-  pred_prov: Dict<Int, Vector<Int>>,
+  pred_field: LocalMap<ff.FieldMap>,
+  pred_pp: LocalMap<Dict<Int, Vector<Int>>>,
+  pred_prov: LocalMap<Vector<Int>>,
 ) ForwardState {
   case blk.payload_src {
     .None => st,
@@ -5138,7 +5137,7 @@ fn param_index(blk: CfgBlock, lid: Int) Int? {
   .None
 }
 
-fn fact_of_local(own: Dict<Int, Int>, id: Int) Ownership {
+fn fact_of_local(own: LocalMap<Int>, id: Int) Ownership {
   case own.get(id) {
     .Some(tag) => own_of_tag(tag),
     .None => .Unknown,
@@ -5205,8 +5204,8 @@ fn loop_header_has_backedge(blocks: Vector<CfgBlock>, blk: CfgBlock) Bool {
 }
 
 fn pred_local_contribution(
-  exits: Dict<Int, Dict<Int, Int>>,
-  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  exits: Dict<Int, LocalMap<Int>>,
+  exit_valid: Dict<Int, LocalMap<Bool>>,
   pe: CfgEdge,
   pidx: Int?,
   lid: Int,
@@ -5248,11 +5247,10 @@ fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
 //  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
 // Only processed predecessors contribute (unprocessed back-edges are skipped so an
 // uninitialized back-edge does not poison a loop header: Unique ⊔ Unknown = Unknown).
-fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: BlockMap<Bool>) Dict<
-  Int,
+fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, LocalMap<Int>>, processed: BlockMap<Bool>) LocalMap<
   Int,
 > {
-  entry: Dict<Int, Int> = Dict.new()
+  entry: LocalMap<Int> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
     acc: Ownership? = .None
@@ -5275,7 +5273,7 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
       }
     }
     case acc {
-      .Some(o) => entry[lid] = o.own_tag(),
+      .Some(o) => entry = .set(lid, o.own_tag()),
       .None => {},
     }
   }
@@ -5284,15 +5282,15 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
 
 fn join_entry_ownership_assumed(
   blk: CfgBlock,
-  exits: Dict<Int, Dict<Int, Int>>,
+  exits: Dict<Int, LocalMap<Int>>,
   processed: BlockMap<Bool>,
   seeds: LoopSeedSet,
-) Dict<Int, Int> {
+) LocalMap<Int> {
   entry := join_entry_ownership(blk, exits, processed)
   for lid in blk.entry.live {
     case fact_of_local(entry, lid) {
       .Unknown => if loop_seed_active(seeds, blk.id.id, lid) {
-        entry[lid] = own_tag(.Unique)
+        entry = .set(lid, own_tag(.Unique))
       },
       _ => {},
     }
@@ -5315,9 +5313,9 @@ fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
 // parameters avoids materializing a generic record of function fields in the
 // self-hosted compiler, while preserving one shared merge implementation.
 // `same_map` needs only `eq`; `nested_get` needs neither.
-pub type MergeOut<T> = .{ map: Dict<Int, T>, locked: Vector<Int> }
+pub type MergeOut<T> = .{ map: LocalMap<T>, locked: Vector<Int> }
 
-fn lat_get<T>(m: Dict<Int, T>, k: Int, dflt: T) T {
+fn lat_get<T>(m: LocalMap<T>, k: Int, dflt: T) T {
   case m.get(k) {
     .Some(v) => v,
     .None => dflt,
@@ -5331,9 +5329,9 @@ fn lat_get<T>(m: Dict<Int, T>, k: Int, dflt: T) T {
 // `pub` so the cfg_lattice_suite can lock behavior directly (matches how the other
 // cfg suites exercise internal ownership/field_facts helpers).
 pub fn merge_targeted<T>(
-  old: Dict<Int, T>,
-  next: Dict<Int, T>,
-  prev: Dict<Int, T>,
+  old: LocalMap<T>,
+  next: LocalMap<T>,
+  prev: LocalMap<T>,
   locked: Vector<Int>,
   has_prev: Bool,
   force_lock_changed: Bool,
@@ -5352,7 +5350,7 @@ pub fn merge_targeted<T>(
     oscillates := has_prev and changed and eq(next_x, prev_x)
     if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
       next_locked = insert_sorted(next_locked, k)
-      out[k] = join(old_x, next_x)
+      out = .set(k, join(old_x, next_x))
     }
   }
   MergeOut.{ map: out, locked: next_locked }
@@ -5360,7 +5358,7 @@ pub fn merge_targeted<T>(
 
 // Structural equality over a nested-map value (replaces same_*_map). Keys come from
 // `a`, so a length check plus per-key presence-and-eq in `b` is exact.
-pub fn same_map<T>(a: Dict<Int, T>, b: Dict<Int, T>, eq: fn(T, T) Bool) Bool {
+pub fn same_map<T>(a: LocalMap<T>, b: LocalMap<T>, eq: fn(T, T) Bool) Bool {
   if a.keys().len() != b.keys().len() {
     return false
   }
@@ -5379,10 +5377,10 @@ pub fn same_map<T>(a: Dict<Int, T>, b: Dict<Int, T>, eq: fn(T, T) Bool) Bool {
 }
 
 // Inner map for a block id, empty if absent (replaces *_map_get).
-pub fn nested_get<T>(m: Dict<Int, Dict<Int, T>>, id: Int) Dict<Int, T> {
+pub fn nested_get<T>(m: Dict<Int, LocalMap<T>>, id: Int) LocalMap<T> {
   case m.get(id) {
     .Some(v) => v,
-    .None => Dict.new(),
+    .None => local_map.local_map(),
   }
 }
 
@@ -5419,7 +5417,7 @@ fn all_processed(blocks: Vector<CfgBlock>) BlockMap<Bool> {
 }
 
 // ── Binding-validity meet ───────────────────────────────────────────
-fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
+fn valid_of_local(pv: LocalMap<Bool>, id: Int) Bool {
   case pv.get(id) {
     .Some(v) => v,
     .None => true, // absent => valid
@@ -5429,12 +5427,10 @@ fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
 // binding_valid meet over every live-in local (mirroring the ownership join):
 // block params meet through the positional edge arg's source-local validity;
 // live-through non-param locals meet the same id's validity. Absent => valid.
-fn join_entry_valid(
-  blk: CfgBlock,
-  exit_valid: Dict<Int, Dict<Int, Bool>>,
-  processed: BlockMap<Bool>,
-) Dict<Int, Bool> {
-  entry: Dict<Int, Bool> = Dict.new()
+fn join_entry_valid(blk: CfgBlock, exit_valid: Dict<Int, LocalMap<Bool>>, processed: BlockMap<Bool>) LocalMap<
+  Bool,
+> {
+  entry: LocalMap<Bool> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
     ok := true
@@ -5457,7 +5453,7 @@ fn join_entry_valid(
         }
       }
     }
-    entry[lid] = ok
+    entry = .set(lid, ok)
   }
   entry
 }
@@ -5468,10 +5464,10 @@ fn join_entry_valid(
 // non-param local unions the same id's origins. Absent => empty.
 fn join_entry_prov(
   blk: CfgBlock,
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
   processed: BlockMap<Bool>,
-) Dict<Int, Vector<Int>> {
-  entry: Dict<Int, Vector<Int>> = Dict.new()
+) LocalMap<Vector<Int>> {
+  entry: LocalMap<Vector<Int>> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
     acc: Vector<Int> = []
@@ -5493,16 +5489,16 @@ fn join_entry_prov(
       }
     }
     if acc.len() > 0 {
-      entry[lid] = acc
+      entry = .set(lid, acc)
     }
   }
   entry
 }
 
 // Seed block 0's entry: each param's provenance is its own id (a param origin).
-fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<Int, Vector<Int>> {
+fn seed_param_prov(entry: LocalMap<Vector<Int>>, params: Vector<LocalId>) LocalMap<Vector<Int>> {
   for p in params {
-    entry[p.id] = [p.id]
+    entry = .set(p.id, [p.id])
   }
   entry
 }
@@ -5511,14 +5507,13 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
 // whose local id is marked in `unique_seed` enters Unique instead of the default
 // Unknown. This is the ONLY input the return-path recovery gate lacks to fire for a
 // param argument (own_is_unique). Empty seed => identity (the generic pass).
-fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: Vector<LocalId>) Dict<
-  Int,
+fn seed_param_own(entry: LocalMap<Int>, unique_seed: Dict<Int, Bool>, params: Vector<LocalId>) LocalMap<
   Int,
 > {
   for p in params {
     case unique_seed.get(p.id) {
       .Some(u) => if u {
-        entry[p.id] = own_tag(.Unique)
+        entry = .set(p.id, own_tag(.Unique))
       },
       .None => {},
     }
@@ -5532,13 +5527,13 @@ fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: V
 // `field_seed` is empty (the common case: only ownership-specialized clones carry
 // field seeds).
 fn seed_param_field_own(
-  entry_field: Dict<Int, ff.FieldMap>,
+  entry_field: LocalMap<ff.FieldMap>,
   field_seed: Dict<Int, ff.FieldMap>,
   params: Vector<LocalId>,
-) Dict<Int, ff.FieldMap> {
+) LocalMap<ff.FieldMap> {
   for p in params {
     case field_seed.get(p.id) {
-      .Some(fm) => entry_field[p.id] = fm,
+      .Some(fm) => entry_field = .set(p.id, fm),
       .None => {},
     }
   }
@@ -5561,14 +5556,14 @@ fn entry_seed_facts_empty(facts: EntrySeedFacts) Bool {
 }
 
 // ── Field-ownership join + change-detection ─────────────────────────
-fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+fn field_of(fo: LocalMap<ff.FieldMap>, id: Int) ff.FieldMap {
   case fo.get(id) {
     .Some(m) => m,
     .None => ff.empty(),
   }
 }
 
-fn field_of_atom(fo: Dict<Int, ff.FieldMap>, a: Atom) ff.FieldMap {
+fn field_of_atom(fo: LocalMap<ff.FieldMap>, a: Atom) ff.FieldMap {
   case atom_local_id(a) {
     .Some(id) => field_of(fo, id),
     .None => ff.empty(),
@@ -5581,11 +5576,11 @@ fn field_of_atom(fo: Dict<Int, ff.FieldMap>, a: Atom) ff.FieldMap {
 // when the joined shell (entry_own) is non-Unique.
 fn join_entry_field_own(
   blk: CfgBlock,
-  exit_field: Dict<Int, Dict<Int, ff.FieldMap>>,
-  entry_own: Dict<Int, Int>,
+  exit_field: Dict<Int, LocalMap<ff.FieldMap>>,
+  entry_own: LocalMap<Int>,
   processed: BlockMap<Bool>,
-) Dict<Int, ff.FieldMap> {
-  entry: Dict<Int, ff.FieldMap> = Dict.new()
+) LocalMap<ff.FieldMap> {
+  entry: LocalMap<ff.FieldMap> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
     acc: ff.FieldMap? = .None
@@ -5614,7 +5609,7 @@ fn join_entry_field_own(
           .None => false,
         }
         if shell_unique and !m.is_empty() {
-          entry[lid] = m
+          entry = .set(lid, m)
         }
       },
       .None => {},
@@ -5623,14 +5618,14 @@ fn join_entry_field_own(
   entry
 }
 
-fn pp_of(pp: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
+fn pp_of(pp: LocalMap<Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
   case pp.get(id) {
     .Some(m) => m,
     .None => Dict.new(),
   }
 }
 
-fn pp_of_atom(pp: Dict<Int, Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<Int>> {
+fn pp_of_atom(pp: LocalMap<Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<Int>> {
   case atom_local_id(a) {
     .Some(id) => pp_of(pp, id),
     .None => Dict.new(),
@@ -5645,10 +5640,10 @@ fn pp_of_atom(pp: Dict<Int, Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<I
 // classifier drops — sound).
 fn join_entry_path_prov(
   blk: CfgBlock,
-  exit_pp: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+  exit_pp: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
   processed: BlockMap<Bool>,
-) Dict<Int, Dict<Int, Vector<Int>>> {
-  entry: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+) LocalMap<Dict<Int, Vector<Int>>> {
+  entry: LocalMap<Dict<Int, Vector<Int>>> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
     acc: Dict<Int, Vector<Int>>? = .None
@@ -5671,7 +5666,7 @@ fn join_entry_path_prov(
     }
     case acc {
       .Some(m) => if m.keys().len() > 0 {
-        entry[lid] = m
+        entry = .set(lid, m)
       },
       .None => {},
     }
@@ -5694,18 +5689,17 @@ fn meet_path_prov(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Dict<Int
 
 // Conservative widening for field_own: keep only locals present in both old and
 // next, and meet each local's FieldMap (keys intersection).
-fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap>) Dict<
-  Int,
+fn merge_field_own_exit(old: LocalMap<ff.FieldMap>, next: LocalMap<ff.FieldMap>) LocalMap<
   ff.FieldMap,
 > {
-  result: Dict<Int, ff.FieldMap> = Dict.new()
+  result: LocalMap<ff.FieldMap> = local_map.local_map()
   for k in old.keys() {
     case old.get(k) {
       .Some(old_fm) => case next.get(k) {
         .Some(next_fm) => {
           merged := old_fm.merge(next_fm)
           if !merged.is_empty() {
-            result[k] = merged
+            result = .set(k, merged)
           }
         },
         .None => {},
@@ -5738,17 +5732,17 @@ fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
 // locals present in both old and next, and meet each local's per-PathKey map
 // (key-intersection + origin union).
 fn merge_path_prov_exit(
-  old: Dict<Int, Dict<Int, Vector<Int>>>,
-  next: Dict<Int, Dict<Int, Vector<Int>>>,
-) Dict<Int, Dict<Int, Vector<Int>>> {
-  result: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  old: LocalMap<Dict<Int, Vector<Int>>>,
+  next: LocalMap<Dict<Int, Vector<Int>>>,
+) LocalMap<Dict<Int, Vector<Int>>> {
+  result: LocalMap<Dict<Int, Vector<Int>>> = local_map.local_map()
   for k in old.keys() {
     case old.get(k) {
       .Some(old_pp) => case next.get(k) {
         .Some(next_pp) => {
           merged := meet_path_prov(old_pp, next_pp)
           if merged.keys().len() > 0 {
-            result[k] = merged
+            result = .set(k, merged)
           }
         },
         .None => {},
@@ -5763,11 +5757,11 @@ fn merge_path_prov_exit(
 // point (they share ForwardState and forward_block). The single live driver
 // (guardrail G1).
 pub type FixResult = .{
-  exits: Dict<Int, Dict<Int, Int>>,
-  exit_valid: Dict<Int, Dict<Int, Bool>>,
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
-  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
-  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+  exits: Dict<Int, LocalMap<Int>>,
+  exit_valid: Dict<Int, LocalMap<Bool>>,
+  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
+  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>>,
+  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
 }
 
 // Full inner-fixpoint solver state: the five dataflow exit maps plus the
@@ -5775,14 +5769,14 @@ pub type FixResult = .{
 // processed flags. Carried unchanged across seed-finding reruns so a rerun
 // continues the prior fixpoint instead of restarting cold.
 type FixState = .{
-  exits: Dict<Int, Dict<Int, Int>>,
-  exit_valid: Dict<Int, Dict<Int, Bool>>,
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
-  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
-  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
-  prev_exits: Dict<Int, Dict<Int, Int>>,
-  prev_exit_valid: Dict<Int, Dict<Int, Bool>>,
-  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  exits: Dict<Int, LocalMap<Int>>,
+  exit_valid: Dict<Int, LocalMap<Bool>>,
+  exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
+  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>>,
+  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>,
+  prev_exits: Dict<Int, LocalMap<Int>>,
+  prev_exit_valid: Dict<Int, LocalMap<Bool>>,
+  prev_exit_prov: Dict<Int, LocalMap<Vector<Int>>>,
   locked_own: BlockMap<Vector<Int>>,
   locked_valid: BlockMap<Vector<Int>>,
   locked_prov: BlockMap<Vector<Int>>,
@@ -5950,40 +5944,40 @@ fn fixv_int_vec(m: Dict<Int, Vector<Int>>) String {
   s
 }
 
-fn fixv_outer_ii(m: Dict<Int, Dict<Int, Int>>) String {
+fn fixv_outer_ii(m: Dict<Int, LocalMap<Int>>) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
-      .Some(inner) => s = "${s}B${bid}{${fixv_int_int(inner)}}",
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_int(inner.inner)}}",
       .None => {},
     }
   }
   s
 }
 
-fn fixv_outer_bb(m: Dict<Int, Dict<Int, Bool>>) String {
+fn fixv_outer_bb(m: Dict<Int, LocalMap<Bool>>) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
-      .Some(inner) => s = "${s}B${bid}{${fixv_int_bool(inner)}}",
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_bool(inner.inner)}}",
       .None => {},
     }
   }
   s
 }
 
-fn fixv_outer_vv(m: Dict<Int, Dict<Int, Vector<Int>>>) String {
+fn fixv_outer_vv(m: Dict<Int, LocalMap<Vector<Int>>>) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
-      .Some(inner) => s = "${s}B${bid}{${fixv_int_vec(inner)}}",
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_vec(inner.inner)}}",
       .None => {},
     }
   }
   s
 }
 
-fn fixv_outer_fm(m: Dict<Int, Dict<Int, ff.FieldMap>>) String {
+fn fixv_outer_fm(m: Dict<Int, LocalMap<ff.FieldMap>>) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -6003,7 +5997,7 @@ fn fixv_outer_fm(m: Dict<Int, Dict<Int, ff.FieldMap>>) String {
   s
 }
 
-fn fixv_outer_pp(m: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>) String {
+fn fixv_outer_pp(m: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>>) String {
   s := ""
   for bid in fixv_isort(m.keys()) {
     case m.get(bid) {
@@ -6163,35 +6157,35 @@ fn run_fixpoint(
     .Some(_) => true,
     .None => false,
   }
-  exits: Dict<Int, Dict<Int, Int>> = case warm_state {
+  exits: Dict<Int, LocalMap<Int>> = case warm_state {
     .Some(w) => w.exits,
     .None => Dict.new(),
   }
-  exit_valid: Dict<Int, Dict<Int, Bool>> = case warm_state {
+  exit_valid: Dict<Int, LocalMap<Bool>> = case warm_state {
     .Some(w) => w.exit_valid,
     .None => Dict.new(),
   }
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm_state {
+  exit_prov: Dict<Int, LocalMap<Vector<Int>>> = case warm_state {
     .Some(w) => w.exit_prov,
     .None => Dict.new(),
   }
-  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = case warm_state {
+  exit_field_own: Dict<Int, LocalMap<ff.FieldMap>> = case warm_state {
     .Some(w) => w.exit_field_own,
     .None => Dict.new(),
   }
-  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = case warm_state {
+  exit_path_prov: Dict<Int, LocalMap<Dict<Int, Vector<Int>>>> = case warm_state {
     .Some(w) => w.exit_path_prov,
     .None => Dict.new(),
   }
-  prev_exits: Dict<Int, Dict<Int, Int>> = case warm_state {
+  prev_exits: Dict<Int, LocalMap<Int>> = case warm_state {
     .Some(w) => w.prev_exits,
     .None => Dict.new(),
   }
-  prev_exit_valid: Dict<Int, Dict<Int, Bool>> = case warm_state {
+  prev_exit_valid: Dict<Int, LocalMap<Bool>> = case warm_state {
     .Some(w) => w.prev_exit_valid,
     .None => Dict.new(),
   }
-  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm_state {
+  prev_exit_prov: Dict<Int, LocalMap<Vector<Int>>> = case warm_state {
     .Some(w) => w.prev_exit_prov,
     .None => Dict.new(),
   }
@@ -6221,14 +6215,14 @@ fn run_fixpoint(
   }
   if !warm_started {
     for blk in blocks {
-      exits[blk.id.id] = Dict.new()
-      exit_valid[blk.id.id] = Dict.new()
-      exit_prov[blk.id.id] = Dict.new()
-      exit_field_own[blk.id.id] = Dict.new()
-      exit_path_prov[blk.id.id] = Dict.new()
-      prev_exits[blk.id.id] = Dict.new()
-      prev_exit_valid[blk.id.id] = Dict.new()
-      prev_exit_prov[blk.id.id] = Dict.new()
+      exits[blk.id.id] = local_map.local_map()
+      exit_valid[blk.id.id] = local_map.local_map()
+      exit_prov[blk.id.id] = local_map.local_map()
+      exit_field_own[blk.id.id] = local_map.local_map()
+      exit_path_prov[blk.id.id] = local_map.local_map()
+      prev_exits[blk.id.id] = local_map.local_map()
+      prev_exit_valid[blk.id.id] = local_map.local_map()
+      prev_exit_prov[blk.id.id] = local_map.local_map()
       locked_own = .set(blk.id.id, [])
       locked_valid = .set(blk.id.id, [])
       locked_prov = .set(blk.id.id, [])
@@ -7481,12 +7475,12 @@ fn ownership_stage(
     prep := block_prep(blk, sem, blocks)
     verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve, blocks)
     st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress, resolve)
-    blk.entry.ownership = entry_own
-    blk.exit.ownership = st.own
-    blk.entry.binding_valid = entry_valid
-    blk.exit.binding_valid = st.valid
-    blk.entry.field_own = entry_field
-    blk.exit.field_own = st.field_own
+    blk.entry.ownership = entry_own.inner
+    blk.exit.ownership = st.own.inner
+    blk.entry.binding_valid = entry_valid.inner
+    blk.exit.binding_valid = st.valid.inner
+    blk.entry.field_own = entry_field.inner
+    blk.exit.field_own = st.field_own.inner
     blk.exit.verdicts = verdicts.texts
     blk.exit.verdict_reusable_shell = verdicts.reusable_shell
     blk.exit.verdict_field_backing_reusable = verdicts.field_backing_reusable
@@ -7495,7 +7489,7 @@ fn ownership_stage(
 }
 
 // ── Interprocedural summary derivation ──────────────────────────────
-fn own_is_shared(own: Dict<Int, Int>, id: Int) Bool {
+fn own_is_shared(own: LocalMap<Int>, id: Int) Bool {
   case own.get(id) {
     .Some(tag) => tag == own_tag(.Shared),
     .None => false,
