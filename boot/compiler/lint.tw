@@ -1744,7 +1744,14 @@ fn walk_expr(ctx: PrefixCtx, expr: Expr, expected: Bool) Vector<LintFinding> {
 
       out
     },
-    .Closure(_, _, body) => ctx.walk_block(body, false),
+    .Closure(_, ret_ty, body) => {
+      returns_typed := case ret_ty {
+        .Some(_) => true,
+        .None => false,
+      }
+      closure_ctx := PrefixCtx.{ source: ctx.source, returns_typed }
+      closure_ctx.walk_block(body, returns_typed)
+    },
     .StringInterp(parts) => {
       out: Vector<LintFinding> = []
 

@@ -1141,6 +1141,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-record-prefix: return inside an unannotated closure does not fire",
+      fn() {
+        src := "fn outer() Config {\n  ys := xs.map(fn(x) {\n    if x > 0 { return Config.{ a: 1 } }\n    Config.{ a: 0 }\n  })\n  ys[0]\n}\n"
+        try assert.equal(rp_findings(src).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: an annotated closure anchors its tail and return",
+      fn() {
+        src := "fn outer() Void {\n  f := fn(x) Config {\n    if x > 0 { return Config.{ a: 1 } }\n    Config.{ a: 0 }\n  }\n  g(f)\n}\n"
+        try assert.equal(rp_findings(src).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-record-prefix: describe returns a rationale",
       fn() {
         case lint_rules.describe("redundant-record-prefix") {

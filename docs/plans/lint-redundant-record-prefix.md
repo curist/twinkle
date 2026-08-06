@@ -208,8 +208,14 @@ where no expected type exists — is correctly never fired on.
 - Variant payload positions (`Some(Config.{ … })`) — not anchored.
 - Array-element positions (`xs: Vector<Config> = [Config.{ … }]`) — not anchored.
 - Bare rebind anchoring (`p = Config.{ … }` where `p` is a known-typed local).
-- Closure return positions — a closure body's tail is walked with
-  `expected_typed = false` (nested field/arg anchors inside still fire).
+- Closures are anchored on their **own** declared return type, not the
+  enclosing function's: a closure body's tail and any `return` inside it fire
+  iff the closure itself declares a return type (`fn(x) T { … }`). An
+  unannotated closure (`fn(x) { … }`) anchors neither — its tail is often
+  fed to a generic parameter (e.g. `xs.map(fn(x) { … })`) where the expected
+  type is a type variable, and a `return` inside it returns from the closure,
+  not the enclosing function, so the enclosing function's return-type flag
+  must not leak in.
 - **Call-argument anchoring** — tried in an earlier cut and dropped from v1:
   when the callee is generic, a parameter's declared type can be a type
   variable resolved by inference (often from a later argument), so a bare
