@@ -1066,4 +1066,39 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "redundant-record-prefix: a declared-return tail fires and strips",
+      fn() {
+        src := "fn f() Config {\n  Config.{ a: 1 }\n}\n"
+        fs := rp_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(apply_first_edit(src, fs[0]), "fn f() Config {\n  .{ a: 1 }\n}\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: an explicit return of a named literal fires",
+      fn() {
+        fs := rp_findings("fn f() Config {\n  return Config.{ a: 1 }\n}\n")
+        try assert.equal(fs.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: both if-arm tails in a declared-return body fire",
+      fn() {
+        fs := rp_findings(
+          "fn f() Config {\n  if c {\n    Config.{ a: 1 }\n  } else {\n    Config.{ a: 2 }\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: a tail with no declared return type does not fire",
+      fn() {
+        try assert.equal(rp_findings("fn f() {\n  Config.{ a: 1 }\n}\n").len(), 0)
+        .Ok({})
+      },
+    )
 }
