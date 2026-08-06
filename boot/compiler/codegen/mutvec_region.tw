@@ -173,12 +173,8 @@ fn record_op(s: UseScan, site: LocalId, kind: MutVecOpKind) UseScan {
 }
 
 fn bump_exit(s: UseScan) UseScan {
-  .{
-    supported: s.supported,
-    set_count: s.set_count,
-    exit_count: s.exit_count + 1,
-    op_sites: s.op_sites,
-  }
+  s.exit_count = s.exit_count + 1
+  s
 }
 
 fn scan_uses(e: AnfExpr, h: LocalId, ids: OpIds, s: UseScan) UseScan {

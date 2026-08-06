@@ -41,7 +41,8 @@ pub fn put(overlay: Overlay, doc: OverlayDocument) Overlay {
 }
 
 pub fn remove(overlay: Overlay, id: identity.SourceIdentity) Overlay {
-  .{ documents: overlay.documents.remove(id.path) }
+  overlay.documents = .remove(id.path)
+  overlay
 }
 
 pub fn lookup(overlay: Overlay, id: identity.SourceIdentity) Result<SourceText, String> {

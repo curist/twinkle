@@ -823,7 +823,8 @@ fn empty_label_ctx() LabelCtx {
 }
 
 fn label_ctx_enter_if(ctx: LabelCtx) LabelCtx {
-  .{ depth: ctx.depth + 1, named_levels: ctx.named_levels }
+  ctx.depth = ctx.depth + 1
+  ctx
 }
 
 fn label_ctx_enter_named(ctx: LabelCtx, label: String) LabelCtx {

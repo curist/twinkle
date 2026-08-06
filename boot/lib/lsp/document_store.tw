@@ -58,7 +58,8 @@ pub fn change_incremental(
 }
 
 pub fn close(store: Store, uri: String) Store {
-  .{ docs: store.docs.remove(uri) }
+  store.docs = .remove(uri)
+  store
 }
 
 pub fn get(store: Store, uri: String) Document? {
