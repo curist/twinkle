@@ -1656,22 +1656,36 @@ fn classify_entry(pname: String, entry: RecordEntry) EntryKind {
   }
 }
 
-/// True when `entries` rebuild a record purely by copying `pname`'s fields,
-/// updating some of them from their own prior value, and passing through other
-/// params/locals — with at least one copied-or-updated field of `p`.
+/// True when `entries` reconstruct `pname` as *the source with a tweak* — the
+/// case where a direct rebinding is clearer than re-listing the record.
+///
+/// The rewrite pays off by eliminating verbatim re-listing of preserved fields,
+/// so we flag when the record either copies at least one field of `pname`
+/// verbatim, or is a single-field wrapper whose one field is updated from its
+/// own prior value. A multi-field record that recomputes *every* field from
+/// scratch (no verbatim copy) is a construction / field-wise combine — the
+/// literal is the clearer, safer form (adding a field forces handling it), so it
+/// is left alone.
 fn is_copy_rebuild(pname: String, entries: Vector<RecordEntry>) Bool {
-  touches := 0
+  copies := 0
+  updates := 0
 
   for entry in entries {
     case classify_entry(pname, entry) {
-      .CopyFromP => touches = touches + 1,
-      .UpdatedCopy => touches = touches + 1,
+      .CopyFromP => copies = copies + 1,
+      .UpdatedCopy => updates = updates + 1,
       .Trivial => {},
       .NonTrivial => return false,
     }
   }
 
-  touches >= 1
+  if copies >= 1 {
+    return true
+  }
+
+  // No verbatim copy: only a single-field wrapper's lone update is worth
+  // rebinding; recomputing every field of a multi-field record is construction.
+  updates >= 1 and entries.len() == 1
 }
 
 // True when `e` is exactly `pname.fname`.
@@ -1703,39 +1717,67 @@ fn updated_rhs_text(pname: String, fname: String, rhs: Expr, source: String) Str
   }
 }
 
-// R1 autofix for the unambiguous shape only: every entry is a verbatim copy of
-// `pname` except exactly one field updated from its own prior value, and the
-// result record is the function's tail expression. Rewrites to a direct
-// rebinding (`p.f = …; p`). Any `Trivial` entry (a shorthand pun or a field
-// pulled from another value) or multiple updates ⇒ report-only.
+// True when every argument is free of any reference to `base`.
+fn args_base_free(base: String, args: Vector<Expr>) Bool {
+  for a in args {
+    if refs_in_expr(a, base).has_bare {
+      return false
+    }
+  }
+
+  true
+}
+
+// True when `e`'s only reference to `base` is the `base.field` at its update
+// spine — every sibling operand (call arguments, a binary right operand, an
+// index subscript) is base-free. Such an update reads only the *original*
+// `base.field`, so rebinding several of them in sequence observes no field a
+// prior line already rebound, matching the simultaneous record construction.
+// `label_ctx_enter_named`'s `named_levels: ctx.named_levels.set(k, ctx.depth)`
+// fails here: the `ctx.depth` argument is a second reference to a field the
+// `depth` update rebinds.
+fn spine_siblings_safe(base: String, e: Expr) Bool {
+  case e.kind {
+    .Call(callee, args) => case callee.kind {
+      .Field(recv, _) => spine_siblings_safe(base, recv) and args_base_free(base, args),
+      _ => spine_siblings_safe(base, callee) and args_base_free(base, args),
+    },
+    .Binary(_, l, r) => spine_siblings_safe(base, l) and !refs_in_expr(r, base).has_bare,
+    .Unary(_, inner) => spine_siblings_safe(base, inner),
+    .Index(recv, idx) => spine_siblings_safe(base, recv) and !refs_in_expr(idx, base).has_bare,
+    // Spine end: `base.field` (a field access on the bare base) or a bare ident.
+    .Field(recv, _) => case recv.kind {
+      .Ident(_) => true,
+      _ => spine_siblings_safe(base, recv),
+    },
+    .Ident(_) => true,
+    _ => false,
+  }
+}
+
+// R1 autofix: every entry is a verbatim copy of `pname` or a field updated from
+// its own prior value (at least one update), and the result record is the
+// function's tail expression. Rewrites to a sequence of direct rebindings
+// (`p.f = …; p.g = …; p`). Each update must reference `pname` only at its own
+// `pname.field` spine (see `spine_siblings_safe`) so the rebinds are
+// order-independent. Any `Trivial` entry (a shorthand pun or a field pulled from
+// another value), a pure verbatim copy (no update), or an order-hazardous update
+// ⇒ report-only.
 fn updated_copy_edits(pname: String, entries: Vector<RecordEntry>, result: Expr, source: String) Vector<
   FixEdit,
 > {
-  updates := 0
-  updated: RecordEntry? = .None
+  updated: Vector<RecordEntry> = []
 
   for entry in entries {
     case classify_entry(pname, entry) {
-      .UpdatedCopy => {
-        updates = updates + 1
-        updated = .Some(entry)
-      },
+      .UpdatedCopy => updated = .append(entry),
       .CopyFromP => {},
       _ => return [],
     }
   }
 
-  if updates != 1 {
+  if updated.len() == 0 {
     return []
-  }
-
-  ue := case updated {
-    .Some(e) => e,
-    .None => return [],
-  }
-  rhs := case ue.value {
-    .Some(e) => e,
-    .None => return [],
   }
 
   indent := case line_indent(source, result.span.start) {
@@ -1743,8 +1785,31 @@ fn updated_copy_edits(pname: String, entries: Vector<RecordEntry>, result: Expr,
     .None => return [],
   }
 
-  rhs_text := updated_rhs_text(pname, ue.name, rhs, source)
-  replacement := "${pname}.${ue.name} = ${rhs_text}\n${indent}${pname}"
+  lines: Vector<String> = []
+
+  for ue in updated {
+    rhs := case ue.value {
+      .Some(e) => e,
+      .None => return [],
+    }
+
+    if !spine_siblings_safe(pname, rhs) {
+      return []
+    }
+
+    rhs_text := updated_rhs_text(pname, ue.name, rhs, source)
+
+    // A multi-line RHS (e.g. a value with a newline-continued operator) would
+    // rebind onto several lines and read as separate statements; leave it
+    // report-only so every rebind stays a clean single line.
+    if rhs_text.contains("\n") {
+      return []
+    }
+
+    lines = .append("${pname}.${ue.name} = ${rhs_text}")
+  }
+
+  replacement := lines.join("\n${indent}").concat("\n${indent}${pname}")
   [.{ start: result.span.start, end: result.span.end, replacement }]
 }
 

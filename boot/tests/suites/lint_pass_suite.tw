@@ -196,9 +196,41 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "L3: flags but does not autofix two updated fields (report-only)",
+      "L3: autofixes multiple field updates when a field is also preserved",
+      fn() {
+        src := "fn f(p: State) State {\n  State.{ a: p.a, x: p.x + 1, y: p.y + 1 }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(p: State) State {\n  p.x = p.x + 1\n  p.y = p.y + 1\n  p\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not flag a multi-field record that recomputes every field",
       fn() {
         fs := findings("fn f(p: State) State {\n  State.{ x: p.x + 1, y: p.y + 1 }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not autofix when an update reads another updated field (order hazard)",
+      fn() {
+        fs := findings(
+          "fn f(c: Ctx) Ctx {\n  Ctx.{ tag: c.tag, depth: c.depth + 1, levels: c.levels.set(k, c.depth) }\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not autofix a multi-line update RHS (keeps rebinds single-line)",
+      fn() {
+        fs := findings("fn f(p: State) State {\n  State.{ n: p.n\n    + 1 }\n}\n")
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -207,7 +239,9 @@ pub fn suite() runner.Suite {
     .test(
       "L3: flags but does not autofix when a sibling field is a pass-through",
       fn() {
-        fs := findings("fn f(p: State, docs: Int) State {\n  State.{ docs, z: p.z + 1 }\n}\n")
+        fs := findings(
+          "fn f(p: State, docs: Int) State {\n  State.{ a: p.a, docs, z: p.z + 1 }\n}\n",
+        )
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
