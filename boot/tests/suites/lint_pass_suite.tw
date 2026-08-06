@@ -1101,4 +1101,32 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "redundant-record-prefix: a named literal as a record field value fires",
+      fn() {
+        src := "c: Wrap = .{ inner: Inner.{ a: 1 } }\n"
+        fs := rp_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(apply_first_edit(src, fs[0]), "c: Wrap = .{ inner: .{ a: 1 } }\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: nested named literals each fire",
+      fn() {
+        fs := rp_findings("c: Wrap = Wrap.{ inner: Inner.{ a: 1 } }\n")
+        try assert.equal(fs.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: a call argument fires even inside a := binding",
+      fn() {
+        src := "d := process(Config.{ a: 1 })\n"
+        fs := rp_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(apply_first_edit(src, fs[0]), "d := process(.{ a: 1 })\n")
+        .Ok({})
+      },
+    )
 }
