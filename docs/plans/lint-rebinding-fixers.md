@@ -73,6 +73,10 @@ provable subset** covers most real cases without full type inference:
 
 **Relationship to existing rules.** None — genuinely new.
 
+**Spec.** Scoped in [lint-redundant-record-prefix.md](lint-redundant-record-prefix.md)
+(rule `redundant-record-prefix`, all four expected-type positions, auto-fix under
+`--fix-redundant-record-prefix`).
+
 ---
 
 ## Pattern B — Drop numbered accumulators, rebind in place (new rule)
