@@ -479,15 +479,27 @@ write and apply the classification rule** (any `= false` ⇒ `*Map<Bool>`, not `
 - **F3 — DONE** (commit `6369a465`): `prev_seen`, `dirty` → `BlockMap<Bool>` (bool-maps).
 - **F4 — in progress**: `changed_visits` → `BlockMap<Int>`; `succ`, `locked_own`/`_valid`/`_prov`
   → `BlockMap<Vector<Int>>` (independent block-keyed value maps).
-- **F5 — TODO (the coupled core):** `own`/`valid`/`prov` inner maps (`join_entry_*` results
-  + per-block values) as `LocalMap<T>` **together with** `merge_targeted` (retype its
-  `old`/`next`/`prev` params + `MergeOut` to `LocalMap<T>`) — these share the inner-map
-  type and must convert **in one task** to typecheck. Also migrate `merge_targeted`'s ~12
-  `Dict<Int,…>` call sites in `boot/tests/suites/cfg_lattice_suite.tw`.
-- **F6 — TODO (the `exits` family):** `exits`, `exit_valid`, `exit_prov`, `exit_field_own`,
-  `exit_path_prov`, `prev_exits`/`_valid`/`_prov` as nested `BlockMap<LocalMap<…>>`, plus
-  the `field_own`/`path_prov` bespoke merges (`merge_field_own_exit`, `merge_path_prov_exit`).
-  Depends on F5's inner-map types. **Use type aliases for the nested types** —
+- **F5 — TODO (all inner maps → `LocalMap<T>`, one task).** *Boundary redrawn 2026-08-06:*
+  the plan's original F5(own/valid/prov)/F6(field_own/path_prov) split can't separate the
+  inner-map conversion, because all five local-keyed lattices share the generic helpers
+  `nested_get<T>` and `same_map<T>` (own/valid/prov additionally share
+  `merge_targeted<T>`/`MergeOut<T>`/`lat_get<T>`). Converting one lattice's inner value type
+  forces the shared helpers, so all five convert together or not at all. F5 therefore converts
+  **every local-keyed inner map** to `LocalMap<T>` in one task: `ForwardState.{own,valid,prov,
+  field_own,path_prov}`, the exit/prev-exit **inner values** (outer `Dict<Int,_>` keying
+  stays — that is F6), the `join_entry_*`/`seed_param_*` producers, `merge_targeted`+`MergeOut`
+  (own/valid/prov) and `merge_field_own_exit`/`merge_path_prov_exit` (field/path), the shared
+  `nested_get`/`same_map`, and the read helpers (`fact_of`/`fact_of_local`/`prov_of`/
+  `valid_of_local`/`own_is_unique`/`own_is_shared`/`local_reusable`/…). The typechecker bounds
+  the set — adjacent same-typed maps (`suppress`/`unique_seed`/`moves`/… and the raw inner
+  path-maps) are not connected to the roots, so touching them creates type errors; leave them
+  (deferred). Also migrate the ~12 `Dict<Int,…>` call sites in
+  `boot/tests/suites/cfg_lattice_suite.tw`.
+- **F6 — TODO (the `exits` family outer keying → `BlockMap`).** With F5's inner values already
+  `LocalMap<T>`, F6 is the mechanical **outer** conversion: `exits`, `exit_valid`, `exit_prov`,
+  `exit_field_own`, `exit_path_prov`, `prev_exits`/`_valid`/`_prov` from `Dict<Int, LocalMap<…>>`
+  to `BlockMap<LocalMap<…>>` (in `ForwardState`/`FixResult`/`warm_state` and the run-loop locals),
+  retyping `nested_get`'s outer to `BlockMap`. **Use type aliases for the nested types** —
   `type OwnExits = BlockMap<LocalMap<Int>>`, `type ValidExits = BlockMap<LocalMap<Bool>>`,
   `type ProvExits = BlockMap<LocalMap<Vector<Int>>>` (and the deeper `exit_path_prov`) —
   defined in `ownership.tw`. **Type aliases are confirmed supported** (spike: simple,
