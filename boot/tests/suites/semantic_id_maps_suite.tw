@@ -2,9 +2,9 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.block_set
-
 use compiler.local_map
 use compiler.local_map.{LocalMap}
+use compiler.local_set
 
 pub fn suite() runner.Suite {
   runner
@@ -20,6 +20,21 @@ pub fn suite() runner.Suite {
         try assert.is_true(s.contains(7))
         try assert.is_false(s.contains(4))
         try assert.equal(s.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "LocalSet insert/contains/len/ids",
+      fn() {
+        s := local_set.local_set()
+        s = .insert(5)
+        s = .insert(9)
+        s = .insert(5)
+        try assert.is_true(s.contains(5))
+        try assert.is_true(s.contains(9))
+        try assert.is_false(s.contains(3))
+        try assert.equal(s.len(), 2)
+        try assert.equal(s.ids().len(), s.len())
         .Ok({})
       },
     )
