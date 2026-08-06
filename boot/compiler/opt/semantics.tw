@@ -316,7 +316,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
   calls: Dict<Int, CallSemantics> = Dict.new()
 
   for func_id in config.cow_ops.keys() {
-    info := config.cow_ops[func_id].unwrap_or(.{ base_arg: 0, in_place_id: .None })
+    info := config.cow_ops[func_id].unwrap_or(CowOpEntry.{ base_arg: 0, in_place_id: .None })
     calls[func_id] = CallSemantics.{
       effect: .Update,
       fresh_result: false,

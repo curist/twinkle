@@ -381,7 +381,7 @@ fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<Atom>) B
   // In `preds`, a CfgEdge.target holds the predecessor block id (the edge
   // source), mirroring the forward edge stored in that predecessor's `succs`.
   block := ctx.get_block(target)
-  block.preds = .append(.{ target: from, args })
+  block.preds = .append(CfgEdge.{ target: from, args })
   ctx.replace_block(block)
 }
 
@@ -584,7 +584,7 @@ fn build_match(
     ctx = .set_block_bound(nb.id, pattern_binding_ids(arm.pattern))
     ctx = .set_block_payload_src(nb.id, arm_payload_src(scrutinee, arm.pattern))
     arm_ids = .append(nb.id)
-    edge_list = .append(.{ target: nb.id, args: [] })
+    edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
   }
 
   ctx = .finish_block(current, .Match(scrutinee, edge_list), edge_list)
@@ -774,7 +774,7 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
     ),
     .Let(local, .ALoop(loop_body), body) => ctx.build_loop(current, local, loop_body, body),
     .Let(local, op, body) => {
-      ctx = .push_instruction(current, .{ anf_local: local, op, text: op_text(op) })
+      ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, op, text: op_text(op) })
       ctx.build_expr(current, body)
     },
     .Atom(atom) => {

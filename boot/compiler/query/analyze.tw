@@ -1665,7 +1665,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
     empty_diags: Vector<diag.DiagKind> = []
     loaded_members = .append(
-      .{
+      GroupMember.{
         canonical: m,
         parsed: pl.parsed,
         source: ld.source,
@@ -1905,7 +1905,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       continue
     }
 
-    typed_members = .append(.{ member: mc, typed, runner, group_deps_hash })
+    typed_members = .append(TypedGroupMember.{ member: mc, typed, runner, group_deps_hash })
   }
 
   if !group_ok {

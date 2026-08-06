@@ -17,7 +17,7 @@ pub fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedE
       .Some(gentry) => {
         vt := val_type_of_mono(gentry.mono, env)
         globals = .append(
-          .{ name: gentry.sym, mutable: true, ty: vt, init: emit_default_value(vt, []) },
+          GlobalDef.{ name: gentry.sym, mutable: true, ty: vt, init: emit_default_value(vt, []) },
         )
       },
       .None => {},

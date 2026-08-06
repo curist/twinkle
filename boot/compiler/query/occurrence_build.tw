@@ -333,7 +333,11 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
           name,
           .Type,
           .Reference,
-          .{ file_id: expr.span.file_id, start: expr.span.start, end: expr.span.start + name.len() },
+          Span.{
+            file_id: expr.span.file_id,
+            start: expr.span.start,
+            end: expr.span.start + name.len(),
+          },
           .None,
         )
       }
@@ -348,7 +352,7 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
           name,
           .Variant,
           .Reference,
-          .{
+          Span.{
             file_id: expr.span.file_id,
             start: expr.span.start + 1,
             end: expr.span.start + 1 + name.len(),
@@ -515,7 +519,7 @@ fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Bu
         name,
         .Variant,
         .Reference,
-        .{
+        Span.{
           file_id: pat.span.file_id,
           start: pat.span.start + 1,
           end: pat.span.start + 1 + name.len(),
@@ -536,7 +540,7 @@ fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Bu
         name,
         .Variant,
         .Reference,
-        .{ file_id: pat.span.file_id, start: pat.span.start, end: pat.span.start + name.len() },
+        Span.{ file_id: pat.span.file_id, start: pat.span.start, end: pat.span.start + name.len() },
         .None,
       )
 
@@ -565,7 +569,7 @@ fn walk_record_entries(
         entry.name,
         .Field,
         .Reference,
-        .{
+        Span.{
           file_id: entry.span.file_id,
           start: entry.span.start,
           end: entry.span.start + entry.name.len(),
@@ -643,7 +647,11 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
         type_name,
         .Type,
         .Reference,
-        .{ file_id: path.span.file_id, start: path.span.end - type_name.len(), end: path.span.end },
+        Span.{
+          file_id: path.span.file_id,
+          start: path.span.end - type_name.len(),
+          end: path.span.end,
+        },
         .None,
       )
     },
@@ -652,7 +660,7 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
         ctx.classify_type_name(
           b,
           path.segments[0],
-          .{
+          Span.{
             file_id: path.span.file_id,
             start: path.span.start,
             end: path.span.start + path.segments[0].len(),
@@ -667,7 +675,7 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
           type_name,
           .Type,
           .Reference,
-          .{
+          Span.{
             file_id: path.span.file_id,
             start: path.span.end - type_name.len(),
             end: path.span.end,

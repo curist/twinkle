@@ -72,7 +72,7 @@ fn walk_op(
   cat: mutable_catalog.MutableCatalog,
 ) Vector<CensusSite> {
   case op {
-    .ARecordUpdate(_, _, _, in_place, _) => sites.append(.{
+    .ARecordUpdate(_, _, _, in_place, _) => sites.append(CensusSite.{
       func_id,
       func,
       family: "record_update",
@@ -82,7 +82,7 @@ fn walk_op(
     }),
     .ACall(callee, _) => case callee {
       .AGlobalFunc(fid) => case cat.classify_call(fid) {
-        .Some(fi) => sites.append(.{
+        .Some(fi) => sites.append(CensusSite.{
           func_id,
           func,
           family: fi.family,

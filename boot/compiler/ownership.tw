@@ -890,7 +890,7 @@ fn cc_flatten_insts(blocks: Vector<CfgBlock>) Vector<CcFlatInst> {
   g := 0
   for blk in blocks {
     for inst in blk.instructions {
-      out = .append(.{ g, op: inst.op, result: inst.anf_local.id })
+      out = .append(CcFlatInst.{ g, op: inst.op, result: inst.anf_local.id })
       g = g + 1
     }
     g = g + 1
@@ -915,7 +915,7 @@ fn cc_carrier_candidates(flat: Vector<CcFlatInst>, params: Dict<Int, Bool>) Vect
   for fi in flat {
     case fi.op {
       .AInit(.ALocal(src)) => if in_set(params, src.id) and src.id != fi.result {
-        out = .append(.{ carrier: fi.result, source: src.id })
+        out = .append(CcCandidate.{ carrier: fi.result, source: src.id })
       },
       _ => {},
     }
@@ -945,14 +945,14 @@ fn cc_dict_writes(flat: Vector<CcFlatInst>, carrier: Int, ops: DictVecOps) Vecto
             } else {
               .DictSetUnknownKey
             }
-            out = .append(.{ effect: eff, g: fi.g, result: fi.result, key_local })
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
           } else if f.id == ops.remove {
             eff: WriteEffect = if key_local >= 0 {
               .DictRemove(key_local)
             } else {
               .DictRemoveUnknownKey
             }
-            out = .append(.{ effect: eff, g: fi.g, result: fi.result, key_local })
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
           }
         },
         .None => {},
@@ -1146,7 +1146,7 @@ pub fn analyze_copy_carriers(
                     .DictUnknownValue
                   }
                   loans = .append(
-                    .{
+                    Loan.{
                       source,
                       region: reg,
                       kind: .SharedRead,
@@ -1161,7 +1161,7 @@ pub fn analyze_copy_carriers(
               } else if f.id == ops.keys {
                 if args.len() >= 1 and atom_is_local_id(args[0], source) {
                   loans = .append(
-                    .{
+                    Loan.{
                       source,
                       region: .DictKeysOrder,
                       kind: .StructuralRead,
@@ -1199,7 +1199,7 @@ pub fn analyze_copy_carriers(
                               .DictUnknownValue
                             }
                             loans = .append(
-                              .{
+                              Loan.{
                                 source,
                                 region: reg,
                                 kind: .SharedRead,
@@ -2436,7 +2436,7 @@ fn flag_guards(f: CfgFunction, flag: Int) Vector<FlagGuard> {
         flag,
       ) {
         out = .append(
-          .{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
+          FlagGuard.{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
         )
       },
       _ => {},
@@ -2656,7 +2656,7 @@ fn id_append_sites(f: CfgFunction, id_param: Int, ops: DictVecOps) Vector<IdAppe
         .ACall(callee, args) => case callee {
           .AGlobalFunc(fid) => if fid.id == ops.append
             and args.len() == 2 and atom_is_local_id(args[1], id_param) {
-            out = .append(.{ block: blk.id.id, index: i })
+            out = .append(IdAppendSite.{ block: blk.id.id, index: i })
           },
           _ => {},
         },
@@ -3237,7 +3237,7 @@ fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
                   } else {
                     info.false_target
                   }
-                  out = .append(.{ pred: pe.target.id, join: blk.id.id, target })
+                  out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
                 },
                 .None => {},
               },
@@ -3316,7 +3316,7 @@ fn remove_pred_from_block(blk: CfgBlock, pred: Int) CfgBlock {
 fn add_pred_to_block(blk: CfgBlock, pred: Int, args: Vector<Atom>) CfgBlock {
   // Preserve CFG edge multiplicity: one predecessor entry corresponds to one dynamic incoming
   // edge, even when several arms originate from the same source block.
-  blk.preds = .append(.{ target: .{ id: pred }, args })
+  blk.preds = .append(CfgEdge.{ target: .{ id: pred }, args })
   blk
 }
 
@@ -7118,7 +7118,7 @@ fn call_uniques_sited_with_live(
                   }
                 }
                 out = .append(
-                  .{
+                  SitedCallUniq.{
                     caller_func: f.func_id,
                     site_local: inst.anf_local.id,
                     site_key: vid.site_key(f.func_id, inst.anf_local.id),
@@ -7759,7 +7759,7 @@ fn meet_ret_paths_tagged(sites: Vector<RetSite>) Vector<ReturnPathOwn> {
         }
         case agreed {
           .Some(o) => if survives {
-            out = .append(.{ via: cand.via, field: cand.field, own: o })
+            out = .append(ReturnPathOwn.{ via: cand.via, field: cand.field, own: o })
           },
           .None => {},
         }
@@ -8680,7 +8680,9 @@ fn summarize_seeded(
                 // Direct field: single-segment .Field paths only.
                 .Field(fid) => if p.segs.len() == 1 {
                   case classify_path_own(pp, k, fn_params, fm) {
-                    .Some(own) => rp_all = .append(.{ via: .Direct, field: .Some(fid), own }),
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
+                    ),
                     .None => {},
                   }
                 },
@@ -8696,7 +8698,9 @@ fn summarize_seeded(
                     .None
                   }
                   case classify_path_own(pp, k, fn_params, fm) {
-                    .Some(own) => rp_all = .append(.{ via: .Variant(tag, i), field: fld, own }),
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Variant(tag, i), field: fld, own },
+                    ),
                     .None => {},
                   }
                 },
@@ -8711,7 +8715,7 @@ fn summarize_seeded(
           .Some(aid) => ret_witness(blk, a, body.field_own_get(aid)),
           .None => .WUnknown,
         }
-        ret_sites = .append(.{ witness: wit, paths: rp_here })
+        ret_sites = .append(RetSite.{ witness: wit, paths: rp_here })
         seen = true
       },
       .None => {},

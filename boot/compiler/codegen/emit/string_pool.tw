@@ -10,7 +10,7 @@ pub fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
     case reg.string_pool[k] {
       .Some(entry) => {
         globals = .append(
-          .{
+          GlobalDef.{
             name: entry.global_sym,
             mutable: true,
             ty: .Ref(true, .Named("rt_types__String")),
@@ -49,7 +49,7 @@ pub fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
           .RefAsNonNull,
         ]
         funcs = .append(
-          .{
+          FuncDef.{
             name: entry.getter_sym,
             params: [],
             results: [.Ref(false, .Named("rt_types__String"))],

@@ -434,7 +434,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
 
       for f in fields {
         fa := atomize(f.value, cur_state, cur_accum)
-        field_atoms = .append(.{ field: f.field, value: fa.atom })
+        field_atoms = .append(FieldAtom.{ field: f.field, value: fa.atom })
         cur_state = fa.state
         cur_accum = fa.accum
       }
@@ -557,7 +557,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
 
       for arm in arms {
         arm_r := lower_expr_top(arm.body, cur_state)
-        anf_arms = .append(.{ pattern: arm.pattern, body: arm_r.expr })
+        anf_arms = .append(AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr })
         cur_state = arm_r.state
       }
 
@@ -762,7 +762,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
 
       for f in fields {
         fa := atomize(f.value, cur_state, cur_accum)
-        field_atoms = .append(.{ field: f.field, value: fa.atom })
+        field_atoms = .append(FieldAtom.{ field: f.field, value: fa.atom })
         cur_state = fa.state
         cur_accum = fa.accum
       }

@@ -167,7 +167,7 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
       case seen_shell.get(r.param) {
         .Some(_) => {},
         .None => {
-          augmented = .append(.{ param: r.param, path: shell() })
+          augmented = .append(UniqueReq.{ param: r.param, path: shell() })
           seen_shell[r.param] = true
         },
       }

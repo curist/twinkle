@@ -1560,13 +1560,13 @@ fn collect_binary_chain(op: BinOp, lhs: Expr, rhs: Expr) BinaryChain {
   case rhs.kind {
     .Binary(child_op, child_lhs, child_rhs) => if child_op == op and can_flatten_right_binary(op) {
       right_chain := collect_binary_chain(child_op, child_lhs, child_rhs)
-      pieces = .append(.{ op, expr: right_chain.first })
+      pieces = .append(BinaryPiece.{ op, expr: right_chain.first })
       pieces = .concat(right_chain.pieces)
     } else {
-      pieces = .append(.{ op, expr: rhs })
+      pieces = .append(BinaryPiece.{ op, expr: rhs })
     },
     _ => {
-      pieces = .append(.{ op, expr: rhs })
+      pieces = .append(BinaryPiece.{ op, expr: rhs })
     },
   }
 

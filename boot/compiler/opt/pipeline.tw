@@ -124,23 +124,23 @@ fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
 
     case item.expr {
       .Let(_, op, body) => {
-        stack = .append(.{ expr: body, depth: child_depth })
+        stack = .append(DepthWork.{ expr: body, depth: child_depth })
 
         case op {
           .AIf(_, then_e, else_e) => {
-            stack = .append(.{ expr: else_e, depth: child_depth })
-            stack = .append(.{ expr: then_e, depth: child_depth })
+            stack = .append(DepthWork.{ expr: else_e, depth: child_depth })
+            stack = .append(DepthWork.{ expr: then_e, depth: child_depth })
           },
           .AMatch(_, arms) => {
             i := arms.len() - 1
 
             for i >= 0 {
-              stack = .append(.{ expr: arms[i].body, depth: child_depth })
+              stack = .append(DepthWork.{ expr: arms[i].body, depth: child_depth })
               i = i - 1
             }
           },
-          .ALoop(loop_body) => stack = .append(.{ expr: loop_body, depth: child_depth }),
-          .ADefer(inner) => stack = .append(.{ expr: inner, depth: child_depth }),
+          .ALoop(loop_body) => stack = .append(DepthWork.{ expr: loop_body, depth: child_depth }),
+          .ADefer(inner) => stack = .append(DepthWork.{ expr: inner, depth: child_depth }),
           _ => {},
         }
       },

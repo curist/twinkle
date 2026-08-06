@@ -79,7 +79,10 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
 
                   if !final_used.has(binding) {
                     result_items = .append(
-                      .{ kind: .Warning(.UnusedImport(.{ span: v.span, binding })), edit },
+                      UnusedImportDiag.{
+                        kind: .Warning(.UnusedImport(.{ span: v.span, binding })),
+                        edit,
+                      },
                     )
                   }
                 },
@@ -91,7 +94,10 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
 
                   if !final_used.has(binding) {
                     result_items = .append(
-                      .{ kind: .Warning(.UnusedImport(.{ span: t.span, binding })), edit },
+                      UnusedImportDiag.{
+                        kind: .Warning(.UnusedImport(.{ span: t.span, binding })),
+                        edit,
+                      },
                     )
                   }
                 },
@@ -113,7 +119,10 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
           if alias != "" and !final_used.has(alias) {
             edit := ImportEdit.{ use_span: decl.span, replacement: "" }
             result_items = .append(
-              .{ kind: .Warning(.UnusedImport(.{ span: decl.span, binding: alias })), edit },
+              UnusedImportDiag.{
+                kind: .Warning(.UnusedImport(.{ span: decl.span, binding: alias })),
+                edit,
+              },
             )
           }
         },

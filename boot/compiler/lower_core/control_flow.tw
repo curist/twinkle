@@ -96,7 +96,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
 
       for arm in arms {
         body_r := rewrite_index_loop_continue(arm.body, before_continue, cur)
-        new_arms = .append(.{ pattern: arm.pattern, body: body_r.expr })
+        new_arms = .append(MatchArm.{ pattern: arm.pattern, body: body_r.expr })
         cur = body_r.ctx
       }
 
@@ -135,7 +135,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
 
       for field in fields {
         value_r := rewrite_index_loop_continue(field.value, before_continue, cur)
-        new_fields = .append(.{ field: field.field, value: value_r.expr })
+        new_fields = .append(FieldInit.{ field: field.field, value: value_r.expr })
         cur = value_r.ctx
       }
 

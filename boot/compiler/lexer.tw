@@ -642,7 +642,9 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         }
 
         if saw_newline and !blank_pending {
-          trivia_buf = .append(.{ kind: .BlankLine, text: "", span: span.new(file_id, i, i + 1) })
+          trivia_buf = .append(
+            Trivia.{ kind: .BlankLine, text: "", span: span.new(file_id, i, i + 1) },
+          )
           blank_pending = true
         }
 
@@ -704,7 +706,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       if c == '{' {
         i = i + 1
-        interp_depths = .drop_last().append(.{ depth: depth + 1, host })
+        interp_depths = .drop_last().append(InterpFrame.{ depth: depth + 1, host })
         out = .append(
           make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
         )
@@ -714,7 +716,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       if c == '}' {
         if depth > 1 {
           i = i + 1
-          interp_depths = .drop_last().append(.{ depth: depth - 1, host })
+          interp_depths = .drop_last().append(InterpFrame.{ depth: depth - 1, host })
           out = .append(
             make_token(
               .RBrace,
@@ -746,7 +748,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
               leading_trivia,
             ),
           )
-          interp_depths = .append(.{ depth: 1, host })
+          interp_depths = .append(InterpFrame.{ depth: 1, host })
           continue
         }
 
@@ -790,7 +792,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             leading_trivia,
           ),
         )
-        interp_depths = .append(.{ depth: 1, host: .Raw })
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Raw })
         continue
       }
 
@@ -833,7 +835,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             leading_trivia,
           ),
         )
-        interp_depths = .append(.{ depth: 1, host: .Multiline })
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Multiline })
         continue
       }
 
@@ -923,7 +925,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             leading_trivia,
           ),
         )
-        interp_depths = .append(.{ depth: 1, host: .Cooked })
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Cooked })
         continue
       }
 

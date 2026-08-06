@@ -263,7 +263,7 @@ fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<Bui
   out: Vector<BuilderRegionDecision> = []
   for c in sorted {
     out = .append(
-      .{
+      BuilderRegionDecision.{
         key: c.region_key(),
         func_id: c.func_id,
         family: c.family,

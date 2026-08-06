@@ -109,7 +109,7 @@ pub fn assign_slots(
 
     mono := case pattern_monos[lid] {
       .Some(m) => m,
-      .None => resolve_local_mono(func, .{ id: lid }),
+      .None => resolve_local_mono(func, LocalId.{ id: lid }),
     }
     role: SlotRole = case mono {
       .Never => .DeadPlaceholder,

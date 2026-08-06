@@ -118,7 +118,7 @@ pub fn build(b: BuiltinRegistry, sem: OptimizerSemantics) MutableCatalog {
   for fid, cs in sem.call_semantics {
     if is_cataloged_call(fid, cs.effect, b, sem) {
       cat = .add_entry(
-        .{
+        UpdateEntry.{
           family: family_for_persistent(fid, b, sem),
           decision_family: decision_family_for_persistent(fid, b),
           persistent_func: .{ id: fid },

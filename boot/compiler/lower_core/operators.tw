@@ -167,7 +167,7 @@ fn build_unit_sum_compare(
 
   for vid in variants {
     arms = .append(
-      .{
+      MatchArm.{
         pattern: variant_pattern(tid, vid, []),
         body: .{
           kind: build_unit_variant_compare(ast_op, right, tid, vid, s),
@@ -184,7 +184,7 @@ fn build_unit_sum_compare(
     true
   }
   arms = .append(
-    .{ pattern: .Wildcard, body: .{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s } },
+    MatchArm.{ pattern: .Wildcard, body: .{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s } },
   )
   .Match(left, arms)
 }

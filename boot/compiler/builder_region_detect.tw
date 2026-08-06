@@ -461,7 +461,7 @@ fn detect_in_expr(
 
       out := case seed_family(op, str_push, vec_push, ea, mono.get(local.id)) {
         .Some(sf) => case find_region(body, local, sf.push_id) {
-          .Some(fr) => cands.append(.{
+          .Some(fr) => cands.append(RegionCandidate.{
             func_id,
             func,
             family: sf.family,
@@ -596,7 +596,7 @@ fn scan_refold_loops(
       out := case claimed[loop_local.id] {
         .Some(_) => acc_cands, // claimed primary region loop
         .None => case first_refold(loop_body, str_push, vec_push) {
-          .Some(hit) => acc_cands.append(.{
+          .Some(hit) => acc_cands.append(RegionCandidate.{
             func_id,
             func,
             family: hit.family,

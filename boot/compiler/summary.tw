@@ -533,7 +533,11 @@ fn run_scc(
   if worklist.len() > 0 {
     for id in members {
       case summary_get(table, id) {
-        .Some(s) => table = table_put(table, id, .{ params: s.params, ret: s.ret, ret_paths: [] }),
+        .Some(s) => table = table_put(
+          table,
+          id,
+          Summary.{ params: s.params, ret: s.ret, ret_paths: [] },
+        ),
         .None => {},
       }
     }

@@ -439,7 +439,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     init_func_id = .Some(init_fid)
 
     // Build init body: chain stmts with Let
-    init_body := void_expr(.{ file_id: 0, start: 0, end: 0 })
+    init_body := void_expr(Span.{ file_id: 0, start: 0, end: 0 })
     i := init_stmts.len() - 1
 
     for _ in 0..init_stmts.len() {

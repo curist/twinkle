@@ -631,8 +631,8 @@ fn rewrite_record(
     case materialize_global_func_for_expected_mono(field.value, expected, cur_ctx) {
       .Some(pair) => {
         cur_ctx = pair.ctx
-        new_fields = .append(.{ field: field.field, value: .ALocal(pair.temp) })
-        closure_lets = .append(.{ local: pair.temp, fid: pair.fid })
+        new_fields = .append(FieldAtom.{ field: field.field, value: .ALocal(pair.temp) })
+        closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
       .None => {
         new_fields = .append(field)
@@ -715,7 +715,7 @@ fn rewrite_variant(
       .Some(pair) => {
         cur_ctx = pair.ctx
         new_args = .append(.ALocal(pair.temp))
-        closure_lets = .append(.{ local: pair.temp, fid: pair.fid })
+        closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
       .None => {
         new_args = .append(arg)
@@ -747,7 +747,7 @@ fn materialize_atoms_for_expected_mono(atoms: Vector<Atom>, expected: MonoType?,
           .Some(pair) => {
             cur_ctx = pair.ctx
             new_atoms = .append(.ALocal(pair.temp))
-            closure_lets = .append(.{ local: pair.temp, fid: pair.fid })
+            closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
           },
           .None => {
             new_atoms = .append(atom)
@@ -976,7 +976,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
             cur_ctx = pair.ctx
             cur_ctx.local_types[tmp.id] = tmp_mono
             new_args = .append(.ALocal(tmp))
-            closure_lets = .append(.{ local: tmp, fid: arg_fid })
+            closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
           } else {
             new_args = .append(arg)
           },
@@ -1015,7 +1015,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
               tmp_mono := materialized_global_func_mono(arg, expected_param_monos[i], cur_ctx)
               cur_ctx = pair.ctx
               cur_ctx.local_types[tmp.id] = tmp_mono
-              closure_lets = .append(.{ local: tmp, fid: arg_fid })
+              closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
               .ALocal(tmp)
             } else {
               arg
@@ -1038,7 +1038,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
             cur_ctx = pair.ctx
             cur_ctx.local_types[wrap_local.id] = .Anyref_
             new_args = .append(.ALocal(wrap_local))
-            wrap_lets = .append(.{ local: wrap_local, atom: materialized_arg, mono })
+            wrap_lets = .append(WrapLet.{ local: wrap_local, atom: materialized_arg, mono })
           } else {
             new_args = .append(materialized_arg)
           }

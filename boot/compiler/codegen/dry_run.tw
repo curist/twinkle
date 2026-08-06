@@ -69,7 +69,7 @@ fn dry_run_sites_with_verdict_table(
     }
     t := cat.targets_for_actual(b, s.actual_fid)
     out = .append(
-      .{
+      DryRunSite.{
         func: s.func,
         family: s.family,
         persistent: t.persistent,

@@ -40,7 +40,7 @@ pub fn region_verdicts(opt: AnfModule, b: BuiltinRegistry) Vector<RegionVerdict>
     }
     proof_id := "phase8c-region:${c.func}:seed L${c.seed_site.id}:loop L${c.loop_site.id}"
     out = .append(
-      .{
+      RegionVerdict.{
         key: c.region_key(),
         func: c.func,
         family: c.family,

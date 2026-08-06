@@ -455,7 +455,7 @@ pub fn specialize_module_with_cap_sem(
     }
     variant_to_clone[g.variant.variant_canonical_string()] = clone_id
     survivors = .append(
-      .{
+      Group.{
         callee: g.callee,
         variant: g.variant,
         route_sites: g.route_sites,
@@ -574,7 +574,7 @@ fn recursive_routes_for(
     case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
       .Some(w) => case variant_to_clone.get(w.variant_canonical_string()) {
         .Some(target) => out = .append(
-          .{ site_key: vid.site_key(g.clone_id, s.site_local), target },
+          RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
         ),
         .None => {},
       },

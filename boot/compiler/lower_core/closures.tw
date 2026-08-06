@@ -73,7 +73,7 @@ fn collect_free_vars_inner(
     // fold_children is intentionally unaware of.)
     _ => fold_children(
       expr,
-      .{ bound, captured, result },
+      FreeVarState.{ bound, captured, result },
       fn(st, child) { collect_free_vars_inner(child, st.bound, st.captured, st.result) },
     ),
   }

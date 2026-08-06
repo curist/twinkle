@@ -17,7 +17,7 @@ pub fn emit_dense_table_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
     case reg.dense_tables[k] {
       .Some(entry) => {
         globals = .append(
-          .{
+          GlobalDef.{
             name: entry.global_sym,
             mutable: true,
             ty: .Ref(true, .Named(dense_table_array_type)),
@@ -58,7 +58,7 @@ pub fn emit_dense_table_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
           .RefAsNonNull,
         ]
         funcs = .append(
-          .{
+          FuncDef.{
             name: entry.getter_sym,
             params: [],
             results: [.Ref(false, .Named(arr_ty))],

@@ -603,7 +603,12 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
     c = ty_parsed.cursor
     field_span := c.tokens[field_start].span.merge(ty_parsed.value.span)
     fields = .append(
-      .{ name: field_name, ty: ty_parsed.value, span: field_span, name_span: field_name_span },
+      RecordField.{
+        name: field_name,
+        ty: ty_parsed.value,
+        span: field_span,
+        name_span: field_name_span,
+      },
     )
 
     if c.kind() == .Comma {
@@ -729,7 +734,7 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
 
     variant_end_span := c.at(-1).span()
     variants = .append(
-      .{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span), tag },
+      VariantDecl.{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span), tag },
     )
 
     if c.kind() == .Comma {
@@ -1762,7 +1767,7 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
     }
 
     entry_span := c.span_from(field_start)
-    fields = .append(.{ name: field_name, value, span: entry_span })
+    fields = .append(RecordEntry.{ name: field_name, value, span: entry_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -1887,7 +1892,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
     arm_expr := parsed_arm_expr.value
     c = parsed_arm_expr.cursor
     arm_span := patt.span.merge(arm_expr.span)
-    arms = .append(.{ pattern: patt, expr: arm_expr, span: arm_span })
+    arms = .append(CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -1963,7 +1968,7 @@ fn parse_cond_expr(c: Cursor) ExprParse {
       .Some(cond_expr) => cond_expr.span.merge(body.span),
       .None => arm_start_span.merge(body.span),
     }
-    arms = .append(.{ condition, body, span: arm_span })
+    arms = .append(CondArm.{ condition, body, span: arm_span })
 
     if c.kind() == .Comma {
       c = .advance()

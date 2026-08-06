@@ -125,8 +125,8 @@ fn collect_free_op_iter(
     },
     .AIf(cond_e, then_e, else_e) => {
       cur_free = add_free_atom(cond_e, declared, cur_free)
-      cur_stack = .append(.{ expr: else_e, declared })
-      cur_stack = .append(.{ expr: then_e, declared })
+      cur_stack = .append(FreeWork.{ expr: else_e, declared })
+      cur_stack = .append(FreeWork.{ expr: then_e, declared })
     },
     .AMatch(scrutinee, arms) => {
       cur_free = add_free_atom(scrutinee, declared, cur_free)
@@ -134,15 +134,15 @@ fn collect_free_op_iter(
 
       for i >= 0 {
         arm_declared := collect_pattern_bindings(arms[i].pattern, declared)
-        cur_stack = .append(.{ expr: arms[i].body, declared: arm_declared })
+        cur_stack = .append(FreeWork.{ expr: arms[i].body, declared: arm_declared })
         i = i - 1
       }
     },
     .ALoop(body) => {
-      cur_stack = .append(.{ expr: body, declared })
+      cur_stack = .append(FreeWork.{ expr: body, declared })
     },
     .ADefer(body) => {
-      cur_stack = .append(.{ expr: body, declared })
+      cur_stack = .append(FreeWork.{ expr: body, declared })
     },
     .ABinOp(_, left, right, _) => {
       cur_free = add_free_atom(left, declared, cur_free)

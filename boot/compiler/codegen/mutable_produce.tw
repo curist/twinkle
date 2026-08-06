@@ -189,7 +189,7 @@ fn walk_op(
     .ACall(callee, args) => case callee {
       .AGlobalFunc(fid) => case cat.entry_for_persistent(fid) {
         .Some(entry) => case update_call_target(entry, args) {
-          .Some(t) => candidates.append(.{
+          .Some(t) => candidates.append(Candidate.{
             func_id,
             func,
             result,
@@ -264,7 +264,7 @@ fn record_walk_op(
     // The base must be a plain local so ownership analysis can key on it; a
     // literal or other atom shape is not a shell the analysis tracks.
     .ARecordUpdate(base, fid, _value, _in_place, tid) => case atom_local(base) {
-      .Some(bl) => candidates.append(.{
+      .Some(bl) => candidates.append(RecordCandidate.{
         func_id,
         func,
         result,
@@ -324,7 +324,7 @@ fn record_stale_artifact_rows(candidates: Vector<RecordCandidate>) Vector<Decisi
   rows: Vector<DecisionRenderRow> = []
   for c in candidates {
     rows = .append(
-      .{
+      DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
         family: "record_shell",
@@ -741,7 +741,7 @@ fn fb_walk_op(
           .Some(pu) => if pu.proj.record_base.id == rb.id
             and pu.proj.fid.id == fid.id and pu.proj.tid.id == tid.id {
             st.cands = .append(
-              .{
+              FieldBackedCandidate.{
                 func_id,
                 func,
                 record_base: rb,
@@ -822,7 +822,7 @@ pub fn field_backed_collection_candidates(opt: AnfModule, b: BuiltinRegistry) Fi
       f.func_id,
       f.name,
       0,
-      .{ proj: Dict.new(), pending: Dict.new(), cands },
+      FbState.{ proj: Dict.new(), pending: Dict.new(), cands },
       cat,
     )
     cands = st.cands
@@ -850,7 +850,7 @@ fn field_backed_stale_rows(candidates: Vector<FieldBackedCandidate>) Vector<Deci
   rows: Vector<DecisionRenderRow> = []
   for c in candidates {
     rows = .append(
-      .{
+      DecisionRenderRow.{
         func: c.func,
         local: c.update_result.id,
         family: "record_backed_${c.family}",
@@ -937,7 +937,7 @@ fn scan_op(
           .Some(t) => {
             // Ordinary update-call candidate.
             st.calls = .append(
-              .{
+              Candidate.{
                 func_id,
                 func,
                 result,
@@ -974,7 +974,7 @@ fn scan_op(
       // Record-shell candidate.
       case atom_local(base) {
         .Some(bl) => st.records = .append(
-          .{
+          RecordCandidate.{
             func_id,
             func,
             result,
@@ -995,7 +995,7 @@ fn scan_op(
             .Some(pu) => if pu.proj.record_base.id == rb.id
               and pu.proj.fid.id == fid.id and pu.proj.tid.id == tid.id {
               st.fields = .append(
-                .{
+                FieldBackedCandidate.{
                   func_id,
                   func,
                   record_base: rb,
@@ -1251,7 +1251,7 @@ fn stale_artifact_rows(candidates: Vector<Candidate>) Vector<DecisionRenderRow> 
   rows: Vector<DecisionRenderRow> = []
   for c in candidates {
     rows = .append(
-      .{
+      DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
         family: c.family,

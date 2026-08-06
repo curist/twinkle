@@ -210,7 +210,7 @@ pub fn is_empty(fm: FieldMap) Bool {
 // depth <= 2 (deeper is dropped, sound under-claim). Under an Elem/Val prefix no
 // deeper nesting is representable, so only the shell tag lands.
 pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
-  fm.paths[path_key(.{ segs: [prefix] })] = 0
+  fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
   case prefix {
     .Field(_) => {
       for k, v in src.paths {
@@ -221,9 +221,9 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         // and any depth-2 inner (would rebase to depth-3) are dropped — sound under-claim.
         if inner.segs.len() == 1 {
           case inner.segs[0] {
-            .Elem => fm.paths[path_key(.{ segs: [prefix, .Elem] })] = v,
-            .Val => fm.paths[path_key(.{ segs: [prefix, .Val] })] = v,
-            .Field(_) => fm.paths[path_key(.{ segs: [prefix, inner.segs[0]] })] = v,
+            .Elem => fm.paths[path_key(AccessPath.{ segs: [prefix, .Elem] })] = v,
+            .Val => fm.paths[path_key(AccessPath.{ segs: [prefix, .Val] })] = v,
+            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
             _ => {}, // Payload inners not representable under Field prefix
           }
         }
@@ -235,7 +235,7 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         inner := path_of_key(k)
         if inner.segs.len() == 1 {
           case inner.segs[0] {
-            .Field(_) => fm.paths[path_key(.{ segs: [prefix, inner.segs[0]] })] = v,
+            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
             _ => {}, // Elem/Val/Payload inners not representable at depth 2 — sound under-claim
           }
         }
@@ -261,7 +261,7 @@ pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
       if p.segs.len() == 1 {
         shell = .Some(v)
       } else {
-        inner.paths[path_key(.{ segs: [p.segs[1]] })] = v
+        inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = v
       }
     }
   }

@@ -168,7 +168,7 @@ fn record_op(s: UseScan, site: LocalId, kind: MutVecOpKind) UseScan {
       _ => s.set_count,
     },
     exit_count: s.exit_count,
-    op_sites: s.op_sites.append(.{ site, kind }),
+    op_sites: s.op_sites.append(MutVecOpSite.{ site, kind }),
   }
 }
 

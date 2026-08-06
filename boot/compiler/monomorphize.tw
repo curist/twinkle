@@ -1050,7 +1050,7 @@ fn collect_instantiations(
               subst := ctx.infer_call_subst(gf, args, expr.ty)
 
               if subst_covers(type_params, subst) {
-                queue.items = .append(.{ func_id: fid, subst })
+                queue.items = .append(InstItem.{ func_id: fid, subst })
               }
             },
             .None => {},
@@ -1074,7 +1074,7 @@ fn collect_instantiations(
               subst := ctx.infer_call_subst(gf, call_args, expr.ty)
 
               if subst_covers(type_params, subst) {
-                queue.items = .append(.{ func_id: fid, subst })
+                queue.items = .append(InstItem.{ func_id: fid, subst })
               }
             },
             .None => {},
@@ -1095,7 +1095,7 @@ fn collect_instantiations(
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
 
             if subst_covers(type_params, subst) {
-              queue.items = .append(.{ func_id: fid, subst })
+              queue.items = .append(InstItem.{ func_id: fid, subst })
             }
           },
           .None => {},
@@ -1113,7 +1113,7 @@ fn collect_instantiations(
             subst = capture_subst_from_free_vars(gf, free_vars, local_types, subst)
 
             if subst_covers(type_params, subst) {
-              queue.items = .append(.{ func_id: fid, subst })
+              queue.items = .append(InstItem.{ func_id: fid, subst })
             }
           },
           .None => {},
@@ -1384,7 +1384,9 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
       new_arms: Vector<MatchArm> = []
 
       for arm in arms {
-        new_arms = .append(.{ pattern: arm.pattern, body: apply_subst_to_expr(arm.body, subst) })
+        new_arms = .append(
+          MatchArm.{ pattern: arm.pattern, body: apply_subst_to_expr(arm.body, subst) },
+        )
       }
 
       .Match(apply_subst_to_expr(scrut, subst), new_arms)
@@ -1403,7 +1405,9 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
       new_fields: Vector<FieldInit> = []
 
       for fi in fields {
-        new_fields = .append(.{ field: fi.field, value: apply_subst_to_expr(fi.value, subst) })
+        new_fields = .append(
+          FieldInit.{ field: fi.field, value: apply_subst_to_expr(fi.value, subst) },
+        )
       }
 
       .Record(tid, new_fields)
@@ -1634,7 +1638,10 @@ fn rewrite_calls_kind(
 
       for arm in arms {
         new_arms = .append(
-          .{ pattern: arm.pattern, body: rewrite_calls(arm.body, spec_map, ctx, local_types) },
+          MatchArm.{
+            pattern: arm.pattern,
+            body: rewrite_calls(arm.body, spec_map, ctx, local_types),
+          },
         )
       }
 
@@ -1655,7 +1662,7 @@ fn rewrite_calls_kind(
 
       for fi in fields {
         new_fields = .append(
-          .{ field: fi.field, value: rewrite_calls(fi.value, spec_map, ctx, local_types) },
+          FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, ctx, local_types) },
         )
       }
 
@@ -1876,7 +1883,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         new_params: Vector<Param> = []
 
         for p in gf.params {
-          new_params = .append(.{ local: p.local, ty: apply_subst(p.ty, item.subst) })
+          new_params = .append(Param.{ local: p.local, ty: apply_subst(p.ty, item.subst) })
         }
 
         new_body := apply_subst_to_expr(gf.body, item.subst)
@@ -1911,7 +1918,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     if !generic_ids.has(func.func_id.id) {
       new_body := rewrite_calls_func(func, spec_map, ctx)
       rewritten = .append(
-        .{
+        FunctionDef.{
           func_id: func.func_id,
           name: func.name,
           is_init: func.is_init,
@@ -1928,7 +1935,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
   for func in new_functions {
     new_body := rewrite_calls_func(func, spec_map, ctx)
     rewritten = .append(
-      .{
+      FunctionDef.{
         func_id: func.func_id,
         name: func.name,
         is_init: func.is_init,

@@ -296,7 +296,7 @@ fn hints_from_closure_params(ctx: HintCtx, closure_expr: Expr, params: Vector<Pa
     }
 
     label := ty_to_string_env(ctx.typed.env, param_types[i])
-    out = .append(.{ position: p.name_span.end, label: ": ${label}", kind: .TypeHint })
+    out = .append(InlayHint.{ position: p.name_span.end, label: ": ${label}", kind: .TypeHint })
   }
 
   out
@@ -361,7 +361,7 @@ fn param_hints_for_call(ctx: HintCtx, callee: Expr, args: Vector<Expr>) Vector<I
       continue
     }
 
-    out = .append(.{ position: arg.span.start, label: "${name}: ", kind: .ParameterHint })
+    out = .append(InlayHint.{ position: arg.span.start, label: "${name}: ", kind: .ParameterHint })
   }
 
   out

@@ -285,7 +285,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
     snap_id := next.get()
     next.set(snap_id + 1)
     remap[src_id] = snap_id
-    snapshots = .append(.{ src: .{ id: src_id }, snap: .{ id: snap_id } })
+    snapshots = .append(SnapshotBinding.{ src: .{ id: src_id }, snap: .{ id: snap_id } })
   }
 
   .{ remap, snapshots }

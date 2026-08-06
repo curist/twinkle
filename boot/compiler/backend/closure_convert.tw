@@ -97,7 +97,7 @@ fn record_captures(ctx: ConvCtx, fid: FuncId, free_vars: Vector<LocalId>, state:
 
   for fv in free_vars {
     params = .append(
-      .{
+      CaptureParam.{
         local_id: fv,
         param_local: .{ id: next_local },
         ty: ctx.resolve_capture_type_with_captures(fv, state.captures),
@@ -138,7 +138,7 @@ fn rewrite_func(func: AnfFunctionDef, captures: Dict<Int, Vector<CaptureParam>>)
 
       for cap in cap_params {
         rename[cap.local_id.id] = cap.param_local
-        cap_declared = .append(.{ local: cap.param_local, ty: cap.ty })
+        cap_declared = .append(Param.{ local: cap.param_local, ty: cap.ty })
       }
 
       .{
