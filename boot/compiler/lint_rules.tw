@@ -28,17 +28,24 @@ pub fn describe(rule: String) RuleInfo? {
       .{
         brief: "rebuilds a record by copying fields; rebind the changed field directly",
         detailed:
-          \\A function that returns a record literal copying most fields verbatim
-          \\from a parameter of the same type is a `with_*` helper. Rebind the
-          \\field you mean instead:
+          \\A function that returns a record literal reconstructing a parameter of
+          \\the same type — copying its fields verbatim, or updating a field from
+          \\its own prior value — is a `with_*` helper. Rebind the field you mean
+          \\instead:
           \\
           \\    // Avoid
           \\    fn with_docs(s: State, docs: Store) State {
           \\      .{ initialized: s.initialized, docs, cache: s.cache }
           \\    }
+          \\    fn set(m: BlockMap, k: Int, v: Int) BlockMap {
+          \\      BlockMap.{ inner: m.inner.set(k, v) }
+          \\    }
           \\
           \\    // Prefer
           \\    s.docs = new_store
+          \\    // and, for the copy-with-update:
+          \\    m.inner = .set(k, v)
+          \\    m
         ,
       },
     ),

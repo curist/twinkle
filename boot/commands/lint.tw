@@ -493,6 +493,7 @@ fn select_edits(
   fix_ml: Bool,
   fix_constant_fn: Bool,
   fix_case_dispatch: Bool,
+  fix_record_copy: Bool,
 ) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
@@ -504,6 +505,7 @@ fn select_edits(
       or f.rule == "prefer-multiline-string" and fix_ml
       or f.rule == "constant-fn" and fix_constant_fn
       or f.rule == "prefer-case-dispatch" and fix_case_dispatch
+      or f.rule == "record-copy-helper" and fix_record_copy
 
     if selected and f.edits.len() > 0 {
       existing := case edits_by_file[f.path] {
@@ -541,6 +543,7 @@ pub fn select_edits_for_test(
   fix_ml: Bool,
   fix_constant_fn: Bool,
   fix_case_dispatch: Bool,
+  fix_record_copy: Bool,
 ) Dict<String, Vector<FixEdit>> {
   select_edits(
     findings,
@@ -551,6 +554,7 @@ pub fn select_edits_for_test(
     fix_ml,
     fix_constant_fn,
     fix_case_dispatch,
+    fix_record_copy,
   )
 }
 
@@ -570,6 +574,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_ml := fix_all or parsed.has_flag("fix-prefer-multiline-string")
   fix_constant_fn := fix_all or parsed.has_flag("fix-constant-fn")
   fix_case_dispatch := fix_all or parsed.has_flag("fix-prefer-case-dispatch")
+  fix_record_copy := fix_all or parsed.has_flag("fix-record-copy-helper")
   explain := parsed.has_flag("explain")
   color := default_config().color
   any_apply := fix_unused
@@ -579,6 +584,7 @@ pub fn run_lint_command(parsed: ParseResult) {
     or fix_ml
     or fix_constant_fn
     or fix_case_dispatch
+    or fix_record_copy
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -623,6 +629,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       fix_ml,
       fix_constant_fn,
       fix_case_dispatch,
+      fix_record_copy,
     )
 
     if edits.len() == 0 {

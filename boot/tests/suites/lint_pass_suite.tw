@@ -144,10 +144,72 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "L3: does not flag a function doing real work",
+      "L3: flags an arithmetic field update from the same field",
       fn() {
         fs := findings("fn bump(state: State) State {\n  .{ count: state.count + 1 }\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "record-copy-helper")
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not flag a fresh constructor with a same-type param",
+      fn() {
+        fs := findings("fn reset(state: State) State {\n  .{ count: 0 }\n}\n")
         try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not flag a field derived from a different field",
+      fn() {
+        fs := findings("fn f(p: State) State {\n  .{ x: p.x, y: p.x.wrap() }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: autofixes a single-field wrapper update to direct rebinding",
+      fn() {
+        src := "fn set(m: BlockMap, k: Int, v: Int) BlockMap {\n  BlockMap.{ inner: m.inner.set(k, v) }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn set(m: BlockMap, k: Int, v: Int) BlockMap {\n  m.inner = .set(k, v)\n  m\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: autofixes a multi-field record with one updated field",
+      fn() {
+        src := "fn f(p: State) State {\n  State.{ x: p.x, y: p.y, z: p.z + 1 }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(p: State) State {\n  p.z = p.z + 1\n  p\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: flags but does not autofix two updated fields (report-only)",
+      fn() {
+        fs := findings("fn f(p: State) State {\n  State.{ x: p.x + 1, y: p.y + 1 }\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: flags but does not autofix when a sibling field is a pass-through",
+      fn() {
+        fs := findings("fn f(p: State, docs: Int) State {\n  State.{ docs, z: p.z + 1 }\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
       },
     )
@@ -156,6 +218,17 @@ pub fn suite() runner.Suite {
       fn() {
         fs := findings("fn make(n: Int) State {\n  .{ initialized: n }\n}\n")
         try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: flags a single-field wrapper updating its field from the same field",
+      fn() {
+        fs := findings(
+          "fn set(m: BlockMap, k: Int, v: Int) BlockMap {\n  BlockMap.{ inner: m.inner.set(k, v) }\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "record-copy-helper")
         .Ok({})
       },
     )

@@ -11,7 +11,8 @@ pub fn block_set() BlockSet {
 
 /// Add a block id (persistent: returns a new set).
 pub fn insert(s: BlockSet, id: Int) BlockSet {
-  BlockSet.{ inner: s.inner.set(id, true) }
+  s.inner = .set(id, true)
+  s
 }
 
 /// True when the block id is present.

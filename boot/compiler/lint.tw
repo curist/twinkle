@@ -61,7 +61,7 @@ pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<Lint
   for item in module.items {
     case item {
       .Function(decl) => {
-        out = .concat(lint_record_copy(decl, env))
+        out = .concat(lint_record_copy(decl, env, source))
         out = .concat(lint_constant_fn(decl, module, source))
         out = .concat(
           lint_block(
@@ -1600,7 +1600,26 @@ fn last_segment(segments: Vector<String>) String? {
   }
 }
 
-type EntryKind = { CopyFromP, Trivial, NonTrivial }
+type EntryKind = { CopyFromP, UpdatedCopy, Trivial, NonTrivial }
+
+/// The leftmost operand/receiver an expression is built from: peel the
+/// "update" layers (method call, binary/unary op, index) down to the value
+/// being transformed, so `m.inner.set(k, v)` and `p.count + 1` both bottom out
+/// at the field they derive from.
+fn spine_base(e: Expr) Expr {
+  case e.kind {
+    // A method call `recv.method(args)` transforms `recv`; a plain call
+    // `f(args)` is anchored by its callee.
+    .Call(callee, _) => case callee.kind {
+      .Field(recv, _) => spine_base(recv),
+      _ => spine_base(callee),
+    },
+    .Binary(_, l, _) => spine_base(l),
+    .Unary(_, inner) => spine_base(inner),
+    .Index(base, _) => spine_base(base),
+    _ => e,
+  }
+}
 
 /// Classify a record entry relative to the candidate copy-source param `pname`.
 fn classify_entry(pname: String, entry: RecordEntry) EntryKind {
@@ -1620,41 +1639,129 @@ fn classify_entry(pname: String, entry: RecordEntry) EntryKind {
         },
         _ => .NonTrivial,
       },
-      // Anything else (call, arithmetic, literal, nested record, …) is real work.
-      _ => .NonTrivial,
+      // A call/op/index whose transformed value is `p`'s same-named field
+      // (`f: p.f.set(k, v)`, `f: p.f + 1`) is a copy-with-update, not real work.
+      _ => case spine_base(e).kind {
+        .Field(rb, rf) => case rb.kind {
+          .Ident(rbn) => if rbn == pname and rf == entry.name {
+            .UpdatedCopy
+          } else {
+            .NonTrivial
+          },
+          _ => .NonTrivial,
+        },
+        _ => .NonTrivial,
+      },
     },
   }
 }
 
-/// True when `entries` rebuild a record purely by copying `pname`'s fields and
-/// passing through other params/locals — with at least one verbatim copy of `p`.
+/// True when `entries` rebuild a record purely by copying `pname`'s fields,
+/// updating some of them from their own prior value, and passing through other
+/// params/locals — with at least one copied-or-updated field of `p`.
 fn is_copy_rebuild(pname: String, entries: Vector<RecordEntry>) Bool {
-  copies := 0
+  touches := 0
 
   for entry in entries {
     case classify_entry(pname, entry) {
-      .CopyFromP => copies = copies + 1,
+      .CopyFromP => touches = touches + 1,
+      .UpdatedCopy => touches = touches + 1,
       .Trivial => {},
       .NonTrivial => return false,
     }
   }
 
-  copies >= 1
+  touches >= 1
 }
 
-fn copy_finding(decl: FunctionDecl, rec_type: String) Vector<LintFinding> {
+// True when `e` is exactly `pname.fname`.
+fn is_field_of(pname: String, fname: String, e: Expr) Bool {
+  case e.kind {
+    .Field(base, f) => f == fname
+      and case base.kind {
+        .Ident(bn) => bn == pname,
+        _ => false,
+      },
+    _ => false,
+  }
+}
+
+// Source text for the rebinding RHS. A method call on the same field
+// (`p.f.set(k, v)`) becomes the `.set(k, v)` rebinding shorthand; anything else
+// (`p.f + 1`) keeps its original text.
+fn updated_rhs_text(pname: String, fname: String, rhs: Expr, source: String) String {
+  case rhs.kind {
+    .Call(callee, _) => case callee.kind {
+      .Field(recv, _) => if is_field_of(pname, fname, recv) {
+        source.slice(recv.span.end, rhs.span.end)
+      } else {
+        source.slice(rhs.span.start, rhs.span.end)
+      },
+      _ => source.slice(rhs.span.start, rhs.span.end),
+    },
+    _ => source.slice(rhs.span.start, rhs.span.end),
+  }
+}
+
+// R1 autofix for the unambiguous shape only: every entry is a verbatim copy of
+// `pname` except exactly one field updated from its own prior value, and the
+// result record is the function's tail expression. Rewrites to a direct
+// rebinding (`p.f = …; p`). Any `Trivial` entry (a shorthand pun or a field
+// pulled from another value) or multiple updates ⇒ report-only.
+fn updated_copy_edits(pname: String, entries: Vector<RecordEntry>, result: Expr, source: String) Vector<
+  FixEdit,
+> {
+  updates := 0
+  updated: RecordEntry? = .None
+
+  for entry in entries {
+    case classify_entry(pname, entry) {
+      .UpdatedCopy => {
+        updates = updates + 1
+        updated = .Some(entry)
+      },
+      .CopyFromP => {},
+      _ => return [],
+    }
+  }
+
+  if updates != 1 {
+    return []
+  }
+
+  ue := case updated {
+    .Some(e) => e,
+    .None => return [],
+  }
+  rhs := case ue.value {
+    .Some(e) => e,
+    .None => return [],
+  }
+
+  indent := case line_indent(source, result.span.start) {
+    .Some(w) => w,
+    .None => return [],
+  }
+
+  rhs_text := updated_rhs_text(pname, ue.name, rhs, source)
+  replacement := "${pname}.${ue.name} = ${rhs_text}\n${indent}${pname}"
+  [.{ start: result.span.start, end: result.span.end, replacement }]
+}
+
+fn copy_finding(decl: FunctionDecl, rec_type: String, edits: Vector<FixEdit>) Vector<LintFinding> {
   [
-    report_finding(
-      decl.name_span,
-      "`${decl.name}` rebuilds `${rec_type}` by copying fields; rebind directly (`p.field = v`) instead",
-      "record-copy-helper",
-    ),
+    .{
+      span: decl.name_span,
+      message: "`${decl.name}` rebuilds `${rec_type}` by copying fields; rebind directly (`p.field = v`) instead",
+      rule: "record-copy-helper",
+      edits,
+    },
   ]
 }
 
 type RecordResult = .{ rec_type: String, entries: Vector<RecordEntry> }
 
-fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
+fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv, source: String) Vector<LintFinding> {
   // The result expression is the body's trailing expression.
   result := case decl.body.tail {
     .Some(e) => e,
@@ -1689,7 +1796,8 @@ fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
     }
 
     if same_type and is_copy_rebuild(param.name, found.entries) {
-      return copy_finding(decl, found.rec_type)
+      edits := updated_copy_edits(param.name, found.entries, result, source)
+      return copy_finding(decl, found.rec_type, edits)
     }
   }
 

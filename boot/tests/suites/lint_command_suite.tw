@@ -93,11 +93,64 @@ pub fn suite() runner.Suite {
           },
         ]
 
-        edits := lint.select_edits_for_test(findings, false, false, false, false, true, false, true)
+        edits := lint.select_edits_for_test(
+          findings,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+        )
         selected := try edits["a.tw"].ok_or("expected edits for a.tw")
         try assert.equal(selected.len(), 2)
         try assert.equal(selected[0].start, 0)
         try assert.equal(selected[1].start, 120)
+        .Ok({})
+      },
+    )
+    .test(
+      "select_edits: record-copy-helper is applied only when its flag is set",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "copy-with-update",
+            rule: "record-copy-helper",
+            edits: [FixEdit.{ start: 10, end: 30, replacement: "m.inner = .set(k, v)\n  m" }],
+          },
+        ]
+
+        none := lint.select_edits_for_test(
+          findings,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+        )
+        try assert.is_false(none.has("a.tw"))
+
+        some := lint.select_edits_for_test(
+          findings,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+        )
+        selected := try some["a.tw"].ok_or("expected record-copy-helper edit")
+        try assert.equal(selected.len(), 1)
+        try assert.equal(selected[0].start, 10)
         .Ok({})
       },
     )

@@ -9,7 +9,8 @@ pub fn local_set() LocalSet {
 
 /// Add a local id (persistent: returns a new set).
 pub fn insert(s: LocalSet, id: Int) LocalSet {
-  LocalSet.{ inner: s.inner.set(id, true) }
+  s.inner = .set(id, true)
+  s
 }
 
 /// True when the local id is present.

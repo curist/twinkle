@@ -45,6 +45,7 @@ lint_cmd := command
   )
   .add_flag("fix-constant-fn", "Apply only the constant-returning-fn -> module-constant rewrite")
   .add_flag("fix-prefer-case-dispatch", "Apply only the prefer-case-dispatch rewrite")
+  .add_flag("fix-record-copy-helper", "Apply only the record-copy-helper rebind rewrite")
   .add_flag("explain", "Show the full rationale for each reported rule")
 
 ir_cmd := file_command("ir", "Compile and print compiler IR")

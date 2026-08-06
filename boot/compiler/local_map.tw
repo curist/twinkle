@@ -28,7 +28,8 @@ pub fn has<T>(m: LocalMap<T>, k: Int) Bool {
 
 /// Bind a local id (persistent: returns a new map).
 pub fn set<T>(m: LocalMap<T>, k: Int, v: T) LocalMap<T> {
-  LocalMap.{ inner: m.inner.set(k, v) }
+  m.inner = .set(k, v)
+  m
 }
 
 /// The local ids, in the backing dict's iteration order.
