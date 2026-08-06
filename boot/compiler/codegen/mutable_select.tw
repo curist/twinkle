@@ -257,7 +257,7 @@ pub fn select_call_with_policy(
 
   d := ds[0]
 
-  reject := fn(reason: SelectionReason) CallSelection { CallSelection.{
+  reject := fn(reason: SelectionReason) CallSelection { .{
     emit_func: persistent_fallback,
     would_func: persistent_fallback,
     reason,
@@ -361,7 +361,7 @@ pub fn select_record_update_with_policy(
 
   d := ds[0]
 
-  reject := fn(reason: SelectionReason) RecordReuseSelection { RecordReuseSelection.{
+  reject := fn(reason: SelectionReason) RecordReuseSelection { .{
     emit_can_reuse: original_can_reuse,
     would_reuse: false,
     reason,
