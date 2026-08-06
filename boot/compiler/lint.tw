@@ -1606,6 +1606,14 @@ fn prefix_strip_edits(source: String, expr: Expr, name: String) Vector<FixEdit> 
   start := expr.span.start
   stop := start + name.len()
 
+  // A qualified path (`mod.Config`) is folded into `name` verbatim by
+  // `dotted_name_expr`, so the slice-equality check below would otherwise
+  // match its own spelling and strip the whole qualifier. Decline explicitly:
+  // PascalCase type names never contain `.`, so this only ever fires on a
+  // dotted path.
+  if name.contains(".") {
+    return []
+  }
   if source.slice(start, stop) != name {
     return []
   }
