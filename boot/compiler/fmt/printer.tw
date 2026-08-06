@@ -69,7 +69,7 @@ fn build_trivia_map(tokens: Vector<Token>, source: String) TriviaMap {
     }
   }
 
-  TriviaMap.{ leading, trailing, literal_text, string_form, leading_positions, trailing_positions }
+  .{ leading, trailing, literal_text, string_form, leading_positions, trailing_positions }
 }
 
 fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -1560,17 +1560,17 @@ fn collect_binary_chain(op: BinOp, lhs: Expr, rhs: Expr) BinaryChain {
   case rhs.kind {
     .Binary(child_op, child_lhs, child_rhs) => if child_op == op and can_flatten_right_binary(op) {
       right_chain := collect_binary_chain(child_op, child_lhs, child_rhs)
-      pieces = .append(BinaryPiece.{ op, expr: right_chain.first })
+      pieces = .append(.{ op, expr: right_chain.first })
       pieces = .concat(right_chain.pieces)
     } else {
-      pieces = .append(BinaryPiece.{ op, expr: rhs })
+      pieces = .append(.{ op, expr: rhs })
     },
     _ => {
-      pieces = .append(BinaryPiece.{ op, expr: rhs })
+      pieces = .append(.{ op, expr: rhs })
     },
   }
 
-  BinaryChain.{ first, pieces }
+  .{ first, pieces }
 }
 
 fn can_flatten_right_binary(op: BinOp) Bool {

@@ -677,7 +677,7 @@ pub fn extract_exports_for_module(
         case env.lookup_type(decl.name) {
           .Some(entry) => {
             visible_types = .append(
-              ExportedType.{
+              .{
                 name: decl.name,
                 entry,
                 origin: env.exported_type_origin(entry.id, module_key, decl.name),
@@ -732,7 +732,7 @@ pub fn extract_exports_for_module(
         case env.lookup_type(decl.name) {
           .Some(entry) => {
             visible_types = .append(
-              ExportedType.{
+              .{
                 name: decl.name,
                 entry,
                 origin: env.exported_type_origin(entry.id, module_key, decl.name),
@@ -783,7 +783,7 @@ pub fn extract_exports_for_module(
       }
 
       support_types = .append(
-        ExportedType.{
+        .{
           name,
           entry: env.types[i],
           origin: env.exported_type_origin(env.types[i].id, module_key, name),
@@ -902,7 +902,7 @@ pub fn extract_exports_for_module(
       .Stmt(.Let(ls)) => if ls.is_pub {
         case pub_values[ls.name] {
           .Some(ty) => {
-            exported_values = .append(ExportedValue.{ name: ls.name, ty })
+            exported_values = .append(.{ name: ls.name, ty })
           },
           .None => {},
         }
@@ -911,7 +911,7 @@ pub fn extract_exports_for_module(
     }
   }
 
-  ModuleExports.{
+  .{
     doc: module.doc,
     visible_types,
     support_types,

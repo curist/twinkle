@@ -399,7 +399,7 @@ pub fn select_lib_exports(
         }
 
         exports = .append(
-          LibExport.{ name: decl.name, wasm_name: decl.name, target: .Function(fid), params, ret },
+          .{ name: decl.name, wasm_name: decl.name, target: .Function(fid), params, ret },
         )
       },
       .Stmt(stmt) => case stmt {
@@ -450,7 +450,7 @@ pub fn select_lib_exports(
             },
           }
           exports = .append(
-            LibExport.{
+            .{
               name: ls.name,
               wasm_name: "__get_${ls.name}",
               target: .Value(GlobalId.{ id: gid.id }),

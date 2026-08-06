@@ -472,7 +472,7 @@ fn opaque_export_type(exported: ExportedType) ExportedType {
 }
 
 fn opaque_type_exports(exports: ModuleExports) ModuleExports {
-  ModuleExports.{
+  .{
     doc: exports.doc,
     visible_types: collect exported in exports.visible_types {
       opaque_export_type(exported)
@@ -755,7 +755,7 @@ fn build_import_env(
     t_lookup0 := date.now()
     interface := case cur.interfaces[dep.canonical_path] {
       .Some(i) => i,
-      .None => return ImportEnvResult.{ env, ok: false, state: cur },
+      .None => return .{ env, ok: false, state: cur },
     }
 
     if cur.timed {
@@ -804,7 +804,7 @@ fn build_import_env(
     }
   }
 
-  ImportEnvResult.{ env, ok: true, state: cur }
+  .{ env, ok: true, state: cur }
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
@@ -1111,7 +1111,7 @@ pub fn discover_closure(id: identity.SourceIdentity, state: AnalysisState) Disco
 
   acc = discover_module(canonical, .None, .None, acc)
 
-  Discovery.{
+  .{
     state: acc.state,
     order: acc.order,
     edges: acc.edges,
@@ -1267,7 +1267,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   // through a restored dependency closure). Its diagnostics were reported on first
   // analysis, so re-reporting here would duplicate them.
   case cur.exports[canonical] {
-    .Some(_) => return SingletonResult.{
+    .Some(_) => return .{
       env: base,
       state: cur,
       diagnostics: [],
@@ -1279,20 +1279,13 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   }
 
   if cur.failed.has(canonical) {
-    return SingletonResult.{
-      env: base,
-      state: cur,
-      diagnostics: [],
-      ok: false,
-      rewrites: [],
-      lints: [],
-    }
+    return .{ env: base, state: cur, diagnostics: [], ok: false, rewrites: [], lints: [] }
   }
 
   module_id := identity.from_path(canonical)
   loaded := case cur.load_source(canonical, module_id, .None, .None) {
     .Ok(v) => v,
-    .Err(err) => return SingletonResult.{
+    .Err(err) => return .{
       env: base,
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
@@ -1304,7 +1297,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   cur = loaded.state
   parsed_load := case cur.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(v) => v,
-    .Err(err) => return SingletonResult.{
+    .Err(err) => return .{
       env: base,
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
@@ -1316,7 +1309,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   cur = parsed_load.state
   dep_plan := case cur.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(p) => p,
-    .Err(err) => return SingletonResult.{
+    .Err(err) => return .{
       env: base,
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
@@ -1335,7 +1328,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     // breaks doesn't surface semantics built against the now-gone dependency —
     // mirrors the old recursive path clearing the importer on dependency failure.
     cur.cache = .clear_resolved_and_later(canonical)
-    return SingletonResult.{
+    return .{
       env: base,
       state: cur.mark_failed(canonical),
       diagnostics: [],
@@ -1381,7 +1374,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     [],
   ) {
     .Ok(v) => v,
-    .Err(err) => return SingletonResult.{
+    .Err(err) => return .{
       env: base,
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
@@ -1417,7 +1410,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     next.timings.unused_imports = next.timings.unused_imports + (date.now() - t_unused0)
   }
 
-  SingletonResult.{
+  .{
     env: local.checked.env,
     state: next,
     diagnostics: findings.diagnostics,
@@ -1514,7 +1507,7 @@ fn find_group_back_edge(
     span: span.new(0, 0, 0),
   }
   acc = dfs_back_edge(members[0], by_canon, mset, acc)
-  BackEdge.{ source: acc.source, span: acc.span }
+  .{ source: acc.source, span: acc.span }
 }
 
 /// Resolve + typecheck + publish every member of a MULTI-module SCC as a group.
@@ -1619,7 +1612,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   }
 
   if all_published {
-    return GroupResult.{
+    return .{
       member_envs: Dict.new(),
       state: cur,
       diagnostics: [],
@@ -1637,7 +1630,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     module_id := identity.from_path(m)
     ld := case cur.load_source(m, module_id, .None, .None) {
       .Ok(v) => v,
-      .Err(err) => return GroupResult.{
+      .Err(err) => return .{
         member_envs: Dict.new(),
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
@@ -1649,7 +1642,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     cur = ld.state
     pl := case cur.parse_cached(m, ld.source, ld.source_hash) {
       .Ok(v) => v,
-      .Err(err) => return GroupResult.{
+      .Err(err) => return .{
         member_envs: Dict.new(),
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
@@ -1661,7 +1654,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     cur = pl.state
     dp := case cur.plan_dependencies(m, pl.parsed, ld.source) {
       .Ok(p) => p,
-      .Err(err) => return GroupResult.{
+      .Err(err) => return .{
         member_envs: Dict.new(),
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
@@ -1672,7 +1665,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
     empty_diags: Vector<diag.DiagKind> = []
     loaded_members = .append(
-      GroupMember.{
+      .{
         canonical: m,
         parsed: pl.parsed,
         source: ld.source,
@@ -1714,7 +1707,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       "Top-level initialization cycle: modules ${names} form an import cycle and have top-level statements",
     )
 
-    return GroupResult.{
+    return .{
       member_envs: Dict.new(),
       state: cur.mark_members_failed(members),
       diagnostics: [d],
@@ -1733,7 +1726,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
 
     if shadow_diags.len() > 0 {
       diags := wrap_diags(lm.source, "resolve", shadow_diags, type_name_snapshot(base))
-      return GroupResult.{
+      return .{
         member_envs: Dict.new(),
         state: cur.clear_group_artifacts(members).mark_members_failed(members),
         diagnostics: diags,
@@ -1762,7 +1755,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     cur = ext_res.state
 
     if !ext_res.ok {
-      return GroupResult.{
+      return .{
         member_envs: Dict.new(),
         state: cur.clear_group_artifacts(members).mark_members_failed(members),
         diagnostics: [],
@@ -1912,11 +1905,11 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       continue
     }
 
-    typed_members = .append(TypedGroupMember.{ member: mc, typed, runner, group_deps_hash })
+    typed_members = .append(.{ member: mc, typed, runner, group_deps_hash })
   }
 
   if !group_ok {
-    return GroupResult.{
+    return .{
       member_envs,
       state: cur.clear_group_artifacts(members).mark_members_failed(members),
       diagnostics: all_diags,
@@ -1956,7 +1949,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     group_lints = .concat(findings.lints)
   }
 
-  GroupResult.{
+  .{
     member_envs,
     state: cur,
     diagnostics: all_diags,

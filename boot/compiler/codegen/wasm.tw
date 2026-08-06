@@ -322,13 +322,10 @@ fn register_anon_ft(
   key := ft_sig_key(params, results)
 
   if anon_ft_idx.has(key) {
-    AnonFtState.{ anon_ft, anon_ft_idx }
+    .{ anon_ft, anon_ft_idx }
   } else {
     idx := base + anon_ft.len()
-    AnonFtState.{
-      anon_ft: anon_ft.append(.{ params, results }),
-      anon_ft_idx: anon_ft_idx.set(key, idx),
-    }
+    .{ anon_ft: anon_ft.append(.{ params, results }), anon_ft_idx: anon_ft_idx.set(key, idx) }
   }
 }
 
@@ -845,7 +842,7 @@ fn cached_type_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
       idx := ctx.type_idx_of(name)
       .{
         idx,
-        cache: CodeSectionCache.{
+        cache: .{
           type_idx_cache: cache.type_idx_cache.set(name, idx),
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache,
@@ -863,7 +860,7 @@ fn cached_func_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
       idx := ctx.func_idx_of(name)
       .{
         idx,
-        cache: CodeSectionCache.{
+        cache: .{
           type_idx_cache: cache.type_idx_cache,
           func_idx_cache: cache.func_idx_cache.set(name, idx),
           global_idx_cache: cache.global_idx_cache,
@@ -881,7 +878,7 @@ fn cached_global_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cac
       idx := ctx.global_idx_of(name)
       .{
         idx,
-        cache: CodeSectionCache.{
+        cache: .{
           type_idx_cache: cache.type_idx_cache,
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache.set(name, idx),
@@ -899,7 +896,7 @@ fn cached_data_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
       idx := ctx.data_idx_of(name)
       .{
         idx,
-        cache: CodeSectionCache.{
+        cache: .{
           type_idx_cache: cache.type_idx_cache,
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache,

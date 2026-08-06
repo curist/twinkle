@@ -11,7 +11,7 @@ pub type GraphError = { Cycle(Vector<String>) }
 
 /// Create an empty dependency graph.
 pub fn empty() DependencyGraph {
-  DependencyGraph.{ forward: Dict.new(), reverse: Dict.new() }
+  .{ forward: Dict.new(), reverse: Dict.new() }
 }
 
 /// Set the dependencies for a module, updating forward and reverse maps.
@@ -50,7 +50,7 @@ pub fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>
     fwd[module] = deps
   }
 
-  DependencyGraph.{ forward: fwd, reverse: rev }
+  .{ forward: fwd, reverse: rev }
 }
 
 /// Compute the transitive closure of reverse dependents for a changed module.

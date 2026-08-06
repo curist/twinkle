@@ -263,7 +263,7 @@ fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<Bui
   out: Vector<BuilderRegionDecision> = []
   for c in sorted {
     out = .append(
-      BuilderRegionDecision.{
+      .{
         key: c.region_key(),
         func_id: c.func_id,
         family: c.family,
@@ -271,9 +271,9 @@ fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<Bui
         seed_site: c.seed_site,
         loop_site: c.loop_site,
         fold_sites: c.fold_sites,
-        builder_local: LocalId.{ id: cur },
-        freeze_local: LocalId.{ id: cur + 1 },
-        assign_local: LocalId.{ id: cur + 2 },
+        builder_local: .{ id: cur },
+        freeze_local: .{ id: cur + 1 },
+        assign_local: .{ id: cur + 2 },
         from_base: c.from_base,
       },
     )
@@ -322,5 +322,5 @@ pub fn produce_builder_region_decisions(m: AnfModule, b: BuiltinRegistry) Builde
       by_func[f.func_id.id] = decisions
     }
   }
-  BuilderRegionDecisionTable.{ by_func }
+  .{ by_func }
 }

@@ -285,7 +285,7 @@ fn lower_method_value(
     span: s,
   }
   ctx.hoisted = .append(
-    FunctionDef.{
+    .{
       func_id: lambda_func_id,
       name: "__method_value",
       is_init: false,

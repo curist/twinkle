@@ -13,7 +13,7 @@ pub type BuilderConfig = .{
 
 pub fn empty_builder_config() BuilderConfig {
   zero := FuncId.{ id: 0 }
-  BuilderConfig.{
+  .{
     push_id: zero,
     builder_new_id: zero,
     builder_from_id: zero,
@@ -23,7 +23,7 @@ pub fn empty_builder_config() BuilderConfig {
 }
 
 pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
-  BuilderConfig.{
+  .{
     push_id: b.method_id("Vector", "append"),
     builder_new_id: b.id("vector$builder_new"),
     builder_from_id: b.id("vector$builder_from"),
@@ -41,7 +41,7 @@ pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
 /// false-positive bug class. `builder_new_id` is unused; it points at
 /// `builder_from` so any incidental semantics registration stays consistent.
 pub fn string_builder_config(b: BuiltinRegistry) BuilderConfig {
-  BuilderConfig.{
+  .{
     push_id: b.method_id("String", "concat"),
     builder_new_id: b.id("string$builder_from"),
     builder_from_id: b.id("string$builder_from"),

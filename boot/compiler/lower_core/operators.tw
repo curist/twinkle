@@ -60,7 +60,7 @@ pub fn uses_runtime_eq(ty: MonoType) Bool {
 fn lower_eq_result(ast_op: AstBinOp, call_expr: CoreExpr, s: Span) CoreExpr {
   case ast_op {
     .Eq => call_expr,
-    .Ne => CoreExpr.{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
+    .Ne => .{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
     _ => error("lower_eq_result: expected Eq/Ne"),
   }
 }
@@ -126,11 +126,11 @@ fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId
     [
       MatchArm.{
         pattern: variant_pattern(tid, vid, []),
-        body: CoreExpr.{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
+        body: .{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
       },
       MatchArm.{
         pattern: .Wildcard,
-        body: CoreExpr.{ kind: .LitBool(on_other), ty: MonoType.Bool, span: s },
+        body: .{ kind: .LitBool(on_other), ty: MonoType.Bool, span: s },
       },
     ],
   )
@@ -167,9 +167,9 @@ fn build_unit_sum_compare(
 
   for vid in variants {
     arms = .append(
-      MatchArm.{
+      .{
         pattern: variant_pattern(tid, vid, []),
-        body: CoreExpr.{
+        body: .{
           kind: build_unit_variant_compare(ast_op, right, tid, vid, s),
           ty: MonoType.Bool,
           span: s,
@@ -184,10 +184,7 @@ fn build_unit_sum_compare(
     true
   }
   arms = .append(
-    MatchArm.{
-      pattern: .Wildcard,
-      body: CoreExpr.{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s },
-    },
+    .{ pattern: .Wildcard, body: .{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s } },
   )
   .Match(left, arms)
 }
@@ -283,17 +280,17 @@ fn build_cmp_match(env: ResolvedEnv, ast_op: AstBinOp, compare_expr: CoreExpr, s
     .Ge => false,
     _ => false,
   }
-  CoreExpr.{
+  .{
     kind: .Match(
       compare_expr,
       [
         MatchArm.{
           pattern: variant_pattern(tid, vid, []),
-          body: CoreExpr.{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
+          body: .{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
         },
         MatchArm.{
           pattern: .Wildcard,
-          body: CoreExpr.{ kind: .LitBool(!on_match), ty: MonoType.Bool, span: s },
+          body: .{ kind: .LitBool(!on_match), ty: MonoType.Bool, span: s },
         },
       ],
     ),

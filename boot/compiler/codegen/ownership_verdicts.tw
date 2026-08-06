@@ -303,7 +303,7 @@ pub fn artifact_key_for_anf(opt: AnfModule) ArtifactKey {
       ]),
     )
   }
-  ArtifactKey.{ anf_hash: mix_all(parts) }
+  .{ anf_hash: mix_all(parts) }
 }
 
 // ── Shared ownership artifacts ──────────────────────────────────────
@@ -558,7 +558,7 @@ pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSeman
         - t_summary}ms scope_roots=-1",
     )
   }
-  OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
+  .{ key: artifact_key_for_anf(opt), view, table, analyzed }
 }
 
 // Like `compute_artifacts`, but scopes summary and ownership work to the mutable
@@ -674,7 +674,7 @@ pub fn compute_candidate_artifacts_seeded(
         - t_summary}ms scope_roots=${scope.keys().len()}",
     )
   }
-  OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
+  .{ key: artifact_key_for_anf(opt), view, table, analyzed }
 }
 
 // Flatten every analyzed block's exit verdicts into a table keyed by
@@ -701,7 +701,7 @@ pub fn verdicts_from_artifacts(artifacts: OwnershipArtifacts) VerdictTable {
       }
     }
   }
-  VerdictTable.{ key: artifacts.key, by_key: out }
+  .{ key: artifacts.key, by_key: out }
 }
 
 // Project the full verdict table down to just the requested join keys.
@@ -714,7 +714,7 @@ pub fn verdicts_for_keys(artifacts: OwnershipArtifacts, keys: Dict<String, Bool>
       .None => {},
     }
   }
-  VerdictTable.{ key: artifacts.key, by_key: out }
+  .{ key: artifacts.key, by_key: out }
 }
 
 // Compatibility wrapper preserving the pre-artifact call shape.

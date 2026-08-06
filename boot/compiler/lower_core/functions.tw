@@ -81,5 +81,5 @@ pub fn lower_function(
     body: body_r.expr,
     return_ty: ret_ty,
   }
-  FuncOut.{ def, ctx }
+  .{ def, ctx }
 }

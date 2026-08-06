@@ -328,7 +328,7 @@ fn rewrite_one_decision(f: AnfFunctionDef, d: BuilderRegionDecision, b: BuiltinR
           om[d.builder_local.id] = base_mono
           om[d.freeze_local.id] = base_mono
           om[d.assign_local.id] = MonoType.Void
-          AnfFunctionDef.{
+          .{
             func_id: f.func_id,
             name: f.name,
             is_init: f.is_init,

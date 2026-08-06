@@ -79,19 +79,19 @@ pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
     .None => {},
   }
 
-  LocalOut.{ local: id, ctx }
+  .{ local: id, ctx }
 }
 
 pub fn alloc_anon_local(ctx: LowerCtx) LocalOut {
   id := LocalId.{ id: ctx.next_local }
   ctx.next_local = ctx.next_local + 1
-  LocalOut.{ local: id, ctx }
+  .{ local: id, ctx }
 }
 
 pub fn alloc_func_id(ctx: LowerCtx) FuncIdOut {
   id := FuncId.{ id: ctx.next_func }
   ctx.next_func = ctx.next_func + 1
-  FuncIdOut.{ func_id: id, ctx }
+  .{ func_id: id, ctx }
 }
 
 pub fn push_scope(ctx: LowerCtx) LowerCtx {

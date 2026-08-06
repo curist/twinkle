@@ -107,7 +107,7 @@ pub type SummaryTable = .{
 }
 
 pub fn empty_summary_table() SummaryTable {
-  SummaryTable.{ by_func: Dict.new(), dedupe_helpers: Dict.new() }
+  .{ by_func: Dict.new(), dedupe_helpers: Dict.new() }
 }
 
 pub fn table_is_dedupe_helper(t: SummaryTable, func_id: Int) Bool {
@@ -737,7 +737,7 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
   // over-approximation). The forward pass seeds absent locals Unknown, so no
   // forward-seed change is needed.
   cur = diff_sorted(cur, blk.bound)
-  BlockScan.{ live_in: cur, live_after }
+  .{ live_in: cur, live_after }
 }
 
 // --- Borrow/effect framework model (dict copy-carrier proof engine) ---
@@ -859,7 +859,7 @@ type CopyCarrierFacts = .{
 }
 
 fn empty_copy_carrier_facts() CopyCarrierFacts {
-  CopyCarrierFacts.{
+  .{
     by_update: Dict.new(),
     suppress_alias: Dict.new(),
     suppress_read: Dict.new(),
@@ -890,7 +890,7 @@ fn cc_flatten_insts(blocks: Vector<CfgBlock>) Vector<CcFlatInst> {
   g := 0
   for blk in blocks {
     for inst in blk.instructions {
-      out = .append(CcFlatInst.{ g, op: inst.op, result: inst.anf_local.id })
+      out = .append(.{ g, op: inst.op, result: inst.anf_local.id })
       g = g + 1
     }
     g = g + 1
@@ -915,7 +915,7 @@ fn cc_carrier_candidates(flat: Vector<CcFlatInst>, params: Dict<Int, Bool>) Vect
   for fi in flat {
     case fi.op {
       .AInit(.ALocal(src)) => if in_set(params, src.id) and src.id != fi.result {
-        out = .append(CcCandidate.{ carrier: fi.result, source: src.id })
+        out = .append(.{ carrier: fi.result, source: src.id })
       },
       _ => {},
     }
@@ -945,14 +945,14 @@ fn cc_dict_writes(flat: Vector<CcFlatInst>, carrier: Int, ops: DictVecOps) Vecto
             } else {
               .DictSetUnknownKey
             }
-            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+            out = .append(.{ effect: eff, g: fi.g, result: fi.result, key_local })
           } else if f.id == ops.remove {
             eff: WriteEffect = if key_local >= 0 {
               .DictRemove(key_local)
             } else {
               .DictRemoveUnknownKey
             }
-            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+            out = .append(.{ effect: eff, g: fi.g, result: fi.result, key_local })
           }
         },
         .None => {},
@@ -1146,7 +1146,7 @@ pub fn analyze_copy_carriers(
                     .DictUnknownValue
                   }
                   loans = .append(
-                    Loan.{
+                    .{
                       source,
                       region: reg,
                       kind: .SharedRead,
@@ -1161,7 +1161,7 @@ pub fn analyze_copy_carriers(
               } else if f.id == ops.keys {
                 if args.len() >= 1 and atom_is_local_id(args[0], source) {
                   loans = .append(
-                    Loan.{
+                    .{
                       source,
                       region: .DictKeysOrder,
                       kind: .StructuralRead,
@@ -1199,7 +1199,7 @@ pub fn analyze_copy_carriers(
                               .DictUnknownValue
                             }
                             loans = .append(
-                              Loan.{
+                              .{
                                 source,
                                 region: reg,
                                 kind: .SharedRead,
@@ -1402,7 +1402,7 @@ type DictVecOps = .{
 }
 
 fn dict_vec_ops(b: BuiltinRegistry) DictVecOps {
-  DictVecOps.{
+  .{
     get: b.method_id("Dict", "get").id,
     get_unsafe: b.id("dict$get_unsafe").id,
     keys: b.id("dict$keys").id,
@@ -1432,7 +1432,7 @@ fn local_def_counts(blocks: Vector<CfgBlock>) LocalDefCounts {
       }
     }
   }
-  LocalDefCounts.{ counts, assign_targets }
+  .{ counts, assign_targets }
 }
 
 fn local_def_count_from(counts: Dict<Int, Int>, id: Int) Int {
@@ -2436,7 +2436,7 @@ fn flag_guards(f: CfgFunction, flag: Int) Vector<FlagGuard> {
         flag,
       ) {
         out = .append(
-          FlagGuard.{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
+          .{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
         )
       },
       _ => {},
@@ -2656,7 +2656,7 @@ fn id_append_sites(f: CfgFunction, id_param: Int, ops: DictVecOps) Vector<IdAppe
         .ACall(callee, args) => case callee {
           .AGlobalFunc(fid) => if fid.id == ops.append
             and args.len() == 2 and atom_is_local_id(args[1], id_param) {
-            out = .append(IdAppendSite.{ block: blk.id.id, index: i })
+            out = .append(.{ block: blk.id.id, index: i })
           },
           _ => {},
         },
@@ -3008,7 +3008,7 @@ fn grow_combinator_lineage(
       }
     }
   }
-  CombinatorLineage.{ locals: lineage, extended }
+  .{ locals: lineage, extended }
 }
 
 fn combinator_returns_lineage(f: CfgFunction, lineage: Dict<Int, Bool>) Bool {
@@ -3237,7 +3237,7 @@ fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
                   } else {
                     info.false_target
                   }
-                  out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
+                  out = .append(.{ pred: pe.target.id, join: blk.id.id, target })
                 },
                 .None => {},
               },
@@ -3254,7 +3254,7 @@ fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
 
 fn rewrite_edge_target(edge: CfgEdge, old_target: Int, new_target: BlockId, new_args: Vector<Atom>) CfgEdge {
   if edge.target.id == old_target {
-    CfgEdge.{ target: new_target, args: new_args }
+    .{ target: new_target, args: new_args }
   } else {
     edge
   }
@@ -3316,7 +3316,7 @@ fn remove_pred_from_block(blk: CfgBlock, pred: Int) CfgBlock {
 fn add_pred_to_block(blk: CfgBlock, pred: Int, args: Vector<Atom>) CfgBlock {
   // Preserve CFG edge multiplicity: one predecessor entry corresponds to one dynamic incoming
   // edge, even when several arms originate from the same source block.
-  blk.preds = .append(CfgEdge.{ target: BlockId.{ id: pred }, args })
+  blk.preds = .append(.{ target: .{ id: pred }, args })
   blk
 }
 
@@ -3431,7 +3431,7 @@ type BlockPrep = .{ scan: BlockScan, moves: Dict<Int, Bool>, transport: Dict<Int
 // transport moves; conservative). Only `ownership_stage` passes the real list.
 fn block_prep(blk: CfgBlock, sem: OptimizerSemantics, blocks: Vector<CfgBlock>) BlockPrep {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live filled by the liveness stage
-  BlockPrep.{
+  .{
     scan,
     moves: recognize_quartet_moves(blk, scan, sem),
     transport: recognize_transport_moves(blk, scan, blocks),
@@ -4388,7 +4388,7 @@ fn project_path_prov(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) PathProvProjec
       }
     }
   }
-  PathProvProjection.{ shell, inner }
+  .{ shell, inner }
 }
 
 // Drop the entire [seg]* subtree from a path_prov map, mirroring ff.remove_prefix.
@@ -5064,7 +5064,7 @@ fn block_verdicts(
       _ => {},
     }
   }
-  BlockVerdicts.{ texts: verdicts, reusable_shell, field_backing_reusable }
+  .{ texts: verdicts, reusable_shell, field_backing_reusable }
 }
 
 // Drive the transfer over a block's straight-line instructions from its entry
@@ -5219,14 +5219,11 @@ fn pred_local_contribution(
         .Some(id) => valid_of_local(pred_valid, id),
         .None => true,
       }
-      PredParamContribution.{ own: fact_of(pred_exit, arg), valid: ok }
+      .{ own: fact_of(pred_exit, arg), valid: ok }
     } else {
-      PredParamContribution.{ own: .Unknown, valid: false }
+      .{ own: .Unknown, valid: false }
     },
-    .None => PredParamContribution.{
-      own: fact_of_local(pred_exit, lid),
-      valid: valid_of_local(pred_valid, lid),
-    },
+    .None => .{ own: fact_of_local(pred_exit, lid), valid: valid_of_local(pred_valid, lid) },
   }
 }
 
@@ -5351,7 +5348,7 @@ pub fn merge_targeted<T>(
       out = .set(k, join(old_x, next_x))
     }
   }
-  MergeOut.{ map: out, locked: next_locked }
+  .{ map: out, locked: next_locked }
 }
 
 // Structural equality over a nested-map value (replaces same_*_map). Keys come from
@@ -5540,7 +5537,7 @@ fn seed_param_field_own(
 pub type EntrySeedFacts = .{ unique_locals: Dict<Int, Bool>, field_own: Dict<Int, ff.FieldMap> }
 
 pub fn empty_entry_seed_facts() EntrySeedFacts {
-  EntrySeedFacts.{ unique_locals: Dict.new(), field_own: Dict.new() }
+  .{ unique_locals: Dict.new(), field_own: Dict.new() }
 }
 
 // Fix-cache reuse is only safe when NO entry seed is applied (a seeded clone must
@@ -5805,7 +5802,7 @@ type SeedRun = .{ seeds: LoopSeedSet, reruns: Int, warmed: Bool }
 pub type FixCache = .{ by_func: Dict<Int, FixResult> }
 
 pub fn empty_fix_cache() FixCache {
-  FixCache.{ by_func: Dict.new() }
+  .{ by_func: Dict.new() }
 }
 
 pub fn fix_cache_put(c: FixCache, func_id: Int, fx: FixResult) FixCache {
@@ -5826,7 +5823,7 @@ pub fn fix_cache_get(c: FixCache, func_id: Int) FixResult? {
 pub type LiveCache = .{ by_func: Dict<Int, Dict<Int, BlockLive>> }
 
 pub fn empty_live_cache() LiveCache {
-  LiveCache.{ by_func: Dict.new() }
+  .{ by_func: Dict.new() }
 }
 
 pub fn live_cache_put(c: LiveCache, func_id: Int, live: Dict<Int, BlockLive>) LiveCache {
@@ -6111,7 +6108,7 @@ fn loop_seed_stats(blocks: Vector<CfgBlock>, seeds: LoopSeedSet) LoopSeedStats {
       headers = headers + 1
     }
   }
-  LoopSeedStats.{ headers, param_seeds, nonparam_seeds }
+  .{ headers, param_seeds, nonparam_seeds }
 }
 
 fn same_loop_seed_set(a: LoopSeedSet, b: LoopSeedSet) Bool {
@@ -6476,8 +6473,8 @@ fn run_fixpoint(
     changed_visits,
     processed,
   }
-  FixRun.{
-    fx: FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov },
+  .{
+    fx: .{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov },
     state: final_state,
     widened,
   }
@@ -6560,7 +6557,7 @@ fn stabilize_seeds(
       vstate = rr.state
     }
   }
-  SeedRun.{ seeds, reruns, warmed: allow_incremental and reruns > 0 }
+  .{ seeds, reruns, warmed: allow_incremental and reruns > 0 }
 }
 
 fn run_fixpoint_validated(
@@ -6738,7 +6735,7 @@ pub fn analyze_with_summaries_and_entry_seeds_resolved(
     facts := entry_seed_facts_for(entry_seeds, f.func_id)
     analyze_function(f, table, b, sem, facts.unique_locals, facts.field_own, .None, resolve)
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 fn clear_block_analysis(blk: CfgBlock) CfgBlock {
@@ -6807,7 +6804,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
         clear_function_analysis(f)
       }
     }
-    return CfgView.{ functions }
+    return .{ functions }
   }
   t0 := date.now()
   clear_ms := 0.0
@@ -6880,7 +6877,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       "[time:mutable:fixcache] hits=${cache_hits} misses=${cache_misses} verify=${fixverify_enabled()}",
     )
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 pub fn analyze_function_with_seed(
@@ -7121,7 +7118,7 @@ fn call_uniques_sited_with_live(
                   }
                 }
                 out = .append(
-                  SitedCallUniq.{
+                  .{
                     caller_func: f.func_id,
                     site_local: inst.anf_local.id,
                     site_key: vid.site_key(f.func_id, inst.anf_local.id),
@@ -7171,7 +7168,7 @@ pub fn prune_dead_merge(view: CfgView) CfgView {
   functions := collect f in view.functions {
     prune_function(f)
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 // Prune only the functions in `changed`; pass the rest through untouched. Used
@@ -7191,7 +7188,7 @@ pub fn prune_dead_merge_selective(view: CfgView, changed: Dict<Int, Bool>) CfgVi
       f
     }
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 fn prune_function(f: CfgFunction) CfgFunction {
@@ -7762,7 +7759,7 @@ fn meet_ret_paths_tagged(sites: Vector<RetSite>) Vector<ReturnPathOwn> {
         }
         case agreed {
           .Some(o) => if survives {
-            out = .append(ReturnPathOwn.{ via: cand.via, field: cand.field, own: o })
+            out = .append(.{ via: cand.via, field: cand.field, own: o })
           },
           .None => {},
         }
@@ -7846,7 +7843,7 @@ fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPath
 type FlowFact = .{ origin: Int, dirty: vid.PathSet }
 
 fn ff_none() FlowFact {
-  FlowFact.{ origin: 0 - 1, dirty: vid.empty_set() }
+  .{ origin: 0 - 1, dirty: vid.empty_set() }
 }
 
 fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
@@ -7947,7 +7944,7 @@ fn call_result_fact(
     },
     .None => {},
   }
-  FlowFact.{ origin: base.origin, dirty }
+  .{ origin: base.origin, dirty }
 }
 
 fn transfer_flow(
@@ -8017,7 +8014,7 @@ fn cow_update_result_fact(st: Dict<Int, FlowFact>, cs: CallSemantics, args: Vect
       .Some(k) => if k < args.len() {
         base := flow_get(st, args[k])
         if base.origin >= 0 {
-          FlowFact.{ origin: base.origin, dirty: base.dirty.union(vid.shell_set()) }
+          .{ origin: base.origin, dirty: base.dirty.union(vid.shell_set()) }
         } else {
           ff_none()
         }
@@ -8036,7 +8033,7 @@ fn join_fact(a: FlowFact, b: FlowFact) FlowFact {
   } else {
     0 - 1
   }
-  FlowFact.{ origin: org, dirty: a.dirty.union(b.dirty) }
+  .{ origin: org, dirty: a.dirty.union(b.dirty) }
 }
 
 // Join predecessors' exit facts at a block entry. Mirrors join_entry_prov EXACTLY:
@@ -8391,12 +8388,7 @@ pub fn summarize_function_cached(
     generic_only_resolver,
     generic_only_requirement_resolver,
   )
-  CachedSummary.{
-    summary: r.summary,
-    fx: r.fx,
-    reusable: !calls_suppressed(f.blocks, suppress),
-    live: r.live,
-  }
+  .{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress), live: r.live }
 }
 
 // Owned-entry (ownership-specialized) summary for a VariantId key (Stage 3): re-run the
@@ -8688,9 +8680,7 @@ fn summarize_seeded(
                 // Direct field: single-segment .Field paths only.
                 .Field(fid) => if p.segs.len() == 1 {
                   case classify_path_own(pp, k, fn_params, fm) {
-                    .Some(own) => rp_all = .append(
-                      ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
-                    ),
+                    .Some(own) => rp_all = .append(.{ via: .Direct, field: .Some(fid), own }),
                     .None => {},
                   }
                 },
@@ -8706,9 +8696,7 @@ fn summarize_seeded(
                     .None
                   }
                   case classify_path_own(pp, k, fn_params, fm) {
-                    .Some(own) => rp_all = .append(
-                      ReturnPathOwn.{ via: .Variant(tag, i), field: fld, own },
-                    ),
+                    .Some(own) => rp_all = .append(.{ via: .Variant(tag, i), field: fld, own }),
                     .None => {},
                   }
                 },
@@ -8723,7 +8711,7 @@ fn summarize_seeded(
           .Some(aid) => ret_witness(blk, a, body.field_own_get(aid)),
           .None => .WUnknown,
         }
-        ret_sites = .append(RetSite.{ witness: wit, paths: rp_here })
+        ret_sites = .append(.{ witness: wit, paths: rp_here })
         seen = true
       },
       .None => {},
@@ -8772,5 +8760,5 @@ fn summarize_seeded(
       )
     }
   }
-  SeededResult.{ summary: Summary.{ params, ret, ret_paths: ret_paths_final }, fx, live }
+  .{ summary: .{ params, ret, ret_paths: ret_paths_final }, fx, live }
 }

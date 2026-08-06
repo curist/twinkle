@@ -1181,7 +1181,7 @@ fn push_fn() FuncDef {
 
   // p0=vec, p1=val
   // L2=len, L3=tail_len, L4=new_tail, L5=new_root, L6=new_shift, L7=new_children
-  FuncDef.{
+  .{
     name: "push",
     params: [pvec_ref(), .Anyref],
     results: [pvec_ref()],
@@ -5846,7 +5846,7 @@ fn from_array_fn() FuncDef {
   ta := t_ARRAY
 
   // p0=arr, L1=len, L2=pvec, L3=i, L4=leaf, L5=remaining, L6=tail
-  FuncDef.{
+  .{
     name: "from_array",
     params: [arr_ref()],
     results: [pvec_ref()],
@@ -5968,7 +5968,7 @@ fn to_array_fn() FuncDef {
   ta := t_ARRAY
 
   // p0=vec, L1=len, L2=result, L4=tail, L5=tail_len, L6=trie_count
-  FuncDef.{
+  .{
     name: "to_array",
     params: [pvec_null()],
     results: [arr_ref()],
@@ -6043,7 +6043,7 @@ fn from_read_file_result_fn() FuncDef {
   variant_ref := ValType.Ref(true, .Named(tv))
 
   // p0=v, L1=payload
-  FuncDef.{
+  .{
     name: "from_read_file_result",
     params: [variant_ref],
     results: [variant_ref],
@@ -6089,7 +6089,7 @@ fn from_read_file_result_fn() FuncDef {
 }
 
 fn make_empty_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "make_empty",
     params: [],
     results: [pvec_ref()],

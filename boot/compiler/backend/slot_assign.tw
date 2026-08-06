@@ -109,7 +109,7 @@ pub fn assign_slots(
 
     mono := case pattern_monos[lid] {
       .Some(m) => m,
-      .None => resolve_local_mono(func, LocalId.{ id: lid }),
+      .None => resolve_local_mono(func, .{ id: lid }),
     }
     role: SlotRole = case mono {
       .Never => .DeadPlaceholder,
@@ -122,7 +122,7 @@ pub fn assign_slots(
     sid := SlotId.{ id: next_slot }
     slots[next_slot] = SlotInfo.{
       slot: sid,
-      source_local: LocalId.{ id: lid },
+      source_local: .{ id: lid },
       role,
       mono,
       repr: .OpaqueAnyref,
@@ -133,7 +133,7 @@ pub fn assign_slots(
     next_slot = next_slot + 1
   }
 
-  PreparedFunc.{
+  .{
     func_id: func.func_id,
     name: func.name,
     is_init: func.is_init,

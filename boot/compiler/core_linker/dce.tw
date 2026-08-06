@@ -85,7 +85,7 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
 
   new_reachable := state.reachable
   new_reachable[ref_id] = true
-  BfsState.{ queue: state.queue.append(ref_id), reachable: new_reachable }
+  .{ queue: state.queue.append(ref_id), reachable: new_reachable }
 }
 
 fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {

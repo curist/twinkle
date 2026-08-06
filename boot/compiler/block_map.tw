@@ -5,7 +5,7 @@ pub type BlockMap<T> = .{ inner: Dict<Int, T> }
 
 /// Empty block-keyed map.
 pub fn block_map<T>() BlockMap<T> {
-  BlockMap.{ inner: Dict.new() }
+  .{ inner: Dict.new() }
 }
 
 /// Value for a block id, or `.None`.

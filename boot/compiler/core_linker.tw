@@ -54,7 +54,7 @@ pub fn link(
   builtin_count: Int,
 ) CoreModule {
   if modules.len() == 0 {
-    return CoreModule.{
+    return .{
       functions: [],
       type_env: entry_env,
       init_func_id: .None,
@@ -216,7 +216,7 @@ pub fn link(
       }
 
       for entry in entries {
-        allow_external_method := case entry_env.find_type_name(TypeId.{ id: canonical_tid }) {
+        allow_external_method := case entry_env.find_type_name(.{ id: canonical_tid }) {
           .Some(type_name) => is_builtin_method_type(type_name),
           .None => false,
         }
@@ -363,7 +363,7 @@ pub fn link(
     }
   }
 
-  CoreModule.{
+  .{
     functions: live_functions,
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
@@ -383,7 +383,7 @@ pub fn link(
 fn remap_lib_export(exp: LibExport, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) LibExport {
   exp.target = case exp.target {
     .Function(fid) => LibExportTarget.Function(remap_func_id(fid, remap)),
-    .Value(gid) => LibExportTarget.Value(GlobalId.{ id: remap_global_id(gid, global_remap).id }),
+    .Value(gid) => LibExportTarget.Value(.{ id: remap_global_id(gid, global_remap).id }),
   }
   exp
 }
@@ -462,12 +462,12 @@ type CombinedInit = .{ functions: Vector<FunctionDef>, init_func_id: FuncId? }
 /// Build a combined $combined_init function that calls all module inits in order.
 fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit {
   if init_ids.len() == 0 {
-    return CombinedInit.{ functions: [], init_func_id: .None }
+    return .{ functions: [], init_func_id: .None }
   }
 
   if init_ids.len() == 1 {
     // Single init — no wrapper needed
-    return CombinedInit.{ functions: [], init_func_id: .Some(init_ids[0]) }
+    return .{ functions: [], init_func_id: .Some(init_ids[0]) }
   }
 
   // Multiple inits: create a combined function that calls each in order.
@@ -496,11 +496,11 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
     body,
     return_ty: MonoType.Void,
   }
-  CombinedInit.{ functions: [combined], init_func_id: .Some(combined_id) }
+  .{ functions: [combined], init_func_id: .Some(combined_id) }
 }
 
 fn make_call(func_id: FuncId, s: Span) CoreExpr {
-  CoreExpr.{
+  .{
     kind: .Call(CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s }, []),
     ty: MonoType.Void,
     span: s,
@@ -684,7 +684,7 @@ fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
     .Index(arr, idx) => .Index(remap_expr_types(arr, type_remap), remap_expr_types(idx, type_remap)),
     _ => expr.kind,
   }
-  CoreExpr.{ kind: new_kind, ty: remap_mono_type(expr.ty, type_remap), span: expr.span }
+  .{ kind: new_kind, ty: remap_mono_type(expr.ty, type_remap), span: expr.span }
 }
 
 fn remap_expr_types_list(exprs: Vector<CoreExpr>, type_remap: Dict<Int, TypeId>) Vector<CoreExpr> {
@@ -784,7 +784,7 @@ fn remap_type_param_bounds(params: Vector<ResolvedTypeParam>, type_remap: Dict<I
 }
 
 fn remap_function_types(func: FunctionDef, type_remap: Dict<Int, TypeId>) FunctionDef {
-  FunctionDef.{
+  .{
     func_id: func.func_id,
     name: func.name,
     is_init: func.is_init,
@@ -800,21 +800,21 @@ fn remap_function_types(func: FunctionDef, type_remap: Dict<Int, TypeId>) Functi
 // ── FuncId remapping ────────────────────────────────────────────────
 fn remap_func_id(id: FuncId, remap: Dict<Int, Int>) FuncId {
   case remap[id.id] {
-    .Some(new_id) => FuncId.{ id: new_id },
+    .Some(new_id) => .{ id: new_id },
     .None => id,
   }
 }
 
 fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
   case global_remap[id.id] {
-    .Some(new_id) => LocalId.{ id: new_id },
+    .Some(new_id) => .{ id: new_id },
     .None => id,
   }
 }
 
 fn remap_global_id(id: GlobalId, global_remap: Dict<Int, Int>) GlobalId {
   case global_remap[id.id] {
-    .Some(new_id) => GlobalId.{ id: new_id },
+    .Some(new_id) => .{ id: new_id },
     .None => id,
   }
 }

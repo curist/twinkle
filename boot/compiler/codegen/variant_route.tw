@@ -21,7 +21,7 @@ pub type CloneSpec = .{
 pub type OwnedSeedTable = .{ by_func: Dict<Int, CloneSpec> }
 
 pub fn empty_seed_table() OwnedSeedTable {
-  OwnedSeedTable.{ by_func: Dict.new() }
+  .{ by_func: Dict.new() }
 }
 
 pub fn set_clone(self: OwnedSeedTable, func_id: Int, spec: CloneSpec) OwnedSeedTable {

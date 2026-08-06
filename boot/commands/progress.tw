@@ -20,11 +20,11 @@ fn terminal_progress_enabled() Bool {
 }
 
 pub fn make(label: String, total: Int) Meter {
-  Meter.{ active: terminal_progress_enabled() and total > 0, label, total }
+  .{ active: terminal_progress_enabled() and total > 0, label, total }
 }
 
 pub fn make_count(label: String) Meter {
-  Meter.{ active: terminal_progress_enabled(), label, total: 0 }
+  .{ active: terminal_progress_enabled(), label, total: 0 }
 }
 
 pub fn clear(meter: Meter) Meter {

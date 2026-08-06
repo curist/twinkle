@@ -276,7 +276,7 @@ pub fn reachable_modules(ctx: ProjectContext, entries: Vector<EntryTarget>) Reac
     diagnostics = .concat(d.diagnostics)
   }
 
-  Reachable.{ modules, failed, diagnostics }
+  .{ modules, failed, diagnostics }
 }
 
 // A discovered module is project-local when it sits under neither the bundled

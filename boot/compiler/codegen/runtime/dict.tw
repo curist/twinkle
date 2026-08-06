@@ -157,7 +157,7 @@ pub fn module() WasmModule {
 
 // ── popcount(v: i32) -> i32 ──────────────────────────────────────────────────
 fn popcount_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "popcount",
     params: [.I32],
     results: [.I32],
@@ -169,7 +169,7 @@ fn popcount_fn() FuncDef {
 // ── arr_insert_at(arr, idx, val) -> Array ────────────────────────────────────
 fn arr_insert_at_fn() FuncDef {
   // p0=arr, p1=idx, p2=val; L3=n, L4=new_arr, L5=tail_len
-  FuncDef.{
+  .{
     name: "arr_insert_at",
     params: [arr_REF, .I32, .Anyref],
     results: [arr_REF],
@@ -236,7 +236,7 @@ fn arr_insert_at_fn() FuncDef {
 // ── arr_replace_at(arr, idx, val) -> Array ───────────────────────────────────
 fn arr_replace_at_fn() FuncDef {
   // p0=arr, p1=idx, p2=val; L3=n, L4=new_arr
-  FuncDef.{
+  .{
     name: "arr_replace_at",
     params: [arr_REF, .I32, .Anyref],
     results: [arr_REF],
@@ -270,7 +270,7 @@ fn arr_replace_at_fn() FuncDef {
 // ── arr_remove_at(arr, idx) -> Array ─────────────────────────────────────────
 fn arr_remove_at_fn() FuncDef {
   // p0=arr, p1=idx; L2=n, L3=new_arr, L4=tail_len
-  FuncDef.{
+  .{
     name: "arr_remove_at",
     params: [arr_REF, .I32],
     results: [arr_REF],
@@ -494,7 +494,7 @@ fn hash_i64_fn() FuncDef {
     .I64Xor,
   ]
   body = .concat(mix).concat(mix)
-  FuncDef.{
+  .{
     name: "hash_i64",
     params: [.I64],
     results: [.I64],
@@ -736,7 +736,7 @@ fn hash_string_fn() FuncDef {
     .Block("med_exit", .None, [.Loop("med_loop", .None, med_loop)]),
   ]
   body = .concat(final_part)
-  FuncDef.{
+  .{
     name: "hash_string",
     params: [string_NULL],
     results: [.I64],
@@ -765,7 +765,7 @@ fn hash_string_fn() FuncDef {
 
 // ── hash_key(key: anyref) -> i64 ─────────────────────────────────────────────
 fn hash_key_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "hash_key",
     params: [.Anyref],
     results: [.I64],
@@ -801,7 +801,7 @@ fn hash_key_fn() FuncDef {
 // ── collision_get(c, key) -> anyref ──────────────────────────────────────────
 fn collision_get_fn() FuncDef {
   // p0=c, p1=key; L2=entries, L3=n, L4=i, L5=entry
-  FuncDef.{
+  .{
     name: "collision_get",
     params: [hamt_COLLISION_NULL, .Anyref],
     results: [.Anyref],
@@ -857,7 +857,7 @@ fn collision_get_fn() FuncDef {
 // ── collision_set(c, hash, key, val) -> HamtCollision ────────────────────────
 fn collision_set_fn() FuncDef {
   // p0=c, p1=hash(i64), p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
-  FuncDef.{
+  .{
     name: "collision_set",
     params: [hamt_COLLISION_NULL, .I64, .Anyref, .Anyref],
     results: [hamt_COLLISION_REF],
@@ -960,7 +960,7 @@ fn collision_set_fn() FuncDef {
 fn node_get_fn() FuncDef {
   // p0=node, p1=hash(i64), p2=depth, p3=key
   // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries
-  FuncDef.{
+  .{
     name: "node_get",
     params: [hamt_NODE_NULL, .I64, .I32, .Anyref],
     results: [.Anyref],
@@ -1084,7 +1084,7 @@ fn node_set_fn() FuncDef {
   // p0=node, p1=hash(i64), p2=depth, p3=key, p4=val
   // L5=new_entry, L6=shift, L7=fragment, L8=bit, L9=bitmap, L10=idx
   // L11=slot, L12=new_entries, L13=old_entry, L14=tmp_node, L15=collision, L16=new_collision
-  FuncDef.{
+  .{
     name: "node_set",
     params: [hamt_NODE_NULL, .I64, .I32, .Anyref, .Anyref],
     results: [hamt_NODE_REF],
@@ -1426,7 +1426,7 @@ fn node_remove_fn() FuncDef {
   // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries, L10=n_entries
   // L11=old_entry, L12=new_entries, L13=sub, L14=new_sub
   // L15=collision, L16=c_entries, L17=c_n, L18=found_j, L19=j, L20=ce, L21=new_c
-  FuncDef.{
+  .{
     name: "node_remove",
     params: [hamt_NODE_NULL, .I64, .I32, .Anyref],
     results: [hamt_NODE_NULL],
@@ -1729,7 +1729,7 @@ fn node_remove_fn() FuncDef {
 fn compact_fn() FuncDef {
   // p0=dict; L1=flat order, L2=n, L3=new_root, L4=new_order, L5=i, L6=j,
   // L7=key, L8=hash, L9=val
-  FuncDef.{
+  .{
     name: "compact",
     params: [pdict_NULL],
     results: [pdict_REF],
@@ -1829,7 +1829,7 @@ fn compact_fn() FuncDef {
 
 // ── make() -> PDict ──────────────────────────────────────────────────────────
 fn make_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "make",
     params: [],
     results: [pdict_REF],
@@ -1846,7 +1846,7 @@ fn make_fn() FuncDef {
 
 // ── len(dict: PDict?) -> i32 ─────────────────────────────────────────────────
 fn len_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "len",
     params: [pdict_NULL],
     results: [.I32],
@@ -1858,7 +1858,7 @@ fn len_fn() FuncDef {
 // ── keys(dict: PDict?) -> PVec ───────────────────────────────────────────────
 fn keys_fn() FuncDef {
   // p0=dict; L1=flat, L2=n, L3=dst, L4=i, L5=j, L6=elem
-  FuncDef.{
+  .{
     name: "keys",
     params: [pdict_NULL],
     results: [pvec_REF],
@@ -1947,7 +1947,7 @@ fn keys_fn() FuncDef {
 
 // ── has(dict: PDict?, key: anyref) -> i32 ────────────────────────────────────
 fn has_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "has",
     params: [pdict_NULL, .Anyref],
     results: [.I32],
@@ -1969,7 +1969,7 @@ fn has_fn() FuncDef {
 
 // ── get(dict: PDict?, key: anyref) -> anyref ─────────────────────────────────
 fn get_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "get",
     params: [pdict_NULL, .Anyref],
     results: [.Anyref],
@@ -1990,7 +1990,7 @@ fn get_fn() FuncDef {
 // ── get_option(dict: PDict?, key: anyref) -> Variant ─────────────────────────
 fn get_option_fn() FuncDef {
   // L2=val
-  FuncDef.{
+  .{
     name: "get_option",
     params: [pdict_NULL, .Anyref],
     results: [variant_REF],
@@ -2025,7 +2025,7 @@ fn get_option_fn() FuncDef {
 // ── set(dict: PDict?, key, val) -> PDict ─────────────────────────────────────
 fn set_fn() FuncDef {
   // p0=dict, p1=key, p2=val; L3=hash(i64), L4=new_root, L5=was_replace, L6=new_order
-  FuncDef.{
+  .{
     name: "set",
     params: [pdict_NULL, .Anyref, .Anyref],
     results: [pdict_REF],
@@ -2080,7 +2080,7 @@ fn set_fn() FuncDef {
 fn remove_fn() FuncDef {
   // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_removed,
   // L6=new_order, L7=new_tombstones, L8=new_size, L9=removed_index, L10=new_dict
-  FuncDef.{
+  .{
     name: "remove",
     params: [pdict_NULL, .Anyref],
     results: [pdict_REF],
@@ -2162,7 +2162,7 @@ fn remove_fn() FuncDef {
 
 fn set_in_place_fn() FuncDef {
   // p0=dict, p1=key, p2=val; L3=hash(i64), L4=new_root, L5=was_replace
-  FuncDef.{
+  .{
     name: "set_in_place",
     params: [pdict_NULL, .Anyref, .Anyref],
     results: [pdict_REF],
@@ -2225,7 +2225,7 @@ fn set_in_place_fn() FuncDef {
 
 fn remove_in_place_fn() FuncDef {
   // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_removed, L6=removed_index
-  FuncDef.{
+  .{
     name: "remove_in_place",
     params: [pdict_NULL, .Anyref],
     results: [pdict_REF],

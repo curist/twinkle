@@ -82,7 +82,7 @@ fn concat_fn() FuncDef {
   ts := t_STRING
 
   // Locals: p2=len_a, p3=len_b, p4=total, p5=result
-  FuncDef.{
+  .{
     name: "concat",
     params: [str_null(), str_null()],
     results: [str_ref()],
@@ -131,7 +131,7 @@ fn substring_fn() FuncDef {
   ts := t_STRING
 
   // Locals: p3=len/new_len, p4=result
-  FuncDef.{
+  .{
     name: "substring",
     params: [str_null(), .I32, .I32],
     results: [str_ref()],
@@ -188,7 +188,7 @@ fn eq_fn() FuncDef {
   ts := t_STRING
 
   // Locals: p2=len, p3=i
-  FuncDef.{
+  .{
     name: "eq",
     params: [str_null(), str_null()],
     results: [.I32],
@@ -247,7 +247,7 @@ fn cmp_fn() FuncDef {
   ts := t_STRING
 
   // Locals: p2=min_len, p3=i, p4=byte_a, p5=byte_b, p6=len_a, p7=len_b
-  FuncDef.{
+  .{
     name: "cmp",
     params: [str_null(), str_null()],
     results: [.I32],
@@ -326,7 +326,7 @@ fn cmp_fn() FuncDef {
 // Locals: p1=neg, p2=work, p3=pos, p4=result_len, p5=buf, p6=result
 fn from_i64_fn() FuncDef {
   ts := t_STRING
-  FuncDef.{
+  .{
     name: "from_i64",
     params: [.I64],
     results: [str_ref()],
@@ -461,7 +461,7 @@ fn from_f64_fn() FuncDef {
 // from_bool(b: i32) -> String
 fn from_bool_fn() FuncDef {
   ts := t_STRING
-  FuncDef.{
+  .{
     name: "from_bool",
     params: [.I32],
     results: [str_ref()],

@@ -96,11 +96,11 @@ type DepthWork = .{ expr: AnfExpr, depth: Int }
 max_stack_safe_opt_depth: Int = 512
 
 fn zero_pass_timing() PassTiming {
-  PassTiming.{ dead_let: 0.0, copy_prop: 0.0, const_fold: 0.0, branch_simp: 0.0, defer_elim: 0.0 }
+  .{ dead_let: 0.0, copy_prop: 0.0, const_fold: 0.0, branch_simp: 0.0, defer_elim: 0.0 }
 }
 
 fn add_pass_timing(a: PassTiming, b: PassTiming) PassTiming {
-  PassTiming.{
+  .{
     dead_let: a.dead_let + b.dead_let,
     copy_prop: a.copy_prop + b.copy_prop,
     const_fold: a.const_fold + b.const_fold,
@@ -124,23 +124,23 @@ fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
 
     case item.expr {
       .Let(_, op, body) => {
-        stack = .append(DepthWork.{ expr: body, depth: child_depth })
+        stack = .append(.{ expr: body, depth: child_depth })
 
         case op {
           .AIf(_, then_e, else_e) => {
-            stack = .append(DepthWork.{ expr: else_e, depth: child_depth })
-            stack = .append(DepthWork.{ expr: then_e, depth: child_depth })
+            stack = .append(.{ expr: else_e, depth: child_depth })
+            stack = .append(.{ expr: then_e, depth: child_depth })
           },
           .AMatch(_, arms) => {
             i := arms.len() - 1
 
             for i >= 0 {
-              stack = .append(DepthWork.{ expr: arms[i].body, depth: child_depth })
+              stack = .append(.{ expr: arms[i].body, depth: child_depth })
               i = i - 1
             }
           },
-          .ALoop(loop_body) => stack = .append(DepthWork.{ expr: loop_body, depth: child_depth }),
-          .ADefer(inner) => stack = .append(DepthWork.{ expr: inner, depth: child_depth }),
+          .ALoop(loop_body) => stack = .append(.{ expr: loop_body, depth: child_depth }),
+          .ADefer(inner) => stack = .append(.{ expr: inner, depth: child_depth }),
           _ => {},
         }
       },
@@ -152,7 +152,7 @@ fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
 }
 
 fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?) OptimizerContext {
-  OptimizerContext.{ pinned: compute_pinned(module), semantics }
+  .{ pinned: compute_pinned(module), semantics }
 }
 
 // ── optimize_function_with_context ──────────────────────────────────
@@ -172,13 +172,13 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   timing.defer_elim = timing.defer_elim + (tb0 - ta0)
 
   if anf_depth_exceeds(deferred.body, max_stack_safe_opt_depth) {
-    return FunctionOptimizeResult.{ func: deferred, timing, rounds: 0, at_cap: false }
+    return .{ func: deferred, timing, rounds: 0, at_cap: false }
   }
 
   fixed := run_fixed_point_simplifications(deferred.body, deferred.op_result_mono, ctx)
   timing = .add_pass_timing(fixed.timing)
   optimized := rebuild_func_with_body(deferred, fixed.expr)
-  FunctionOptimizeResult.{ func: optimized, timing, rounds: fixed.rounds, at_cap: fixed.at_cap }
+  .{ func: optimized, timing, rounds: fixed.rounds, at_cap: fixed.at_cap }
 }
 
 fn run_fixed_point_simplifications(
@@ -219,7 +219,7 @@ fn run_fixed_point_simplifications(
     }
   }
 
-  FixedPointResult.{ expr: cur, rounds: round, at_cap: round >= cap, timing }
+  .{ expr: cur, rounds: round, at_cap: round >= cap, timing }
 }
 
 // ── optimize_module ─────────────────────────────────────────────────

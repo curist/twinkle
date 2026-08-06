@@ -142,7 +142,7 @@ fn apply_cap(groups: Vector<Group>, cap: Int) CapResult {
       overflow = .append(g)
     }
   }
-  CapResult.{ kept, overflow }
+  .{ kept, overflow }
 }
 
 // A candidate specialization: one published variant of one callee, plus the
@@ -355,7 +355,7 @@ pub fn specialize_module_with_cap_sem(
     if timed {
       eprintln("[time:8g] table=${t1 - t0}ms variants=${t2 - t1}ms (no variants)")
     }
-    return SpecializeResult.{
+    return .{
       anf,
       seeds: variant_route.empty_seed_table(),
       routes: [],
@@ -380,7 +380,7 @@ pub fn specialize_module_with_cap_sem(
     )
   }
   if groups_up.len() == 0 {
-    return SpecializeResult.{
+    return .{
       anf,
       seeds: variant_route.empty_seed_table(),
       routes: overcap_routes(capped.overflow),
@@ -406,7 +406,7 @@ pub fn specialize_module_with_cap_sem(
   for g in groups_up {
     orig := case func_def_of(anf, g.callee) {
       .Some(fd) => fd,
-      .None => return SpecializeResult.{
+      .None => return .{
         anf,
         seeds: variant_route.empty_seed_table(),
         routes: [],
@@ -418,7 +418,7 @@ pub fn specialize_module_with_cap_sem(
     }
     ccfg := case cfg_func_of(view, g.callee) {
       .Some(cf) => cf,
-      .None => return SpecializeResult.{
+      .None => return .{
         anf,
         seeds: variant_route.empty_seed_table(),
         routes: [],
@@ -431,7 +431,7 @@ pub fn specialize_module_with_cap_sem(
     clone_id := next
     next = next + 1
     clone := AnfFunctionDef.{
-      func_id: FuncId.{ id: clone_id },
+      func_id: .{ id: clone_id },
       name: "${orig.name}$v${clone_id}",
       is_init: false,
       params: orig.params,
@@ -455,7 +455,7 @@ pub fn specialize_module_with_cap_sem(
     }
     variant_to_clone[g.variant.variant_canonical_string()] = clone_id
     survivors = .append(
-      Group.{
+      .{
         callee: g.callee,
         variant: g.variant,
         route_sites: g.route_sites,
@@ -532,15 +532,7 @@ pub fn specialize_module_with_cap_sem(
 
   anf.functions = routed_funcs
   spec_phase("end specialize_module")
-  SpecializeResult.{
-    anf,
-    seeds,
-    routes,
-    summary: table,
-    pruned_view: view,
-    changed_funcs,
-    fix_cache,
-  }
+  .{ anf, seeds, routes, summary: table, pruned_view: view, changed_funcs, fix_cache }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }
@@ -582,7 +574,7 @@ fn recursive_routes_for(
     case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
       .Some(w) => case variant_to_clone.get(w.variant_canonical_string()) {
         .Some(target) => out = .append(
-          RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
+          .{ site_key: vid.site_key(g.clone_id, s.site_local), target },
         ),
         .None => {},
       },
@@ -662,9 +654,9 @@ fn rewrite_expr(e: AnfExpr, caller: Int, site_to_clone: Dict<Int, Int>) RewriteR
     .Let(local, op, body) => {
       opr := rewrite_op(op, local, caller, site_to_clone)
       br := rewrite_expr(body, caller, site_to_clone)
-      RewriteResult.{ expr: .Let(local, opr.op, br.expr), changed: opr.changed or br.changed }
+      .{ expr: .Let(local, opr.op, br.expr), changed: opr.changed or br.changed }
     },
-    _ => RewriteResult.{ expr: e, changed: false },
+    _ => .{ expr: e, changed: false },
   }
 }
 
@@ -672,18 +664,18 @@ fn rewrite_op(op: AnfOp, result: LocalId, caller: Int, site_to_clone: Dict<Int, 
   case op {
     .ACall(callee, args) => case site_to_clone.get(vid.site_key(caller, result.id)) {
       .Some(clone_id) => case callee {
-        .AGlobalFunc(_) => RewriteOpResult.{
+        .AGlobalFunc(_) => .{
           op: .ACall(.AGlobalFunc(FuncId.{ id: clone_id }), args),
           changed: true,
         },
-        _ => RewriteOpResult.{ op, changed: false },
+        _ => .{ op, changed: false },
       },
-      .None => RewriteOpResult.{ op, changed: false },
+      .None => .{ op, changed: false },
     },
     .AIf(pred, then_e, else_e) => {
       tr := rewrite_expr(then_e, caller, site_to_clone)
       er := rewrite_expr(else_e, caller, site_to_clone)
-      RewriteOpResult.{ op: .AIf(pred, tr.expr, er.expr), changed: tr.changed or er.changed }
+      .{ op: .AIf(pred, tr.expr, er.expr), changed: tr.changed or er.changed }
     },
     .AMatch(scrut, arms) => {
       any_changed := false
@@ -692,16 +684,16 @@ fn rewrite_op(op: AnfOp, result: LocalId, caller: Int, site_to_clone: Dict<Int, 
         any_changed = any_changed or ar.changed
         AnfMatchArm.{ pattern: arm.pattern, body: ar.expr }
       }
-      RewriteOpResult.{ op: .AMatch(scrut, new_arms), changed: any_changed }
+      .{ op: .AMatch(scrut, new_arms), changed: any_changed }
     },
     .ALoop(body) => {
       br := rewrite_expr(body, caller, site_to_clone)
-      RewriteOpResult.{ op: .ALoop(br.expr), changed: br.changed }
+      .{ op: .ALoop(br.expr), changed: br.changed }
     },
     .ADefer(body) => {
       br := rewrite_expr(body, caller, site_to_clone)
-      RewriteOpResult.{ op: .ADefer(br.expr), changed: br.changed }
+      .{ op: .ADefer(br.expr), changed: br.changed }
     },
-    _ => RewriteOpResult.{ op, changed: false },
+    _ => .{ op, changed: false },
   }
 }

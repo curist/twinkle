@@ -72,7 +72,7 @@ fn walk_op(
   cat: mutable_catalog.MutableCatalog,
 ) Vector<CensusSite> {
   case op {
-    .ARecordUpdate(_, _, _, in_place, _) => sites.append(CensusSite.{
+    .ARecordUpdate(_, _, _, in_place, _) => sites.append(.{
       func_id,
       func,
       family: "record_update",
@@ -82,7 +82,7 @@ fn walk_op(
     }),
     .ACall(callee, _) => case callee {
       .AGlobalFunc(fid) => case cat.classify_call(fid) {
-        .Some(fi) => sites.append(CensusSite.{
+        .Some(fi) => sites.append(.{
           func_id,
           func,
           family: fi.family,
@@ -112,11 +112,11 @@ fn walk_op(
 }
 
 fn empty_family(name: String) FamilyCount {
-  FamilyCount.{ name, candidates: 0, in_place: 0 }
+  .{ name, candidates: 0, in_place: 0 }
 }
 
 fn empty_tally() CensusTally {
-  CensusTally.{
+  .{
     record_update: empty_family("record_update"),
     dict_set: empty_family("dict_set"),
     dict_remove: empty_family("dict_remove"),
@@ -128,7 +128,7 @@ fn empty_tally() CensusTally {
 }
 
 fn inc(fc: FamilyCount, in_place: Bool) FamilyCount {
-  FamilyCount.{
+  .{
     name: fc.name,
     candidates: fc.candidates + 1,
     in_place: fc.in_place

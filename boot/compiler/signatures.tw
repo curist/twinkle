@@ -88,7 +88,7 @@ pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
     for sig in group.sigs {
       internal := to_internal_name(group.receiver, sig.name)
       result = .append(
-        FunctionSig.{
+        .{
           name: internal,
           type_params: sig.type_params,
           param_names: sig.param_names,

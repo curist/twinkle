@@ -83,7 +83,7 @@ pub fn sem_field_is_primitive(sem: OptimizerSemantics, tid: TypeId, fld: FieldId
 }
 
 fn control_call() CallSemantics {
-  CallSemantics.{
+  .{
     effect: .Control,
     fresh_result: false,
     cow_base_arg: .None,
@@ -93,7 +93,7 @@ fn control_call() CallSemantics {
 }
 
 fn legacy_unknown_call() CallSemantics {
-  CallSemantics.{
+  .{
     effect: .Control,
     fresh_result: false,
     cow_base_arg: .None,
@@ -103,7 +103,7 @@ fn legacy_unknown_call() CallSemantics {
 }
 
 pub fn empty_optimizer_semantics() OptimizerSemantics {
-  OptimizerSemantics.{
+  .{
     call_semantics: Dict.new(),
     builder: empty_builder_config(),
     string_builder: empty_builder_config(),
@@ -262,13 +262,7 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
   container_kinds[b.id("vector$set_unsafe").id] = 1
   container_kinds[builder.push_id.id] = 1
   container_kinds[b.method_id("Dict", "set").id] = 2
-  OptimizerSemantics.{
-    call_semantics: calls,
-    builder,
-    string_builder,
-    container_kinds,
-    ref_fields: Dict.new(),
-  }
+  .{ call_semantics: calls, builder, string_builder, container_kinds, ref_fields: Dict.new() }
 }
 
 pub fn container_kind(sem: OptimizerSemantics, fid: FuncId) ContainerKind {
@@ -309,7 +303,7 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
     }
   }
 
-  CowConfig.{
+  .{
     cow_ops,
     fresh_producer_ids,
     read_only_ids,
@@ -322,7 +316,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
   calls: Dict<Int, CallSemantics> = Dict.new()
 
   for func_id in config.cow_ops.keys() {
-    info := config.cow_ops[func_id].unwrap_or(CowOpEntry.{ base_arg: 0, in_place_id: .None })
+    info := config.cow_ops[func_id].unwrap_or(.{ base_arg: 0, in_place_id: .None })
     calls[func_id] = CallSemantics.{
       effect: .Update,
       fresh_result: false,
@@ -358,7 +352,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
     }
   }
 
-  OptimizerSemantics.{
+  .{
     call_semantics: calls,
     builder: config.builder,
     string_builder: config.string_builder,

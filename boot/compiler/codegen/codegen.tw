@@ -224,7 +224,7 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
     log_time("prepare_backend", t2 - t1p)
   }
 
-  PreparedCodegen.{
+  .{
     optimizer_semantics: sem_env,
     builder_anf: anf_prime,
     specialization: spec,

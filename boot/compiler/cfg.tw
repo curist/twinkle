@@ -45,7 +45,7 @@ pub type BlockFacts = .{
 }
 
 pub fn empty_block_facts() BlockFacts {
-  BlockFacts.{
+  .{
     ownership: Dict.new(),
     binding_valid: Dict.new(),
     live: [],
@@ -113,7 +113,7 @@ type BuildExprOut = .{
 }
 
 fn diverged(ctx: BuildCtx) BuildExprOut {
-  BuildExprOut.{ ctx, fallthrough: .None, breaks: [], continues: [] }
+  .{ ctx, fallthrough: .None, breaks: [], continues: [] }
 }
 
 fn append_all(a: Vector<BlockId>, b: Vector<BlockId>) Vector<BlockId> {
@@ -131,7 +131,7 @@ fn has_fallthrough(out: BuildExprOut) Bool {
 }
 
 fn bid(id: Int) BlockId {
-  BlockId.{ id }
+  .{ id }
 }
 
 fn atom_text(atom: Atom) String {
@@ -324,7 +324,7 @@ fn edge_args_forward(params: Vector<LocalId>) Vector<Atom> {
 }
 
 fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
-  CfgBlock.{
+  .{
     id,
     name,
     params,
@@ -340,14 +340,14 @@ fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
 }
 
 fn new_ctx() BuildCtx {
-  BuildCtx.{ next_block_id: 0, blocks: [] }
+  .{ next_block_id: 0, blocks: [] }
 }
 
 fn new_block(ctx: BuildCtx, name: String, params: Vector<LocalId>) NewBlockOut {
   id := bid(ctx.next_block_id)
   ctx.next_block_id = ctx.next_block_id + 1
   ctx.blocks = .append(id.empty_block(name, params))
-  NewBlockOut.{ ctx, id }
+  .{ ctx, id }
 }
 
 fn replace_block(ctx: BuildCtx, block: CfgBlock) BuildCtx {
@@ -381,7 +381,7 @@ fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<Atom>) B
   // In `preds`, a CfgEdge.target holds the predecessor block id (the edge
   // source), mirroring the forward edge stored in that predecessor's `succs`.
   block := ctx.get_block(target)
-  block.preds = .append(CfgEdge.{ target: from, args })
+  block.preds = .append(.{ target: from, args })
   ctx.replace_block(block)
 }
 
@@ -493,7 +493,7 @@ fn build_join_continuation(
   arm_continues: Vector<BlockId>,
 ) BuildExprOut {
   cont := ctx.build_expr(join, body)
-  BuildExprOut.{
+  .{
     ctx: cont.ctx,
     fallthrough: cont.fallthrough,
     breaks: append_all(arm_breaks, cont.breaks),
@@ -584,7 +584,7 @@ fn build_match(
     ctx = .set_block_bound(nb.id, pattern_binding_ids(arm.pattern))
     ctx = .set_block_payload_src(nb.id, arm_payload_src(scrutinee, arm.pattern))
     arm_ids = .append(nb.id)
-    edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
+    edge_list = .append(.{ target: nb.id, args: [] })
   }
 
   ctx = .finish_block(current, .Match(scrutinee, edge_list), edge_list)
@@ -606,7 +606,7 @@ fn build_match(
   // Every arm diverged (return/break/continue): there is no join to reach, so the
   // syntactic continuation is unreachable and is not built. Escapes propagate.
   if falling.len() == 0 {
-    return BuildExprOut.{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
+    return .{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
   }
 
   join_nb := ctx.new_block("match.join", params)
@@ -648,7 +648,7 @@ fn build_if(
   // Both arms diverged: no join, so the continuation `body` is unreachable and is
   // not built (avoids a predecessor-less continuation join). Escapes propagate.
   if !then_out.has_fallthrough() and !else_out.has_fallthrough() {
-    return BuildExprOut.{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
+    return .{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
   }
 
   join_nb := ctx.new_block("if.join", params)
@@ -774,14 +774,14 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
     ),
     .Let(local, .ALoop(loop_body), body) => ctx.build_loop(current, local, loop_body, body),
     .Let(local, op, body) => {
-      ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, op, text: op_text(op) })
+      ctx = .push_instruction(current, .{ anf_local: local, op, text: op_text(op) })
       ctx.build_expr(current, body)
     },
     .Atom(atom) => {
       // Tail value: leave the block unterminated and report the fall-through so
       // the caller decides whether it becomes a function Return, a join branch,
       // or a loop back-edge.
-      BuildExprOut.{
+      .{
         ctx,
         fallthrough: .Some(FallThrough.{ block: current, tail: atom }),
         breaks: [],
@@ -794,15 +794,15 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
     },
     .Break(.Some(atom)) => {
       ctx = .finish_block(current, .ValueBreak(atom), [])
-      BuildExprOut.{ ctx, fallthrough: .None, breaks: [current], continues: [] }
+      .{ ctx, fallthrough: .None, breaks: [current], continues: [] }
     },
     .Break(.None) => {
       ctx = .finish_block(current, .VoidBreak, [])
-      BuildExprOut.{ ctx, fallthrough: .None, breaks: [current], continues: [] }
+      .{ ctx, fallthrough: .None, breaks: [current], continues: [] }
     },
     .Continue => {
       ctx = .finish_block(current, .ContinueIfPresent, [])
-      BuildExprOut.{ ctx, fallthrough: .None, breaks: [], continues: [current] }
+      .{ ctx, fallthrough: .None, breaks: [], continues: [current] }
     },
   }
 }
@@ -821,7 +821,7 @@ fn build_function(func: AnfFunctionDef) CfgFunction {
   params := collect p in func.params {
     p.local
   }
-  CfgFunction.{ func_id: func.func_id.id, name: func.name, params, blocks: ctx.blocks }
+  .{ func_id: func.func_id.id, name: func.name, params, blocks: ctx.blocks }
 }
 
 pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {
@@ -831,7 +831,7 @@ pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {
   functions := collect f in m.functions {
     build_function(f)
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 // Build a view for `m`, reusing already-built CfgFunctions from `prior` for every
@@ -859,7 +859,7 @@ pub fn build_view_reusing(m: AnfModule, prior: CfgView, changed: Dict<Int, Bool>
       }
     }
   }
-  CfgView.{ functions }
+  .{ functions }
 }
 
 pub fn function_named(view: CfgView, name: String) CfgFunction? {

@@ -168,11 +168,11 @@ fn recover_to_next_item(c: Cursor) Cursor {
 }
 
 fn error_type(span_in: Span) TypeExpr {
-  TypeExpr.{ kind: .ErrorType, span: span_in }
+  .{ kind: .ErrorType, span: span_in }
 }
 
 fn error_expr(span_in: Span) Expr {
-  Expr.{ id: -1, kind: .ErrorExpr, span: span_in }
+  .{ id: -1, kind: .ErrorExpr, span: span_in }
 }
 
 fn stmt_in_expr_diag(span: Span, kw: String, context: String?) DiagKind {
@@ -247,7 +247,7 @@ fn stmt_span_for_arm(stmt: Stmt) Span {
 fn block_expr_from_arm_stmt(stmt: Stmt, c: Cursor) Expr {
   s := stmt_span_for_arm(stmt)
   block := Block.{ stmts: [stmt], tail: .None, span: s }
-  Expr.{ id: c.alloc_expr_id(), kind: .BlockExpr(block), span: s }
+  .{ id: c.alloc_expr_id(), kind: .BlockExpr(block), span: s }
 }
 
 fn parse_arm_return_expr(c: Cursor) ExprParse {
@@ -603,12 +603,7 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
     c = ty_parsed.cursor
     field_span := c.tokens[field_start].span.merge(ty_parsed.value.span)
     fields = .append(
-      RecordField.{
-        name: field_name,
-        ty: ty_parsed.value,
-        span: field_span,
-        name_span: field_name_span,
-      },
+      .{ name: field_name, ty: ty_parsed.value, span: field_span, name_span: field_name_span },
     )
 
     if c.kind() == .Comma {
@@ -734,7 +729,7 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
 
     variant_end_span := c.at(-1).span()
     variants = .append(
-      VariantDecl.{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span), tag },
+      .{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span), tag },
     )
 
     if c.kind() == .Comma {
@@ -1767,7 +1762,7 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
     }
 
     entry_span := c.span_from(field_start)
-    fields = .append(RecordEntry.{ name: field_name, value, span: entry_span })
+    fields = .append(.{ name: field_name, value, span: entry_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -1801,7 +1796,7 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
 fn parse_block_expr(c: Cursor) ExprParse {
   parsed := parse_block(c)
   .{
-    value: Expr.{ id: c.alloc_expr_id(), kind: .BlockExpr(parsed.value), span: parsed.value.span },
+    value: .{ id: c.alloc_expr_id(), kind: .BlockExpr(parsed.value), span: parsed.value.span },
     cursor: parsed.cursor,
     diagnostics: parsed.diagnostics,
   }
@@ -1892,7 +1887,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
     arm_expr := parsed_arm_expr.value
     c = parsed_arm_expr.cursor
     arm_span := patt.span.merge(arm_expr.span)
-    arms = .append(CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
+    arms = .append(.{ pattern: patt, expr: arm_expr, span: arm_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -1968,7 +1963,7 @@ fn parse_cond_expr(c: Cursor) ExprParse {
       .Some(cond_expr) => cond_expr.span.merge(body.span),
       .None => arm_start_span.merge(body.span),
     }
-    arms = .append(CondArm.{ condition, body, span: arm_span })
+    arms = .append(.{ condition, body, span: arm_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -3065,7 +3060,7 @@ pub fn parse_tokens(
   module_doc := extract_module_doc(source)
   items := attach_doc_comments(source, state.items)
   module_ast := Module.{ items, doc: module_doc, span: span.new(file_id, 0, source.len()) }
-  StageResult.{ value: module_ast, diagnostics: state.diagnostics }
+  .{ value: module_ast, diagnostics: state.diagnostics }
 }
 
 fn attach_doc_comments(source: String, items: Vector<Item>) Vector<Item> {

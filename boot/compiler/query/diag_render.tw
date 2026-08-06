@@ -72,11 +72,11 @@ fn resolve_type_name(id: Int, ctx: RenderCtx) String {
 }
 
 fn primary(span: Span, label: String?) SpanLabel {
-  SpanLabel.{ span, label, is_primary: true }
+  .{ span, label, is_primary: true }
 }
 
 fn secondary(span: Span, label: String?) SpanLabel {
-  SpanLabel.{ span, label, is_primary: false }
+  .{ span, label, is_primary: false }
 }
 
 // Shorthand for the common error shape: one primary label, no help lines.

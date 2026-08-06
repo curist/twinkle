@@ -194,11 +194,9 @@ pub fn emit_module(
 
   funcs = .append(emit_host_read_file_result_helper(backend)).append(
     emit_host_read_file_string_result_helper(backend),
-  ).append(
-    emit_option_from_variant_helper(MonoType.String, backend),
-  ).append(emit_option_from_variant_helper(MonoType.Int, backend)).append(
-    emit_option_from_variant_helper(MonoType.Float, backend),
-  )
+  ).append(emit_option_from_variant_helper(MonoType.String, backend)).append(
+    emit_option_from_variant_helper(MonoType.Int, backend),
+  ).append(emit_option_from_variant_helper(MonoType.Float, backend))
 
   // Generate option_from_variant helpers for dict_get inner types
   dict_get_inners := collect_dict_get_inner_types(prepared.funcs, builtins)
@@ -366,7 +364,7 @@ pub fn emit_module(
     runtime_imports = .concat(task_abi.imports())
   }
 
-  WasmModule.{
+  .{
     namespace: "user",
     types: type_defs,
     imports: runtime_imports.concat(extern_imports),
@@ -420,11 +418,11 @@ fn emit_lib_exports(
           // Internal representation already matches the public ABI, so the
           // callee can be exported directly; the wrapper would be pure
           // forwarding.
-          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: sym })
+          exports = .append(.{ wasm_name: exp.wasm_name, func_sym: sym })
         } else {
           wrapper := emit_lib_function_wrapper(exp, fid, sym, prepared, builder_slots, base_ctx)
           funcs = .append(wrapper)
-          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: wrapper.name })
+          exports = .append(.{ wasm_name: exp.wasm_name, func_sym: wrapper.name })
         }
       },
       .Value(gid) => case reg.module_globals[gid.id] {
@@ -439,8 +437,8 @@ fn emit_lib_exports(
           } else {
             [lib_primitive_val_type(gentry.mono)]
           }
-          funcs = .append(FuncDef.{ name: exp.wasm_name, params: [], results, locals: [], body })
-          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: exp.wasm_name })
+          funcs = .append(.{ name: exp.wasm_name, params: [], results, locals: [], body })
+          exports = .append(.{ wasm_name: exp.wasm_name, func_sym: exp.wasm_name })
         },
         .None => error("emit_lib_exports: missing module global G${gid.id}"),
       },
@@ -471,7 +469,7 @@ fn emit_lib_exports(
         art := emit_callback_artifacts(key, params, ret, base_ctx.backend)
         imports = .append(art.import_def)
         funcs = .append(art.tramp).append(art.ctor)
-        exports = .append(ExportDef.{ wasm_name: art.ctor.name, func_sym: art.ctor.name })
+        exports = .append(.{ wasm_name: art.ctor.name, func_sym: art.ctor.name })
       },
       _ => {},
     }
@@ -484,7 +482,7 @@ fn emit_lib_exports(
   // any export references a Vector anywhere.
   if any_export_uses_vec(anf.lib_exports) {
     funcs = .append(
-      FuncDef.{
+      .{
         name: "__lib_vec_to_array",
         params: [.Anyref],
         results: [.Ref(false, .Named("rt_types__Array"))],
@@ -492,7 +490,7 @@ fn emit_lib_exports(
         body: [.LocalGet(0), .RefCast(true, .Named("rt_types__PVec")), .Call("rt_arr__to_array")],
       },
     ).append(
-      FuncDef.{
+      .{
         name: "__lib_vec_from_array",
         params: [.Ref(false, .Named("rt_types__Array"))],
         results: [.Ref(false, .Named("rt_types__PVec"))],
@@ -500,8 +498,8 @@ fn emit_lib_exports(
         body: [.LocalGet(0), .Call("rt_arr__from_array")],
       },
     )
-    exports = .append(ExportDef.{ wasm_name: "__lib_vec_to_array", func_sym: "__lib_vec_to_array" }).append(
-      ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" },
+    exports = .append(.{ wasm_name: "__lib_vec_to_array", func_sym: "__lib_vec_to_array" }).append(
+      .{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" },
     )
   }
 
@@ -510,7 +508,7 @@ fn emit_lib_exports(
   // emitted. Keys/values are anyref (boxed), so one set serves every dict.
   if any_export_uses_dict(anf.lib_exports) {
     funcs = .append(
-      FuncDef.{
+      .{
         name: "__lib_dict_keys",
         params: [.Anyref],
         results: [.Ref(false, .Named("rt_types__Array"))],
@@ -523,7 +521,7 @@ fn emit_lib_exports(
         ],
       },
     ).append(
-      FuncDef.{
+      .{
         name: "__lib_dict_get",
         params: [.Anyref, .Anyref],
         results: [.Anyref],
@@ -536,7 +534,7 @@ fn emit_lib_exports(
         ],
       },
     ).append(
-      FuncDef.{
+      .{
         name: "__lib_dict_new",
         params: [],
         results: [.Ref(false, .Named("rt_types__PDict"))],
@@ -544,7 +542,7 @@ fn emit_lib_exports(
         body: [.Call("rt_dict__make")],
       },
     ).append(
-      FuncDef.{
+      .{
         name: "__lib_dict_set",
         params: [.Anyref, .Anyref, .Anyref],
         results: [.Ref(false, .Named("rt_types__PDict"))],
@@ -558,10 +556,10 @@ fn emit_lib_exports(
         ],
       },
     )
-    exports = .append(ExportDef.{ wasm_name: "__lib_dict_keys", func_sym: "__lib_dict_keys" }).append(
-      ExportDef.{ wasm_name: "__lib_dict_get", func_sym: "__lib_dict_get" },
-    ).append(ExportDef.{ wasm_name: "__lib_dict_new", func_sym: "__lib_dict_new" }).append(
-      ExportDef.{ wasm_name: "__lib_dict_set", func_sym: "__lib_dict_set" },
+    exports = .append(.{ wasm_name: "__lib_dict_keys", func_sym: "__lib_dict_keys" }).append(
+      .{ wasm_name: "__lib_dict_get", func_sym: "__lib_dict_get" },
+    ).append(.{ wasm_name: "__lib_dict_new", func_sym: "__lib_dict_new" }).append(
+      .{ wasm_name: "__lib_dict_set", func_sym: "__lib_dict_set" },
     )
   }
 
@@ -585,15 +583,9 @@ fn emit_lib_exports(
           emit_record_make(rec_name, sym, fields, base_ctx.backend),
         )
         exports = .append(
-          ExportDef.{
-            wasm_name: "__lib_read_rec_${rec_name}",
-            func_sym: "__lib_read_rec_${rec_name}",
-          },
+          .{ wasm_name: "__lib_read_rec_${rec_name}", func_sym: "__lib_read_rec_${rec_name}" },
         ).append(
-          ExportDef.{
-            wasm_name: "__lib_make_rec_${rec_name}",
-            func_sym: "__lib_make_rec_${rec_name}",
-          },
+          .{ wasm_name: "__lib_make_rec_${rec_name}", func_sym: "__lib_make_rec_${rec_name}" },
         )
       },
       _ => {},
@@ -605,7 +597,7 @@ fn emit_lib_exports(
   // serves them all. Emitted when any export returns a fn (recursively).
   if any_export_ret_uses_fn(anf.lib_exports) {
     funcs = .append(
-      FuncDef.{
+      .{
         name: "__lib_apply",
         params: [.Anyref, .Anyref],
         results: [.Anyref],
@@ -622,7 +614,7 @@ fn emit_lib_exports(
         ],
       },
     )
-    exports = .append(ExportDef.{ wasm_name: "__lib_apply", func_sym: "__lib_apply" })
+    exports = .append(.{ wasm_name: "__lib_apply", func_sym: "__lib_apply" })
   }
 
   .{ funcs, exports, imports }
@@ -664,7 +656,7 @@ fn emit_lib_function_wrapper(
     },
   }
 
-  FuncDef.{
+  .{
     name: "__lib_export_${fid.id}_${sanitize_name(exp.wasm_name)}",
     params,
     results,
@@ -780,7 +772,7 @@ fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, backend
   }
 
   body = .append(.ArrayNewFixed("rt_types__Array", fields.len()))
-  FuncDef.{
+  .{
     name: "__lib_read_rec_${name}",
     params: [.Anyref],
     results: [.Ref(false, .Named("rt_types__Array"))],
@@ -802,7 +794,7 @@ fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, backend
   }
 
   body = .append(.StructNew(sym))
-  FuncDef.{
+  .{
     name: "__lib_make_rec_${name}",
     params: [.Ref(false, .Named("rt_types__Array"))],
     results: [.Ref(false, .Named(sym))],
@@ -1137,7 +1129,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   // Generate trampolines if this function is used as a closure
   tramps := emit_trampolines_for_func(prepared, ctx)
-  FuncResult.{ func_def: fd, trampolines: tramps }
+  .{ func_def: fd, trampolines: tramps }
 }
 
 // Identifies builder slots across all builder families (vector and string).
@@ -1158,7 +1150,7 @@ fn builder_slot_ids(builtins: BuiltinRegistry) BuilderSlotIds {
   consumers[bi.id(builtins, "vector$builder_freeze").id] = true
   consumers[bi.id(builtins, "string$builder_extend").id] = true
   consumers[bi.id(builtins, "string$builder_freeze").id] = true
-  BuilderSlotIds.{ creators, consumers }
+  .{ creators, consumers }
 }
 
 fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
@@ -3343,7 +3335,7 @@ fn emit_intrinsic_channel_close(
 // stack. It invokes the closure through the generic closure ABI (env, no
 // args) and returns the already-boxed anyref result.
 fn emit_task_run_func() FuncDef {
-  FuncDef.{
+  .{
     name: "__task_run",
     params: [.Anyref],
     results: [.Anyref],

@@ -5,7 +5,7 @@ pub type LocalMap<T> = .{ inner: Dict<Int, T> }
 
 /// Empty local-keyed map.
 pub fn local_map<T>() LocalMap<T> {
-  LocalMap.{ inner: Dict.new() }
+  .{ inner: Dict.new() }
 }
 
 /// Value for a local id, or `.None`.

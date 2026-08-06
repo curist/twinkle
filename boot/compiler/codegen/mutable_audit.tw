@@ -83,7 +83,7 @@ fn ctx_for_func(
   builtins: BuiltinRegistry,
   prepared: PreparedModule,
 ) EmitCtx {
-  EmitCtx.{
+  .{
     registry: empty_registry(),
     builtins,
     env,

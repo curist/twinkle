@@ -19,18 +19,15 @@ pub fn branch_simplify(expr: AnfExpr) SimpResult {
           else_e
         }
         spliced := splice_branch(selected, local, body)
-        SimpResult.{ expr: spliced, changed: true }
+        .{ expr: spliced, changed: true }
       },
       _ => {
         op_r := branch_simplify_op(op)
         body_r := branch_simplify(body)
-        SimpResult.{
-          expr: .Let(local, op_r.op, body_r.expr),
-          changed: op_r.changed or body_r.changed,
-        }
+        .{ expr: .Let(local, op_r.op, body_r.expr), changed: op_r.changed or body_r.changed }
       },
     },
-    _ => SimpResult.{ expr, changed: false },
+    _ => .{ expr, changed: false },
   }
 }
 
@@ -55,10 +52,7 @@ fn branch_simplify_op(op: AnfOp) OpSimpResult {
     .AIf(cond_e, then_e, else_e) => {
       then_r := branch_simplify(then_e)
       else_r := branch_simplify(else_e)
-      OpSimpResult.{
-        op: .AIf(cond_e, then_r.expr, else_r.expr),
-        changed: then_r.changed or else_r.changed,
-      }
+      .{ op: .AIf(cond_e, then_r.expr, else_r.expr), changed: then_r.changed or else_r.changed }
     },
     .AMatch(scrutinee, arms) => {
       changed := false
@@ -71,16 +65,16 @@ fn branch_simplify_op(op: AnfOp) OpSimpResult {
 
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
-      OpSimpResult.{ op: .AMatch(scrutinee, new_arms), changed }
+      .{ op: .AMatch(scrutinee, new_arms), changed }
     },
     .ALoop(body) => {
       r := branch_simplify(body)
-      OpSimpResult.{ op: .ALoop(r.expr), changed: r.changed }
+      .{ op: .ALoop(r.expr), changed: r.changed }
     },
     .ADefer(inner) => {
       r := branch_simplify(inner)
-      OpSimpResult.{ op: .ADefer(r.expr), changed: r.changed }
+      .{ op: .ADefer(r.expr), changed: r.changed }
     },
-    _ => OpSimpResult.{ op, changed: false },
+    _ => .{ op, changed: false },
   }
 }

@@ -91,7 +91,7 @@ pub fn site_key(site: Site) Int {
 }
 
 pub fn empty_decision_table() MutableDecisionTable {
-  MutableDecisionTable.{ by_site: Dict.new() }
+  .{ by_site: Dict.new() }
 }
 
 pub fn with_decision(self: MutableDecisionTable, d: MutableDecision) MutableDecisionTable {
@@ -138,7 +138,7 @@ pub type MutableEmitPolicy = .{
 // The Phase 7C/7D default: never emit a mutable target, regardless of what
 // the decision table proved. Prepared modules default to this policy.
 pub fn persistent_only_policy() MutableEmitPolicy {
-  MutableEmitPolicy.{
+  .{
     emit_vector_set: false,
     emit_dict_set: false,
     emit_dict_remove: false,
@@ -149,7 +149,7 @@ pub fn persistent_only_policy() MutableEmitPolicy {
 // Phase 8A: enable mutable emission for vector element sets only; other
 // families stay persistent until their own phases land.
 pub fn phase8a_policy() MutableEmitPolicy {
-  MutableEmitPolicy.{
+  .{
     emit_vector_set: true,
     emit_dict_set: false,
     emit_dict_remove: false,
@@ -161,7 +161,7 @@ pub fn phase8a_policy() MutableEmitPolicy {
 // families stay persistent. Used by the record selector's mechanism tests so
 // they are independent of the cumulative build policy.
 pub fn phase8f_policy() MutableEmitPolicy {
-  MutableEmitPolicy.{
+  .{
     emit_vector_set: false,
     emit_dict_set: false,
     emit_dict_remove: false,
@@ -175,7 +175,7 @@ pub fn phase8f_policy() MutableEmitPolicy {
 // phase8a_policy), not this cumulative one, so enabling a family here does not
 // perturb those mechanism tests.
 pub fn enabled_emit_policy() MutableEmitPolicy {
-  MutableEmitPolicy.{
+  .{
     emit_vector_set: true,
     emit_dict_set: true,
     emit_dict_remove: true,
@@ -244,15 +244,11 @@ pub fn select_call_with_policy(
   }
 
   if ds.len() > 1 {
-    return CallSelection.{
-      emit_func: persistent_fallback,
-      would_func: persistent_fallback,
-      reason: .Ambiguous,
-    }
+    return .{ emit_func: persistent_fallback, would_func: persistent_fallback, reason: .Ambiguous }
   }
 
   if !expected_family.is_supported_call_family() {
-    return CallSelection.{
+    return .{
       emit_func: persistent_fallback,
       would_func: persistent_fallback,
       reason: .UnsupportedFamily,
@@ -309,9 +305,9 @@ pub fn select_call_with_policy(
 
   case d.mutable_func {
     .Some(mf) => if policy.policy_allows_call(expected_family) {
-      CallSelection.{ emit_func: mf, would_func: mf, reason: .MutableSelected }
+      .{ emit_func: mf, would_func: mf, reason: .MutableSelected }
     } else {
-      CallSelection.{ emit_func: persistent_fallback, would_func: mf, reason: .PolicyDisabled }
+      .{ emit_func: persistent_fallback, would_func: mf, reason: .PolicyDisabled }
     },
     .None => reject(.MissingMutableTarget),
   }
@@ -360,11 +356,7 @@ pub fn select_record_update_with_policy(
   }
 
   if ds.len() > 1 {
-    return RecordReuseSelection.{
-      emit_can_reuse: original_can_reuse,
-      would_reuse: false,
-      reason: .Ambiguous,
-    }
+    return .{ emit_can_reuse: original_can_reuse, would_reuse: false, reason: .Ambiguous }
   }
 
   d := ds[0]
@@ -395,12 +387,8 @@ pub fn select_record_update_with_policy(
   // reuse only when the policy enables the record family; otherwise report it as
   // available-but-not-emitted and keep the persistent copy.
   if policy.emit_record_shell_update {
-    RecordReuseSelection.{ emit_can_reuse: true, would_reuse: true, reason: .MutableSelected }
+    .{ emit_can_reuse: true, would_reuse: true, reason: .MutableSelected }
   } else {
-    RecordReuseSelection.{
-      emit_can_reuse: original_can_reuse,
-      would_reuse: true,
-      reason: .MutableAvailableNotEmitted,
-    }
+    .{ emit_can_reuse: original_can_reuse, would_reuse: true, reason: .MutableAvailableNotEmitted }
   }
 }

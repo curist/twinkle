@@ -121,7 +121,7 @@ pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
     ParamSummary.{ base_role: .Published, in_place_paths: vid.empty_set(), flows_to_return: false }
   }
-  Summary.{ params, ret: .Shared, ret_paths: [] }
+  .{ params, ret: .Shared, ret_paths: [] }
 }
 
 // ── Summary equality (fixpoint stop condition) ──────────────────────
@@ -533,11 +533,7 @@ fn run_scc(
   if worklist.len() > 0 {
     for id in members {
       case summary_get(table, id) {
-        .Some(s) => table = table_put(
-          table,
-          id,
-          Summary.{ params: s.params, ret: s.ret, ret_paths: [] },
-        ),
+        .Some(s) => table = table_put(table, id, .{ params: s.params, ret: s.ret, ret_paths: [] }),
         .None => {},
       }
     }
@@ -561,7 +557,7 @@ fn run_scc(
       )
     }
   }
-  SccResult.{ table, cache, live_cache: live_acc }
+  .{ table, cache, live_cache: live_acc }
 }
 
 // ── Variant (ownership-specialized) summaries ───────────────────────
@@ -581,7 +577,7 @@ pub type VariantSummaryTable = .{
 }
 
 pub fn empty_variant_table() VariantSummaryTable {
-  VariantSummaryTable.{ by_key: Dict.new(), by_func: Dict.new() }
+  .{ by_key: Dict.new(), by_func: Dict.new() }
 }
 
 // Canonical identity of a variant (NOT site_key, which is a call-site pairing).
@@ -870,7 +866,7 @@ type ThreadScan = .{ found: Bool, ret_derived: Bool }
 // recursive publishing can hide exactly the sites this pre-filter bootstraps.
 fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadScan {
   if k < 0 or k >= f.params.len() {
-    return ThreadScan.{ found: false, ret_derived: false }
+    return .{ found: false, ret_derived: false }
   }
   st := InplaceScan.{ derived: Dict.new(), derived_fields: Dict.new(), found: false, changed: true }
   st.derived[f.params[k].id] = true
@@ -898,7 +894,7 @@ fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadSca
       _ => {},
     }
   }
-  ThreadScan.{ found: st.found, ret_derived }
+  .{ found: st.found, ret_derived }
 }
 
 // A param that both threads to the return (either the generic summary aliases it,
@@ -948,7 +944,7 @@ fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
       ps
     }
   }
-  Summary.{ params, ret: .MayAliasParams([k]), ret_paths: [] }
+  .{ params, ret: .MayAliasParams([k]), ret_paths: [] }
 }
 
 fn seed_param_of(v: vid.VariantId) Int {
@@ -1848,7 +1844,7 @@ pub fn compute_cached(
   if trace {
     eprintln("[trace:summary:compute:end]")
   }
-  SummaryCacheResult.{ table, fix_cache: cache, live_cache }
+  .{ table, fix_cache: cache, live_cache }
 }
 
 // Transitive user-callee closure of `roots` (root ids included). Used to scope
@@ -2022,7 +2018,7 @@ pub fn compute_for_roots_cached(
   if trace {
     eprintln("[trace:summary:roots:end]")
   }
-  SummaryCacheResult.{ table, fix_cache: cache, live_cache: empty_live_cache() }
+  .{ table, fix_cache: cache, live_cache: empty_live_cache() }
 }
 
 // Like `compute_for_roots_cached`, but seeds the fixpoint from a whole-program
@@ -2235,5 +2231,5 @@ pub fn compute_for_roots_reusing(
     eprintln("[summary:reuse:verify] ok funcs=${view.functions.len()} reused=${reused}")
   }
 
-  SummaryCacheResult.{ table, fix_cache: cache, live_cache: empty_live_cache() }
+  .{ table, fix_cache: cache, live_cache: empty_live_cache() }
 }

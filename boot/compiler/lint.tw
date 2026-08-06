@@ -327,7 +327,7 @@ fn constant_fn_edits(decl: FunctionDecl, module: Module, def_replacement: String
   ]
 
   for span in refs.call_spans {
-    edits = .append(FixEdit.{ start: span.start, end: span.end, replacement: decl.name })
+    edits = .append(.{ start: span.start, end: span.end, replacement: decl.name })
   }
 
   edits

@@ -160,7 +160,7 @@ pub fn emit_loop_op(
   // pushed and the nesting depth bumped. Rebind `ctx` directly — it's immutable,
   // so this shadows the local binding while the caller's context is untouched, and
   // new EmitCtx fields flow through for free.
-  ctx.label_stack = .append(LabelPair.{ break_label, continue_label: cont_label })
+  ctx.label_stack = .append(.{ break_label, continue_label: cont_label })
   ctx.loop_depth = ctx.loop_depth + 1
 
   // Loop body is a nested sub-body — use fresh []

@@ -284,7 +284,7 @@ fn layout_of_named(
         } else {
           val_type_of_mono(field_ty, env)
         }
-        WasmFieldLayout.{ field_id: FieldId.{ id: i }, name: f.name, val_type: vt }
+        WasmFieldLayout.{ field_id: .{ id: i }, name: f.name, val_type: vt }
       }
       .Record(WasmRecordLayout.{ type_id: tid, sym, fields: field_layouts })
     },
@@ -374,7 +374,7 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
   sym := "$Option_${mono_to_key(.Optional(inner))}"
   .Sum(
     WasmSumLayout.{
-      type_id: TypeId.{ id: -1 },
+      type_id: .{ id: -1 },
       sym,
       tag_type: .I32,
       variants: [
@@ -401,7 +401,7 @@ fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
   sym := "$Result_${mono_to_key(.Result(ok, err))}"
   .Sum(
     WasmSumLayout.{
-      type_id: TypeId.{ id: -1 },
+      type_id: .{ id: -1 },
       sym,
       tag_type: .I32,
       variants: [

@@ -198,7 +198,7 @@ fn reserved_stdlib_type_entries(start_id: Int) Vector<TypeEntry> {
 
   collect i in range(rts.len()) {
     TypeEntry.{
-      id: TypeId.{ id: start_id + i },
+      id: .{ id: start_id + i },
       arity: rts[i].arity,
       def: .None,
       span: .{ file_id: 0, start: 0, end: 0 },

@@ -12,7 +12,7 @@ pub type AddFileResult = .{ file_id: Int }
 
 pub fn empty() FileRegistry {
   files: Dict<Int, SourceFile> = Dict.new()
-  .{ data: Cell.new(RegistryData.{ files, count: 0 }) }
+  .{ data: Cell.new(.{ files, count: 0 }) }
 }
 
 fn compute_line_starts(source: String) Vector<Int> {

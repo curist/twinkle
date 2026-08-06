@@ -147,7 +147,7 @@ pub fn plan_dependencies_with_exists(
 pub fn make_canonical_roots(project_root: String) CanonicalRoots {
   prelude_root := path.normalize(loader.resolve_prelude_root())
   stdlib_root := path.normalize(loader.resolve_stdlib_root())
-  CanonicalRoots.{ prelude_root, stdlib_root }
+  .{ prelude_root, stdlib_root }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

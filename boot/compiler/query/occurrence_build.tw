@@ -202,23 +202,20 @@ fn walk_stmt(ctx: Ctx, b: Builder, env: Env, stmt: Stmt) Walk {
       if ls.is_rebind {
         // Write to an existing local; a non-local target is resolved in Phase 3.
         case env.get(ls.name) {
-          .Some(bind) => Walk.{
-            b: ctx.ref_local(b2, bind, ls.name, .Write, ls.name_span, .None),
-            env,
-          },
-          .None => Walk.{ b: b2, env },
+          .Some(bind) => .{ b: ctx.ref_local(b2, bind, ls.name, .Write, ls.name_span, .None), env },
+          .None => .{ b: b2, env },
         }
       } else {
         ctx.declare(b2, env, ls.name, ls.name_span, .Local)
       }
     },
-    .For(fs) => Walk.{ b: ctx.walk_for(b, env, fs), env },
-    .Return(rs) => Walk.{ b: ctx.walk_opt_expr(b, env, rs.value), env },
-    .Break(bs) => Walk.{ b: ctx.walk_opt_expr(b, env, bs.value), env },
-    .Continue(_) => Walk.{ b, env },
-    .Defer(ds) => Walk.{ b: ctx.walk_expr(b, env, ds.expr), env },
-    .Expr(es) => Walk.{ b: ctx.walk_expr(b, env, es.expr), env },
-    .ErrorStmt(_) => Walk.{ b, env },
+    .For(fs) => .{ b: ctx.walk_for(b, env, fs), env },
+    .Return(rs) => .{ b: ctx.walk_opt_expr(b, env, rs.value), env },
+    .Break(bs) => .{ b: ctx.walk_opt_expr(b, env, bs.value), env },
+    .Continue(_) => .{ b, env },
+    .Defer(ds) => .{ b: ctx.walk_expr(b, env, ds.expr), env },
+    .Expr(es) => .{ b: ctx.walk_expr(b, env, es.expr), env },
+    .ErrorStmt(_) => .{ b, env },
   }
 }
 
@@ -336,11 +333,7 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
           name,
           .Type,
           .Reference,
-          Span.{
-            file_id: expr.span.file_id,
-            start: expr.span.start,
-            end: expr.span.start + name.len(),
-          },
+          .{ file_id: expr.span.file_id, start: expr.span.start, end: expr.span.start + name.len() },
           .None,
         )
       }
@@ -355,7 +348,7 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
           name,
           .Variant,
           .Reference,
-          Span.{
+          .{
             file_id: expr.span.file_id,
             start: expr.span.start + 1,
             end: expr.span.start + 1 + name.len(),
@@ -522,7 +515,7 @@ fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Bu
         name,
         .Variant,
         .Reference,
-        Span.{
+        .{
           file_id: pat.span.file_id,
           start: pat.span.start + 1,
           end: pat.span.start + 1 + name.len(),
@@ -543,7 +536,7 @@ fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Bu
         name,
         .Variant,
         .Reference,
-        Span.{ file_id: pat.span.file_id, start: pat.span.start, end: pat.span.start + name.len() },
+        .{ file_id: pat.span.file_id, start: pat.span.start, end: pat.span.start + name.len() },
         .None,
       )
 
@@ -572,7 +565,7 @@ fn walk_record_entries(
         entry.name,
         .Field,
         .Reference,
-        Span.{
+        .{
           file_id: entry.span.file_id,
           start: entry.span.start,
           end: entry.span.start + entry.name.len(),
@@ -601,9 +594,9 @@ fn bind_pattern(ctx: Ctx, b: Builder, env: Env, pat: Pattern) Walk {
     .Ident(name) => ctx.declare(b, env, name, pat.span, .Local),
     .Variant(_, subs) => ctx.bind_patterns(b, env, subs),
     .QualifiedVariant(_, _, subs) => ctx.bind_patterns(b, env, subs),
-    .Wildcard => Walk.{ b, env },
-    .Literal(_) => Walk.{ b, env },
-    .ErrorPattern => Walk.{ b, env },
+    .Wildcard => .{ b, env },
+    .Literal(_) => .{ b, env },
+    .ErrorPattern => .{ b, env },
   }
 }
 
@@ -650,11 +643,7 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
         type_name,
         .Type,
         .Reference,
-        Span.{
-          file_id: path.span.file_id,
-          start: path.span.end - type_name.len(),
-          end: path.span.end,
-        },
+        .{ file_id: path.span.file_id, start: path.span.end - type_name.len(), end: path.span.end },
         .None,
       )
     },
@@ -663,7 +652,7 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
         ctx.classify_type_name(
           b,
           path.segments[0],
-          Span.{
+          .{
             file_id: path.span.file_id,
             start: path.span.start,
             end: path.span.start + path.segments[0].len(),
@@ -678,7 +667,7 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
           type_name,
           .Type,
           .Reference,
-          Span.{
+          .{
             file_id: path.span.file_id,
             start: path.span.end - type_name.len(),
             end: path.span.end,
@@ -993,7 +982,7 @@ fn declare(ctx: Ctx, b: Builder, env: Env, name: String, name_span: Span, kind: 
   b.next_local = id + 1
 
   env[name] = Binding.{ id, kind }
-  Walk.{ b, env }
+  .{ b, env }
 }
 
 /// Record a use of an in-scope local binder.

@@ -82,7 +82,7 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
   }
-  WasmModule.{
+  .{
     namespace: "rt.core",
     types: [],
     imports: [
@@ -184,7 +184,7 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
 }
 
 fn print_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "print",
     params: [str_null()],
     results: [],
@@ -194,7 +194,7 @@ fn print_fn() FuncDef {
 }
 
 fn println_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "println",
     params: [str_null()],
     results: [],
@@ -204,7 +204,7 @@ fn println_fn() FuncDef {
 }
 
 fn eprint_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eprint",
     params: [str_null()],
     results: [],
@@ -214,7 +214,7 @@ fn eprint_fn() FuncDef {
 }
 
 fn eprintln_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eprintln",
     params: [str_null()],
     results: [],
@@ -224,7 +224,7 @@ fn eprintln_fn() FuncDef {
 }
 
 fn trap_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "trap",
     params: [str_null()],
     results: [],
@@ -235,7 +235,7 @@ fn trap_fn() FuncDef {
 
 // eq_array(a: ref null Array, b: ref null Array) -> i32
 fn eq_array_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eq_array",
     params: [arr_null(), arr_null()],
     results: [.I32],
@@ -308,7 +308,7 @@ fn eq_array_fn() FuncDef {
 
 // eq_vec(a: ref PVec, b: ref PVec) -> i32
 fn eq_vec_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eq_vec",
     params: [pvec_ref(), pvec_ref()],
     results: [.I32],
@@ -361,7 +361,7 @@ fn eq_vec_fn() FuncDef {
 
 // eq_dict(a: ref PDict, b: ref PDict) -> i32
 fn eq_dict_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eq_dict",
     params: [pdict_ref(), pdict_ref()],
     results: [.I32],
@@ -428,7 +428,7 @@ fn eq_dict_fn() FuncDef {
 
 // eq_variant(a: ref Variant, b: ref Variant) -> i32
 fn eq_variant_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "eq_variant",
     params: [variant_ref(), variant_ref()],
     results: [.I32],
@@ -535,13 +535,7 @@ fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
   }
 
   body = .append(Instr.I32Const(1))
-  FuncDef.{
-    name: rec_eq_func_name(rec),
-    params: [ref_ty, ref_ty],
-    results: [.I32],
-    locals: [],
-    body,
-  }
+  .{ name: rec_eq_func_name(rec), params: [ref_ty, ref_ty], results: [.I32], locals: [], body }
 }
 
 // ── Sum (enum) structural equality ─────────────────────────────────
@@ -602,13 +596,7 @@ fn gen_sum_eq_fn(sum: WasmSumLayout) FuncDef {
   }
 
   body = .append(Instr.I32Const(1))
-  FuncDef.{
-    name: sum_eq_func_name(sum),
-    params: [ref_ty, ref_ty],
-    results: [.I32],
-    locals: [],
-    body,
-  }
+  .{ name: sum_eq_func_name(sum), params: [ref_ty, ref_ty], results: [.I32], locals: [], body }
 }
 
 fn sum_eq_dispatch(sum_layouts: Vector<WasmSumLayout>) Vector<Instr> {
@@ -676,7 +664,7 @@ fn record_eq_dispatch(record_layouts: Vector<WasmRecordLayout>) Vector<Instr> {
 }
 
 fn eq_fn(eq_layouts: EqTypeLayouts) FuncDef {
-  FuncDef.{
+  .{
     name: "eq",
     params: [.Anyref, .Anyref],
     results: [.I32],

@@ -103,7 +103,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .Collect(ce) => lower_collect(ctx, ce, ty, s, lower_expr, lower_block),
     _ => {
       ctx = .emit_error(s, "unsupported expression kind: ${expr.kind.name()}")
-      ExprOut.{ expr: void_expr(s), ctx }
+      .{ expr: void_expr(s), ctx }
     },
   }
 }
@@ -143,7 +143,7 @@ fn lower_cond(
     i = i - 1
   }
 
-  ExprOut.{ expr: cur_else, ctx: cur_ctx }
+  .{ expr: cur_else, ctx: cur_ctx }
 }
 
 // ── Block and statement lowering ────────────────────────────────────
@@ -152,7 +152,7 @@ fn lower_block(ctx: LowerCtx, block: Block) ExprOut {
   result := lower_stmts(ctx, block.stmts, 0, block.tail, block.span, lower_expr, lower_block)
   ctx = result.ctx
   ctx = .pop_scope()
-  ExprOut.{ expr: result.expr, ctx }
+  .{ expr: result.expr, ctx }
 }
 
 // ── Module lowering (entry point) ───────────────────────────────────
@@ -439,7 +439,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     init_func_id = .Some(init_fid)
 
     // Build init body: chain stmts with Let
-    init_body := void_expr(Span.{ file_id: 0, start: 0, end: 0 })
+    init_body := void_expr(.{ file_id: 0, start: 0, end: 0 })
     i := init_stmts.len() - 1
 
     for _ in 0..init_stmts.len() {

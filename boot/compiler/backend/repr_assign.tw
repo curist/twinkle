@@ -326,7 +326,7 @@ pub fn wasm_type_of_repr(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValTy
     repr,
     mono,
     env,
-    ReprAssignCache.{ repr_cache: Dict.new(), val_type_cache: Dict.new(), layout_cache: Dict.new() },
+    .{ repr_cache: Dict.new(), val_type_cache: Dict.new(), layout_cache: Dict.new() },
   )
   result.val_type
 }

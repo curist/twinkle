@@ -29,7 +29,7 @@ pub type MutableCatalog = .{
 }
 
 fn empty_catalog() MutableCatalog {
-  MutableCatalog.{ by_persistent: Dict.new(), by_mutable: Dict.new() }
+  .{ by_persistent: Dict.new(), by_mutable: Dict.new() }
 }
 
 fn name_of(b: BuiltinRegistry, id: Int) String {
@@ -40,7 +40,7 @@ fn name_of(b: BuiltinRegistry, id: Int) String {
 }
 
 pub fn record_targets() Targets {
-  Targets.{ persistent: "struct.new(copy)", mutable: "struct.set(reuse)", has_mutable: true }
+  .{ persistent: "struct.new(copy)", mutable: "struct.set(reuse)", has_mutable: true }
 }
 
 pub fn base_arg_index_for_decision_family(family: mutable_select.OperationFamily) Int? {
@@ -118,10 +118,10 @@ pub fn build(b: BuiltinRegistry, sem: OptimizerSemantics) MutableCatalog {
   for fid, cs in sem.call_semantics {
     if is_cataloged_call(fid, cs.effect, b, sem) {
       cat = .add_entry(
-        UpdateEntry.{
+        .{
           family: family_for_persistent(fid, b, sem),
           decision_family: decision_family_for_persistent(fid, b),
-          persistent_func: FuncId.{ id: fid },
+          persistent_func: .{ id: fid },
           base_arg_index: cs.cow_base_arg,
           mutable_func: cs.in_place_equivalent,
         },
@@ -158,7 +158,7 @@ pub fn targets_for_actual(self: MutableCatalog, b: BuiltinRegistry, actual_fid: 
     return record_targets()
   }
   case self.by_mutable.get(actual_fid) {
-    .Some(e) => return Targets.{
+    .Some(e) => return .{
       persistent: name_of(b, e.persistent_func.id),
       mutable: name_of(b, actual_fid),
       has_mutable: true,
@@ -167,21 +167,17 @@ pub fn targets_for_actual(self: MutableCatalog, b: BuiltinRegistry, actual_fid: 
   }
   case self.by_persistent.get(actual_fid) {
     .Some(e) => case e.mutable_func {
-      .Some(mid) => return Targets.{
+      .Some(mid) => return .{
         persistent: name_of(b, actual_fid),
         mutable: name_of(b, mid.id),
         has_mutable: true,
       },
-      .None => return Targets.{
-        persistent: name_of(b, actual_fid),
-        mutable: "-",
-        has_mutable: false,
-      },
+      .None => return .{ persistent: name_of(b, actual_fid), mutable: "-", has_mutable: false },
     },
     .None => {},
   }
 
   // Unknown calls should normally not reach dry-run candidates, but keep the
   // inspection path defensive and persistent-only.
-  Targets.{ persistent: name_of(b, actual_fid), mutable: "-", has_mutable: false }
+  .{ persistent: name_of(b, actual_fid), mutable: "-", has_mutable: false }
 }

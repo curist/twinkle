@@ -15,11 +15,11 @@ pub type ParamPath = .{ segs: Vector<Int> }
 
 // Constructors: shell (the whole value) and a single direct record field.
 pub fn shell() ParamPath {
-  ParamPath.{ segs: [] }
+  .{ segs: [] }
 }
 
 pub fn field(f: Int) ParamPath {
-  ParamPath.{ segs: [f] }
+  .{ segs: [f] }
 }
 
 pub fn is_shell(self: ParamPath) Bool {
@@ -45,12 +45,12 @@ pub fn eq(self: ParamPath, other: ParamPath) Bool {
 pub type PathSet = .{ paths: Vector<ParamPath> }
 
 pub fn empty_set() PathSet {
-  PathSet.{ paths: [] }
+  .{ paths: [] }
 }
 
 // The shell-only set { [] } — a Consumed param's coarse Part-1 requirement.
 pub fn shell_set() PathSet {
-  PathSet.{ paths: [shell()] }
+  .{ paths: [shell()] }
 }
 
 pub fn is_empty(self: PathSet) Bool {
@@ -91,7 +91,7 @@ pub fn add(self: PathSet, p: ParamPath) PathSet {
   if !inserted {
     out = .append(p)
   }
-  PathSet.{ paths: out }
+  .{ paths: out }
 }
 
 pub fn union(self: PathSet, other: PathSet) PathSet {
@@ -167,7 +167,7 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
       case seen_shell.get(r.param) {
         .Some(_) => {},
         .None => {
-          augmented = .append(UniqueReq.{ param: r.param, path: shell() })
+          augmented = .append(.{ param: r.param, path: shell() })
           seen_shell[r.param] = true
         },
       }
@@ -194,7 +194,7 @@ pub fn variant_canonical_string(v: VariantId) String {
 
 // A VariantId with its key canonicalized + downward-closed (D3).
 pub fn canonicalize_variant(v: VariantId) VariantId {
-  VariantId.{ func: v.func, unique: downward_close(v.unique) }
+  .{ func: v.func, unique: downward_close(v.unique) }
 }
 
 pub type VariantInterner = .{
@@ -205,7 +205,7 @@ pub type VariantInterner = .{
 pub type InternResult = .{ interner: VariantInterner, id: Int }
 
 pub fn new_interner() VariantInterner {
-  VariantInterner.{ ids: Dict.new(), by_id: [] }
+  .{ ids: Dict.new(), by_id: [] }
 }
 
 // Intern a VariantId: canonicalize it, then return its dense id — reusing the
@@ -215,12 +215,12 @@ pub fn intern(vi: VariantInterner, v: VariantId) InternResult {
   cv := v.canonicalize_variant()
   s := cv.variant_canonical_string()
   case vi.ids.get(s) {
-    .Some(id) => InternResult.{ interner: vi, id },
+    .Some(id) => .{ interner: vi, id },
     .None => {
       id := vi.by_id.len()
       vi.ids[s] = id
       vi.by_id = .append(cv)
-      InternResult.{ interner: vi, id }
+      .{ interner: vi, id }
     },
   }
 }

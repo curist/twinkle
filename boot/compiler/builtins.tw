@@ -35,7 +35,7 @@ pub type BuiltinRegistry = .{
 
 // ── Registration helpers ──
 fn empty_abi() AbiContract {
-  AbiContract.{ param_types: [], result_types: [] }
+  .{ param_types: [], result_types: [] }
 }
 
 fn ref_null(name: String) ValType {
@@ -167,7 +167,7 @@ fn cell_n() ValType {
 }
 
 fn abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
-  AbiContract.{ param_types: params, result_types: results }
+  .{ param_types: params, result_types: results }
 }
 
 // One MutVec element family's wiring inputs. Adding a family (Float/Byte/...) is
@@ -445,7 +445,7 @@ pub fn runtime_with_policy_and_abi(
   by_id := reg.by_id
   by_name[name] = entry
   by_id[fid.id] = entry
-  BuiltinRegistry.{
+  .{
     by_name,
     by_id,
     by_canonical: reg.by_canonical,
@@ -502,7 +502,7 @@ pub fn intrinsic_with_policy_and_abi(
   by_id := reg.by_id
   by_name[name] = entry
   by_id[fid.id] = entry
-  BuiltinRegistry.{
+  .{
     by_name,
     by_id,
     by_canonical: reg.by_canonical,

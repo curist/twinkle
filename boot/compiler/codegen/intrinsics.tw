@@ -85,7 +85,7 @@ fn int_from_string_helper_fn() FuncDef {
     .ArrayNewFixed("rt_types__Array", 0),
     .StructNew("rt_types__Variant"),
   ]
-  FuncDef.{
+  .{
     name: "int_from_string_helper",
     params: [str_null()],
     results: [.Anyref],
@@ -288,7 +288,7 @@ fn from_code_point_helper_fn() FuncDef {
     .ArrayNewFixed("rt_types__Array", 1),
     .StructNew("rt_types__Variant"),
   ]
-  FuncDef.{
+  .{
     name: "from_code_point_helper",
     params: [.I32],
     results: [.Anyref],
@@ -352,7 +352,7 @@ fn from_code_point_helper_fn() FuncDef {
 }
 
 fn string_utf8_bytes_helper_fn() FuncDef {
-  FuncDef.{
+  .{
     name: "string_utf8_bytes_helper",
     params: [str_null()],
     results: [arr_ref()],
@@ -574,7 +574,7 @@ fn string_from_utf8_helper_fn() FuncDef {
     .ArrayNewFixed("rt_types__Array", 1),
     .StructNew("rt_types__Variant"),
   ]
-  FuncDef.{
+  .{
     name: "string_from_utf8_helper",
     params: [arr_null()],
     results: [.Anyref],
@@ -758,7 +758,7 @@ fn float_from_string_helper_fn() FuncDef {
     .ArrayNewFixed("rt_types__Array", 0),
     .StructNew("rt_types__Variant"),
   ]
-  FuncDef.{
+  .{
     name: "float_from_string_helper",
     params: [str_null()],
     results: [.Anyref],

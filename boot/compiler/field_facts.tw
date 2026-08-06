@@ -18,28 +18,28 @@ pub type AccessPath = .{ segs: Vector<PathSeg> }
 pub type FieldMap = .{ paths: Dict<Int, Int> }
 
 pub fn empty() FieldMap {
-  FieldMap.{ paths: Dict.new() }
+  .{ paths: Dict.new() }
 }
 
 // ── AccessPath constructors ─────────────────────────────────────────
 pub fn field_path(f: Int) AccessPath {
-  AccessPath.{ segs: [.Field(f)] }
+  .{ segs: [.Field(f)] }
 }
 
 pub fn elem_path() AccessPath {
-  AccessPath.{ segs: [.Elem] }
+  .{ segs: [.Elem] }
 }
 
 pub fn val_path() AccessPath {
-  AccessPath.{ segs: [.Val] }
+  .{ segs: [.Val] }
 }
 
 pub fn field_elem(f: Int) AccessPath {
-  AccessPath.{ segs: [.Field(f), .Elem] }
+  .{ segs: [.Field(f), .Elem] }
 }
 
 pub fn field_val(f: Int) AccessPath {
-  AccessPath.{ segs: [.Field(f), .Val] }
+  .{ segs: [.Field(f), .Val] }
 }
 
 pub fn seg_eq(a: PathSeg, b: PathSeg) Bool {
@@ -151,7 +151,7 @@ pub fn path_of_key(k: Int) AccessPath {
     k == 2 => val_path(),
     k >= ff2_base => {
       rel := k - ff2_base
-      AccessPath.{ segs: [.Field(rel / 1048576), .Field(rel % 1048576)] }
+      .{ segs: [.Field(rel / 1048576), .Field(rel % 1048576)] }
     },
     k >= 8 => {
       base := k - 8
@@ -170,9 +170,9 @@ pub fn path_of_key(k: Int) AccessPath {
       index := packed / 1048576 % 1048576
       tag := packed / 1099511627776
       if fieldslot == 0 {
-        AccessPath.{ segs: [.Payload(tag, index)] }
+        .{ segs: [.Payload(tag, index)] }
       } else {
-        AccessPath.{ segs: [.Payload(tag, index), .Field(fieldslot - 1)] }
+        .{ segs: [.Payload(tag, index), .Field(fieldslot - 1)] }
       }
     },
     _ => error("field_facts: bad path key ${k}"),
@@ -210,7 +210,7 @@ pub fn is_empty(fm: FieldMap) Bool {
 // depth <= 2 (deeper is dropped, sound under-claim). Under an Elem/Val prefix no
 // deeper nesting is representable, so only the shell tag lands.
 pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
-  fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
+  fm.paths[path_key(.{ segs: [prefix] })] = 0
   case prefix {
     .Field(_) => {
       for k, v in src.paths {
@@ -221,9 +221,9 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         // and any depth-2 inner (would rebase to depth-3) are dropped — sound under-claim.
         if inner.segs.len() == 1 {
           case inner.segs[0] {
-            .Elem => fm.paths[path_key(AccessPath.{ segs: [prefix, .Elem] })] = v,
-            .Val => fm.paths[path_key(AccessPath.{ segs: [prefix, .Val] })] = v,
-            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
+            .Elem => fm.paths[path_key(.{ segs: [prefix, .Elem] })] = v,
+            .Val => fm.paths[path_key(.{ segs: [prefix, .Val] })] = v,
+            .Field(_) => fm.paths[path_key(.{ segs: [prefix, inner.segs[0]] })] = v,
             _ => {}, // Payload inners not representable under Field prefix
           }
         }
@@ -235,7 +235,7 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         inner := path_of_key(k)
         if inner.segs.len() == 1 {
           case inner.segs[0] {
-            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
+            .Field(_) => fm.paths[path_key(.{ segs: [prefix, inner.segs[0]] })] = v,
             _ => {}, // Elem/Val/Payload inners not representable at depth 2 — sound under-claim
           }
         }
@@ -261,11 +261,11 @@ pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
       if p.segs.len() == 1 {
         shell = .Some(v)
       } else {
-        inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = v
+        inner.paths[path_key(.{ segs: [p.segs[1]] })] = v
       }
     }
   }
-  Projection.{ shell, fields: inner }
+  .{ shell, fields: inner }
 }
 
 // Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.

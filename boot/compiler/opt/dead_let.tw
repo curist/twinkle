@@ -42,7 +42,7 @@ fn dead_let_inner(
 ) ElimResult {
   case expr {
     .Let(_, _, _) => dead_let_spine(expr, uses, assigned, semantics),
-    _ => ElimResult.{ expr, changed: false },
+    _ => .{ expr, changed: false },
   }
 }
 
@@ -86,7 +86,7 @@ fn dead_let_spine(
     i = i - 1
   }
 
-  ElimResult.{ expr: result, changed }
+  .{ expr: result, changed }
 }
 
 type OpElimResult = .{ op: AnfOp, changed: Bool }
@@ -101,10 +101,7 @@ fn dead_let_op(
     .AIf(cond_e, then_e, else_e) => {
       then_r := dead_let_inner(then_e, uses, assigned, semantics)
       else_r := dead_let_inner(else_e, uses, assigned, semantics)
-      OpElimResult.{
-        op: .AIf(cond_e, then_r.expr, else_r.expr),
-        changed: then_r.changed or else_r.changed,
-      }
+      .{ op: .AIf(cond_e, then_r.expr, else_r.expr), changed: then_r.changed or else_r.changed }
     },
     .AMatch(scrutinee, arms) => {
       changed := false
@@ -117,16 +114,16 @@ fn dead_let_op(
 
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
-      OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed }
+      .{ op: .AMatch(scrutinee, new_arms), changed }
     },
     .ALoop(body) => {
       r := dead_let_inner(body, uses, assigned, semantics)
-      OpElimResult.{ op: .ALoop(r.expr), changed: r.changed }
+      .{ op: .ALoop(r.expr), changed: r.changed }
     },
     .ADefer(inner) => {
       r := dead_let_inner(inner, uses, assigned, semantics)
-      OpElimResult.{ op: .ADefer(r.expr), changed: r.changed }
+      .{ op: .ADefer(r.expr), changed: r.changed }
     },
-    _ => OpElimResult.{ op, changed: false },
+    _ => .{ op, changed: false },
   }
 }

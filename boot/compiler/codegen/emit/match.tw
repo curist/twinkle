@@ -649,7 +649,7 @@ fn emit_string_trie_match(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vec
         buckets = add_string_candidate_to_buckets(
           buckets,
           string_utf8_len(s),
-          StringCandidate.{ literal: s, arm_index: i },
+          .{ literal: s, arm_index: i },
         )
       },
       .Wildcard => default_arm_idx = i,
@@ -702,7 +702,7 @@ fn add_string_candidate_to_buckets(buckets: Vector<LengthBucket>, len: Int, cand
     }
   }
 
-  out.append(LengthBucket.{ len, candidates: [cand] })
+  out.append(.{ len, candidates: [cand] })
 }
 
 fn emit_string_length_dispatch(
@@ -830,7 +830,7 @@ fn build_string_trie(
 
   for group in groups {
     child := build_string_trie(group.candidates, next_used, literal_len)
-    branches = .append(TrieBranch.{ byte: group.byte, child })
+    branches = .append(.{ byte: group.byte, child })
   }
 
   .Branch(best_pos, branches)
@@ -891,7 +891,7 @@ fn add_candidate_to_byte_groups(
     }
   }
 
-  out.append(ByteCandidateGroup.{ byte, candidates: [cand] })
+  out.append(.{ byte, candidates: [cand] })
 }
 
 fn emit_trie_node(

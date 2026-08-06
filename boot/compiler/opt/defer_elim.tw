@@ -285,12 +285,10 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
     snap_id := next.get()
     next.set(snap_id + 1)
     remap[src_id] = snap_id
-    snapshots = .append(
-      SnapshotBinding.{ src: LocalId.{ id: src_id }, snap: LocalId.{ id: snap_id } },
-    )
+    snapshots = .append(.{ src: .{ id: src_id }, snap: .{ id: snap_id } })
   }
 
-  CaptureResult.{ remap, snapshots }
+  .{ remap, snapshots }
 }
 
 // Register types for snapshot locals from op_result_mono or param types
