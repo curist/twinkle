@@ -70,6 +70,25 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "redundant-record-prefix" => .Some(
+      .{
+        brief: "a named record literal in a known-type position can drop its type prefix",
+        detailed:
+          \\A `TypeName.{ … }` literal sitting where the expected record type is
+          \\already known — an annotated binding, a declared return position, a
+          \\record field, or a call argument — can drop its prefix for the
+          \\contextual anonymous form:
+          \\
+          \\    // Avoid
+          \\    cfg: Config = Config.{ a: 1, b: 2 }
+          \\    fn make() Config { Config.{ a: 1, b: 2 } }
+          \\
+          \\    // Prefer
+          \\    cfg: Config = .{ a: 1, b: 2 }
+          \\    fn make() Config { .{ a: 1, b: 2 } }
+        ,
+      },
+    ),
     "constant-fn" => .Some(
       .{
         brief: "a nullary function returning only a constant should be a module constant",

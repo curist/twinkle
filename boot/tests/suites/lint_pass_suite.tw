@@ -4,6 +4,7 @@ use @std.testing as runner
 use commands.lint as lintcmd
 use compiler.base_env
 use compiler.lint
+use compiler.lint_rules
 use compiler.parser
 use lib.source.report.{FixEdit}
 
@@ -1127,6 +1128,29 @@ pub fn suite() runner.Suite {
         try assert.equal(fs.len(), 1)
         try assert.equal(apply_first_edit(src, fs[0]), "d := process(.{ a: 1 })\n")
         .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: a qualified constructor path is declined by the spelling gate",
+      fn() {
+        fs := rp_findings("c: Config = mod.Config.{ a: 1 }\n")
+
+        // The NamedRecord name is `Config`, but the source at the literal's start is
+        // `mod.Config`, so `source.slice(start, start+len) != name` — no edit.
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-record-prefix: describe returns a rationale",
+      fn() {
+        case lint_rules.describe("redundant-record-prefix") {
+          .Some(info) => {
+            try assert.is_true(info.brief.len() > 0)
+            .Ok({})
+          },
+          .None => .Err("expected a rationale for redundant-record-prefix"),
+        }
       },
     )
 }
