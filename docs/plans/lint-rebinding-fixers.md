@@ -126,6 +126,15 @@ report-only detector.
 
 ## Pattern C — Full-record reconstruction → single-field rebind (extend `inline-record-copy`)
 
+**Partly landed.** The return-position variant of this pattern shipped as an
+extension of the *sibling* rule `record-copy-helper` (not `inline-record-copy`):
+a function that returns `T.{ …copies…, f: base.f.op() }` is now flagged and
+auto-fixed to `base.f = …; base` (2026-08-06, commits 81796dc3 / 7b873fdc; see
+[archive/lint-record-copy-updated-field.md](archive/lint-record-copy-updated-field.md)).
+What remains unaddressed here is the *let-binding* form (`inline-record-copy`,
+non-self reconstruction) and the harder variants below — nested reconstruction
+and block-expression synthesis in expression position.
+
 **Rewrite.** A record literal that copies all-but-a-few fields verbatim from one
 source record becomes a field-rebind of that source. Already the intent of
 `inline-record-copy`, but today's auto-fix only covers self-rebinds. The

@@ -51,7 +51,7 @@ throughput.
 | Full lib-export ABI | Widen lib exports beyond primitives: `String`, callbacks, compounds (`Vector`/`Dict`/records), and returned closures, with bridge-backed `loadLib` marshalling | Done | [lib-export-abi.md](lib-export-abi.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
-| Rebinding-ceremony fixers | Skeleton: three `twk lint`/`fix` rules from manual "tidy up" rewrites — named-ctor to anonymous `.{}` (A), numbered-accumulator rebind (B), full-record reconstruction to field rebind (C, extends `inline-record-copy`) | Planned (skeleton) | [lint-rebinding-fixers.md](lint-rebinding-fixers.md) |
+| Rebinding-ceremony fixers | Skeleton: three `twk lint`/`fix` rules from manual "tidy up" rewrites — named-ctor to anonymous `.{}` (A), numbered-accumulator rebind (B), full-record reconstruction to field rebind (C). C's return-position variant landed via `record-copy-helper` (2026-08-06); A, B, and C's let-binding/nested/block-expr variants remain | Planned (skeleton; C partial) | [lint-rebinding-fixers.md](lint-rebinding-fixers.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
 
 ### Active cross-cutting plans

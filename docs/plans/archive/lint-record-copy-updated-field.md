@@ -1,6 +1,27 @@
 # Lint enhancement: `record-copy-helper` should catch copy-with-updated-field
 
-**Status:** Draft plan — design, unstarted.
+**Status:** LANDED (2026-08-06). Implemented and self-host-verified in
+`feat(lint): extend record-copy-helper to copy-with-update` (81796dc3), with the
+compiler-wide sweep in `refactor(boot): rebind copy-with-update builders
+directly` (7b873fdc).
+
+**Outcome vs. this plan.** Detection was generalized past the plan's method-call
+scope to *any* field updated from its own prior value — method call, binary/unary
+op, or index — via a `spine_base` walk to the leftmost operand (the user asked to
+cover general update patterns, not just `.set(...)`). The accept predicate flags
+when every entry is a copy, an update, or a trivial pass-through and at least one
+field is copied-or-updated, so single-field wrappers are caught and fresh
+constructors are not. The R1 autofix handles the unambiguous shape (exactly one
+updated field, all siblings verbatim copies, tail-position result), emitting the
+`.method` rebinding shorthand for method updates and full text otherwise;
+multi-update and pass-through-sibling shapes stay report-only. The
+`--fix-record-copy-helper` flag was wired (it was advertised by the finding but
+never registered, so even `--fix` had skipped this rule). All four wrapper modules
+plus six other builder helpers now rebind directly.
+
+---
+
+*Original design below.*
 
 ## Problem
 
