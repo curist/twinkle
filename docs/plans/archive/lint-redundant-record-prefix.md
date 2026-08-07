@@ -1,9 +1,11 @@
 # Spec — `redundant-record-prefix` lint + auto-fix (Pattern A)
 
-**Status: spec, ready for implementation plan.** Turns Pattern A of
-[lint-rebinding-fixers.md](lint-rebinding-fixers.md) into a concrete design. Adds
-a `twk lint` rule `redundant-record-prefix` with a machine-applicable auto-fix
-under `--fix-redundant-record-prefix`.
+**Status: LANDED (archived 2026-08-07).** Shipped as `redundant-record-prefix`
+with three anchors (annotated `let`, declared return, record-field value; call
+argument dropped from v1) and applied across boot, self-host byte-identical.
+Turns Pattern A of [../lint-rebinding-fixers.md](../lint-rebinding-fixers.md)
+into a concrete design. Adds a `twk lint` rule `redundant-record-prefix` with a
+machine-applicable auto-fix under `--fix-redundant-record-prefix`.
 
 ## Goal
 

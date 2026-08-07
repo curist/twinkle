@@ -88,7 +88,7 @@ provable subset** covers most real cases without full type inference:
 
 **Relationship to existing rules.** None — genuinely new.
 
-**Spec.** Scoped in [lint-redundant-record-prefix.md](lint-redundant-record-prefix.md)
+**Spec.** Scoped in [archive/lint-redundant-record-prefix.md](archive/lint-redundant-record-prefix.md)
 (rule `redundant-record-prefix`, three expected-type positions in v1
 (call-argument anchoring deferred), auto-fix under
 `--fix-redundant-record-prefix`).
