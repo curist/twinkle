@@ -317,7 +317,7 @@ pub fn suite() runner.Suite {
       "hover on module alias in case scrutinee shows module info",
       fn() {
         dep := "pub fn try_decode_frame_bytes(buffer: String) String!String { .Ok(buffer) }\n"
-        main := "use framing\nbuffer := \"x\"\ndecoded := case framing.try_decode_frame_bytes(buffer) {\n  .Ok(value) => value,\n  .Err(_) => \"\",\n}\n"
+        main := "use .framing\nbuffer := \"x\"\ndecoded := case framing.try_decode_frame_bytes(buffer) {\n  .Ok(value) => value,\n  .Err(_) => \"\",\n}\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-hover-module/framing.tw",
           dep,
@@ -336,7 +336,7 @@ pub fn suite() runner.Suite {
       "hover on destructured function import shows signature",
       fn() {
         dep := "pub fn add(a: Int, b: Int) Int { a + b }\n"
-        main := "use dep.{add}\nx := add(1, 2)\n"
+        main := "use .dep.{add}\nx := add(1, 2)\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-hover-import/dep.tw",
           dep,
@@ -355,7 +355,7 @@ pub fn suite() runner.Suite {
       "hover on destructured type import shows type",
       fn() {
         dep := "pub type Point = .{ x: Int }\n"
-        main := "use dep.{Point}\np: Point = .{ x: 1 }\n"
+        main := "use .dep.{Point}\np: Point = .{ x: 1 }\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-hover-import-type/dep.tw",
           dep,
@@ -625,7 +625,7 @@ pub fn suite() runner.Suite {
       "hover on imported qualified variant constructor shows constructor",
       fn() {
         dep := "pub type Color = { Red, Rgb(Int) }\n"
-        main := "use dep\nfn main() dep.Color { dep.Color.Rgb(1) }\n"
+        main := "use .dep\nfn main() dep.Color { dep.Color.Rgb(1) }\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-hover-variant/dep.tw",
           dep,

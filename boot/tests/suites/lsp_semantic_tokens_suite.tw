@@ -440,7 +440,7 @@ pub fn suite() runner.Suite {
         lib_uri := "file:///tmp/lsp_semtok_ns/lib.tw"
         main_uri := "file:///tmp/lsp_semtok_ns/main.tw"
         lib := "pub fn helper() Int { 42 }\n"
-        main := "use lib\nx := lib.helper()\n"
+        main := "use .lib\nx := lib.helper()\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         step := state.handle_message(sem_tokens_request(1, main_uri))

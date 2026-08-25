@@ -268,7 +268,7 @@ pub fn suite() runner.Suite {
       "imported type jumps to defining module",
       fn() {
         dep := "pub type Widget = .{ id: Int }\n"
-        main := "use dep\nfn main() Int {\n  w := dep.Widget.{ id: 1 }\n  w.id\n}\n"
+        main := "use .dep\nfn main() Int {\n  w := dep.Widget.{ id: 1 }\n  w.id\n}\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-typedef/dep.tw",
           dep,

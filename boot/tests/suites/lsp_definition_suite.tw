@@ -178,7 +178,7 @@ pub fn suite() runner.Suite {
       "goto def on imported function jumps to defining module",
       fn() {
         dep := "pub fn answer() Int { 42 }\n"
-        main := "use dep\nx := dep.answer()\n"
+        main := "use .dep\nx := dep.answer()\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def/dep.tw",
           dep,
@@ -225,7 +225,7 @@ pub fn suite() runner.Suite {
       "goto def on imported type annotation jumps to defining module",
       fn() {
         dep := "pub type Point = .{ x: Int }\n"
-        main := "use dep\nfn make() dep.Point { dep.Point.{ x: 1 } }\n"
+        main := "use .dep\nfn make() dep.Point { dep.Point.{ x: 1 } }\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def-type/dep.tw",
           dep,
@@ -399,10 +399,10 @@ pub fn suite() runner.Suite {
     .test(
       "goto def on import module alias jumps to module",
       fn() {
-        // use dep
-        // ^~~  cursor on "dep" in the use statement
+        // use .dep
+        //  ^~~  cursor on "dep" in the use statement
         dep := "pub fn answer() Int { 42 }\n"
-        main := "use dep\nx := dep.answer()\n"
+        main := "use .dep\nx := dep.answer()\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def-import/dep.tw",
           dep,
@@ -410,8 +410,8 @@ pub fn suite() runner.Suite {
           main,
         )
 
-        // cursor on "dep" in the use statement (line 0, char 4)
-        step := state.handle_message(def_request(1, "file:///tmp/lsp-def-import/main.tw", 0, 4))
+        // cursor on "dep" in the use statement (line 0, char 5)
+        step := state.handle_message(def_request(1, "file:///tmp/lsp-def-import/main.tw", 0, 5))
         uri := try def_result_uri(step)
         try assert.equal(uri, "file:///tmp/lsp-def-import/dep.tw")
         .Ok({})
@@ -420,11 +420,11 @@ pub fn suite() runner.Suite {
     .test(
       "goto def on module alias in expression context jumps to module",
       fn() {
-        // use dep
+        // use .dep
         // x := dep.answer()
         //      ^^^  cursor on "dep" before the dot
         dep := "pub fn answer() Int { 42 }\n"
-        main := "use dep\nx := dep.answer()\n"
+        main := "use .dep\nx := dep.answer()\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def-mod-expr/dep.tw",
           dep,
@@ -442,10 +442,10 @@ pub fn suite() runner.Suite {
     .test(
       "goto def on destructured import item jumps to function",
       fn() {
-        // use dep.{answer}
-        //         ^^^^^^  cursor on "answer" in the import list
+        // use .dep.{answer}
+        //          ^^^^^^  cursor on "answer" in the import list
         dep := "pub fn answer() Int { 42 }\n"
-        main := "use dep.{answer}\nx := answer()\n"
+        main := "use .dep.{answer}\nx := answer()\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def-destr/dep.tw",
           dep,
@@ -453,8 +453,8 @@ pub fn suite() runner.Suite {
           main,
         )
 
-        // "answer" in `use dep.{answer}` — line 0, char 9
-        step := state.handle_message(def_request(1, "file:///tmp/lsp-def-destr/main.tw", 0, 9))
+        // "answer" in `use .dep.{answer}` — line 0, char 10
+        step := state.handle_message(def_request(1, "file:///tmp/lsp-def-destr/main.tw", 0, 10))
         uri := try def_result_uri(step)
         try assert.equal(uri, "file:///tmp/lsp-def-destr/dep.tw")
         r := try def_result_range(step)
@@ -738,7 +738,7 @@ pub fn suite() runner.Suite {
       "goto def on imported record field jumps to field in defining module",
       fn() {
         dep := "pub type Point = .{ x: Int, y: Int }\n"
-        main := "use dep\nfn get_x(p: dep.Point) Int { p.x }\n"
+        main := "use .dep\nfn get_x(p: dep.Point) Int { p.x }\n"
         state := state_with_two_docs(
           "file:///tmp/lsp-def-field/dep.tw",
           dep,

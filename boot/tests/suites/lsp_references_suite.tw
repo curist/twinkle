@@ -263,7 +263,7 @@ pub fn suite() runner.Suite {
         lib_uri := "file:///tmp/lsp_refs_xmod/lib.tw"
         main_uri := "file:///tmp/lsp_refs_xmod/main.tw"
         lib := "pub fn helper() Int { 42 }\n"
-        main := "use lib\nx := lib.helper()\ny := lib.helper()\n"
+        main := "use .lib\nx := lib.helper()\ny := lib.helper()\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "helper" definition at line 0, char 7 in lib.tw
@@ -286,7 +286,7 @@ pub fn suite() runner.Suite {
         lib_uri := "file:///tmp/lsp_refs_xmod2/lib.tw"
         main_uri := "file:///tmp/lsp_refs_xmod2/main.tw"
         lib := "pub fn helper() Int { 42 }\n"
-        main := "use lib\nx := lib.helper()\n"
+        main := "use .lib\nx := lib.helper()\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "helper" call in main.tw at line 1, char 9
@@ -315,7 +315,7 @@ pub fn suite() runner.Suite {
         lib_uri := "file:///tmp/lsp_refs_xtype/lib.tw"
         main_uri := "file:///tmp/lsp_refs_xtype/main.tw"
         lib := "pub type Point = .{ x: Int, y: Int }\n"
-        main := "use lib.{Point}\nfn origin() Point { .{ x: 0, y: 0 } }\n"
+        main := "use .lib.{Point}\nfn origin() Point { .{ x: 0, y: 0 } }\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "Point" type definition in lib.tw at line 0, char 9
@@ -341,7 +341,7 @@ pub fn suite() runner.Suite {
         lib_uri := "file:///tmp/lsp_refs_qtype/lib.tw"
         main_uri := "file:///tmp/lsp_refs_qtype/main.tw"
         lib := "pub type Point = .{ x: Int, y: Int }\n"
-        main := "use lib\nfn f(p: lib.Point) lib.Point { p }\n"
+        main := "use .lib\nfn f(p: lib.Point) lib.Point { p }\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         step := state.handle_message(ref_request(1, lib_uri, 0, 9, false))
