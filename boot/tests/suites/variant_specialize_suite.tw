@@ -242,6 +242,50 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "shared set_at wrapper routes owned caller while aliased caller stays generic",
+      fn() Result<Void, String> {
+        art := try compile_fixture("shared_wrapper_set_at_split")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        accepted := spec.routes.filter(fn(r) { r.fallback_reason == .None })
+        route := case accepted.find(fn(r) { r.clone_name.contains("set_at__Int$v") }) {
+          .Some(r) => r,
+          .None => return .Err("expected an accepted owned variant for shared set_at<Int>"),
+        }
+
+        try assert.ok(
+          calls_target(spec.anf, "owned_caller", route.clone_func),
+          "owned caller must route to the set_at owned clone",
+        )
+        try assert.ok(
+          calls_target(spec.anf, "aliased_caller", route.generic_func),
+          "aliased caller must keep calling generic set_at",
+        )
+        try assert.ok(
+          !calls_target(spec.anf, "aliased_caller", route.clone_func),
+          "aliased caller must not route to the owned clone",
+        )
+
+        wat := try compile_fixture_wat("shared_wrapper_set_at_split")
+        clone := case wat_func_body(wat, "set_at__Int_v") {
+          .Some(body) => body,
+          .None => return .Err("set_at owned clone not found in WAT"),
+        }
+        generic := case wat_func_body(wat, "set_at__Int ") {
+          .Some(body) => body,
+          .None => return .Err("generic set_at<Int> not found in WAT"),
+        }
+        try assert.ok(
+          wat_has_call(clone, "$rt_arr__set_in_place"),
+          "owned set_at clone must emit rt_arr__set_in_place",
+        )
+        try assert.ok(
+          wat_has_call(generic, "$rt_arr__set"),
+          "generic set_at must keep persistent rt_arr__set for aliased callers",
+        )
+        .Ok({})
+      },
+    )
+    .test(
       "recursive clone retargets its self-call to the clone",
       fn() Result<Void, String> {
         art := try compile_fixture("visit_rec")

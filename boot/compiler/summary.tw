@@ -790,7 +790,13 @@ fn param_is_consumed(ps: ParamSummary) Bool {
   }
 }
 
-fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan, generic: SummaryTable) InplaceScan {
+fn scan_inplace_op(
+  op: AnfOp,
+  dst: Int,
+  st: InplaceScan,
+  generic: SummaryTable,
+  sem: OptimizerSemantics,
+) InplaceScan {
   case op {
     .AAssign(target, a) => {
       st = if atom_is_derived(st.derived, a) {
@@ -817,35 +823,55 @@ fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan, generic: SummaryTable) 
       st
     },
     .ACall(callee, args) => case callee {
-      .AGlobalFunc(fid) => case summary_get(generic, fid.id) {
-        .Some(cs) => {
-          // Delegated consume: the callee returns exactly the derived argument as
-          // its sole alias (ret=alias(pK)), so threading the derived value through
-          // this call is itself an in-place update site once the callee's owned
-          // variant is selected. summary_get (never table_get): a global without a
-          // user summary is ignored.
-          hit := false
-          for a, j in args {
-            if atom_is_derived(st.derived, a) and ret_aliases_exactly_param(cs.ret, j) {
-              hit = true
-            }
-          }
-          st = if hit {
-            st.found = true
-            st.mark_derived(dst)
-          } else {
-            st
-          }
+      .AGlobalFunc(fid) => {
+        st = case sem.call_semantics.get(fid.id) {
+          .Some(cs) => case cs.effect {
+            .Update => case cs.cow_base_arg {
+              .Some(base_idx) => if base_idx >= 0
+                and base_idx < args.len() and atom_is_derived(st.derived, args[base_idx])
+                and cs.in_place_equivalent != .None {
+                st.found = true
+                st.mark_derived(dst)
+              } else {
+                st
+              },
+              .None => st,
+            },
+            _ => st,
+          },
+          .None => st,
+        }
 
-          // Transport wrapper: mark a return field only when the callee CONSUMES the
-          // ret-path source param (so the linkage is a consuming recovery, not a bare
-          // field projection).
-          for rp in cs.ret_paths {
-            st = .mark_ret_path_field(rp, args, dst, cs.params)
-          }
-          st
-        },
-        .None => st,
+        case summary_get(generic, fid.id) {
+          .Some(cs) => {
+            // Delegated consume: the callee returns exactly the derived argument as
+            // its sole alias (ret=alias(pK)), so threading the derived value through
+            // this call is itself an in-place update site once the callee's owned
+            // variant is selected. summary_get (never table_get): a global without a
+            // user summary is ignored.
+            hit := false
+            for a, j in args {
+              if atom_is_derived(st.derived, a) and ret_aliases_exactly_param(cs.ret, j) {
+                hit = true
+              }
+            }
+            st = if hit {
+              st.found = true
+              st.mark_derived(dst)
+            } else {
+              st
+            }
+
+            // Transport wrapper: mark a return field only when the callee CONSUMES the
+            // ret-path source param (so the linkage is a consuming recovery, not a bare
+            // field projection).
+            for rp in cs.ret_paths {
+              st = .mark_ret_path_field(rp, args, dst, cs.params)
+            }
+            st
+          },
+          .None => st,
+        }
       },
       _ => st,
     },
@@ -868,7 +894,7 @@ type ThreadScan = .{ found: Bool, ret_derived: Bool }
 // wrapper field), and does the function RETURN a value derived from k
 // (`ret_derived`)? Deliberately avoids ownership-gated dirty-path collection:
 // recursive publishing can hide exactly the sites this pre-filter bootstraps.
-fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadScan {
+fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable, sem: OptimizerSemantics) ThreadScan {
   if k < 0 or k >= f.params.len() {
     return .{ found: false, ret_derived: false }
   }
@@ -880,7 +906,7 @@ fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadSca
     st.changed = false
     for blk in f.blocks {
       for inst in blk.instructions {
-        st = scan_inplace_op(inst.op, inst.anf_local.id, st, generic)
+        st = scan_inplace_op(inst.op, inst.anf_local.id, st, generic, sem)
       }
       case blk.terminator {
         .Some(term) => st = propagate_terminator(f, term, st),
@@ -906,12 +932,14 @@ fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadSca
 // where the generic ret is `shared`) AND has an in-place update opportunity is a
 // candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
 // proves or retracts it. Determinism: functions ascending, params by index.
-fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId> {
+fn candidate_variants(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Vector<
+  vid.VariantId,
+> {
   cands: Vector<vid.VariantId> = []
   for f in view.functions {
     s := table_get(generic, f.func_id)
     for _ps, k in s.params {
-      scan := scan_param_threading(f, k, generic)
+      scan := scan_param_threading(f, k, generic, sem)
       threads_to_return := ret_aliases_exactly_param(s.ret, k) or scan.ret_derived
       if scan.found and threads_to_return {
         v := vid.VariantId.{
@@ -925,9 +953,12 @@ fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId
   cands
 }
 
-fn candidates_by_func(view: CfgView, generic: SummaryTable) Dict<Int, Vector<vid.VariantId>> {
+fn candidates_by_func(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Dict<
+  Int,
+  Vector<vid.VariantId>,
+> {
   by_func: Dict<Int, Vector<vid.VariantId>> = Dict.new()
-  for v in candidate_variants(view, generic) {
+  for v in candidate_variants(view, generic, sem) {
     prev := case by_func.get(v.func) {
       .Some(vs) => vs,
       .None => [],
@@ -1188,7 +1219,7 @@ pub fn compute_variants(
 ) VariantSummaryTable {
   index := build_func_index(view)
   user_ids := user_id_set(view)
-  candidates := candidates_by_func(view, generic)
+  candidates := candidates_by_func(view, generic, sem)
   vtable := empty_variant_table()
   for scc in order_sccs(view, index, user_ids) {
     vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
