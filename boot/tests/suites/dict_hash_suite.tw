@@ -99,6 +99,35 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "keys() snapshot survives an in-place remove (loan independence)",
+      fn() {
+        // Owned dict built locally -> the mutable-decision analysis lowers the
+        // remove in place. keys() must return a FRESH snapshot, not the dict's
+        // internal order backing; otherwise the in-place remove tombstones the
+        // array `ks` still points at and iterating it traps (illegal cast).
+        d: Dict<Int, Int> = Dict.new()
+        i := 0
+
+        for i < 3 {
+          d[i] = i
+          i = i + 1
+        }
+
+        ks := d.keys() // snapshot [0, 1, 2]
+        d = .remove(0) // owned in-place remove; must not corrupt ks
+        sum := 0
+
+        for k in ks {
+          sum = sum + k
+        }
+
+        try assert.equal(sum, 3) // 0 + 1 + 2, unaffected by the remove
+        try assert.equal(ks.len(), 3) // snapshot keeps all three keys
+        try assert.equal(d.len(), 2) // {1:1, 2:2}
+        .Ok({})
+      },
+    )
+    .test(
       "generated symbol names survive large dict",
       fn() {
         // Simulates compiler linker workloads with $-prefixed generated names
