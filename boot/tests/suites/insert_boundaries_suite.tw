@@ -15,11 +15,11 @@ use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, ResolvedVari
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn fid(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn empty_env() ResolvedEnv {
@@ -27,7 +27,7 @@ fn empty_env() ResolvedEnv {
 }
 
 fn empty_registry() WasmTypeRegistry {
-  WasmTypeRegistry.{
+  .{
     type_defs: [],
     layout_cache: Dict.new(),
     in_progress: Dict.new(),
@@ -66,7 +66,7 @@ fn empty_builtins() BuiltinRegistry {
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {
-  Param.{ local: lid(id), ty }
+  .{ local: lid(id), ty }
 }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
@@ -87,7 +87,7 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name,
     params,
@@ -99,7 +99,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
+  .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -109,12 +109,12 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
-  AbiContract.{ param_types: params, result_types: results }
+  .{ param_types: params, result_types: results }
 }
 
 fn env_with_record_and_sum() ResolvedEnv {
   rec := TypeEntry.{
-    id: TypeId.{ id: 10 },
+    id: .{ id: 10 },
     arity: 0,
     def: .Some(
       ResolvedTypeDef.Record(
@@ -127,7 +127,7 @@ fn env_with_record_and_sum() ResolvedEnv {
     is_extern: false,
   }
   sum := TypeEntry.{
-    id: TypeId.{ id: 11 },
+    id: .{ id: 11 },
     arity: 0,
     def: .Some(
       ResolvedTypeDef.Sum(
@@ -953,7 +953,7 @@ pub fn suite() runner.Suite {
           lid(10),
           .ARecord(
             TypeId.{ id: 10 },
-            [FieldAtom.{ field: FieldId.{ id: 0 }, value: .AGlobalFunc(fid(2)) }],
+            [FieldAtom.{ field: .{ id: 0 }, value: .AGlobalFunc(fid(2)) }],
           ),
           .Atom(.ALocal(lid(10))),
         )

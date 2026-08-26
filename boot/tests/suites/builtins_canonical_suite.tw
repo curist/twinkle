@@ -4,13 +4,7 @@ use @std.testing as runner
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 
 fn empty_registry() BuiltinRegistry {
-  BuiltinRegistry.{
-    by_name: Dict.new(),
-    by_id: Dict.new(),
-    by_canonical: Dict.new(),
-    entries: [],
-    next_id: 0,
-  }
+  .{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
 }
 
 pub fn suite() runner.Suite {

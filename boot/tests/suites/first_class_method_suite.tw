@@ -119,5 +119,5 @@ pub fn suite() runner.Suite {
 
 fn make_foo(count: Cell<Int>) Foo {
   count.update(fn(n) { n + 1 })
-  Foo.{ x: 1 }
+  .{ x: 1 }
 }

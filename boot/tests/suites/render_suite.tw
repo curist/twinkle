@@ -21,11 +21,11 @@ fn make_reg(name: String, source: String) registry.FileRegistry {
 }
 
 fn primary(s: span.Span, lbl: String?) SpanLabel {
-  SpanLabel.{ span: s, label: lbl, is_primary: true }
+  .{ span: s, label: lbl, is_primary: true }
 }
 
 fn secondary(s: span.Span, lbl: String?) SpanLabel {
-  SpanLabel.{ span: s, label: lbl, is_primary: false }
+  .{ span: s, label: lbl, is_primary: false }
 }
 
 fn sp(start: Int, end: Int) span.Span {

@@ -9,7 +9,7 @@ use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn empty_module() WasmModule {
-  WasmModule.{
+  .{
     namespace: "test",
     types: [],
     imports: [],
@@ -27,7 +27,7 @@ fn empty_module() WasmModule {
 
 fn mod_with_types(types: Vector<TypeDef>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types,
     imports: m.imports,
@@ -45,7 +45,7 @@ fn mod_with_types(types: Vector<TypeDef>) WasmModule {
 
 fn mod_with_imports(imports: Vector<ImportDef>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports,
@@ -63,7 +63,7 @@ fn mod_with_imports(imports: Vector<ImportDef>) WasmModule {
 
 fn mod_with_funcs(funcs: Vector<FuncDef>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
@@ -81,7 +81,7 @@ fn mod_with_funcs(funcs: Vector<FuncDef>) WasmModule {
 
 fn mod_with_globals(globals: Vector<GlobalDef>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
@@ -99,7 +99,7 @@ fn mod_with_globals(globals: Vector<GlobalDef>) WasmModule {
 
 fn mod_with_data(data: Vector<DataSegment>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
@@ -117,7 +117,7 @@ fn mod_with_data(data: Vector<DataSegment>) WasmModule {
 
 fn mod_with_exports(exports: Vector<ExportDef>) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
@@ -135,7 +135,7 @@ fn mod_with_exports(exports: Vector<ExportDef>) WasmModule {
 
 fn mod_with_funcs_and_start(funcs: Vector<FuncDef>, start: String?) WasmModule {
   m := empty_module()
-  WasmModule.{
+  .{
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,

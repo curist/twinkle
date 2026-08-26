@@ -35,11 +35,11 @@ use compiler.resolver.{ResolvedEnv}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 fn lid(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn fid(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn empty_env() ResolvedEnv {
@@ -47,7 +47,7 @@ fn empty_env() ResolvedEnv {
 }
 
 fn empty_registry() WasmTypeRegistry {
-  WasmTypeRegistry.{
+  .{
     type_defs: [],
     layout_cache: Dict.new(),
     in_progress: Dict.new(),
@@ -78,7 +78,7 @@ fn no_captures() Dict<Int, Vector<CaptureParam>> {
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
-  AbiContract.{ param_types: params, result_types: results }
+  .{ param_types: params, result_types: results }
 }
 
 // assert_repr: check ReprKind for a given MonoType
@@ -254,7 +254,7 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name,
     is_init: false,
@@ -266,7 +266,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
+  .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -286,7 +286,7 @@ fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {
-  Param.{ local: lid(id), ty }
+  .{ local: lid(id), ty }
 }
 
 fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoType>, ret: MonoType) PreparedFunc {

@@ -18,7 +18,7 @@ use compiler.variant_id
 use lib.module.loader
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn b_reg() builtins.BuiltinRegistry {
@@ -385,15 +385,15 @@ fn vector_make_call(b: builtins.BuiltinRegistry) AnfOp {
 fn wrapper_record(field_val: LocalId) AnfOp {
   // TypeId/FieldId are structural placeholders; build_view/summary do not need a
   // real type table. FieldAtom.{ field, value }.
-  .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
+  .ARecord(TypeId.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(field_val) }])
 }
 
 fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
   params: Vector<Param> = collect i in range(nparams) {
     Param.{ local: lid(i), ty: MonoType.Int }
   }
-  AnfFunctionDef.{
-    func_id: FuncId.{ id },
+  .{
+    func_id: .{ id },
     name,
     is_init: false,
     params,
@@ -404,7 +404,7 @@ fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
 }
 
 fn module_of(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
+  .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -703,10 +703,7 @@ fn recursive_transport_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
   rec_record := AnfOp.ARecord(
     TypeId.{ id: 0 },
-    [
-      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(3)) },
-      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(4)) },
-    ],
+    [.{ field: .{ id: 0 }, value: .ALocal(lid(3)) }, .{ field: .{ id: 1 }, value: .ALocal(lid(4)) }],
   )
   then_branch: AnfExpr = .Let(
     lid(2),
@@ -719,10 +716,7 @@ fn recursive_transport_fixture() Vector<AnfFunctionDef> {
   )
   base_record := AnfOp.ARecord(
     TypeId.{ id: 0 },
-    [
-      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(6)) },
-    ],
+    [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }, .{ field: .{ id: 1 }, value: .ALocal(lid(6)) }],
   )
   else_branch: AnfExpr = .Let(
     lid(6),
@@ -1058,8 +1052,8 @@ pub fn suite() runner.Suite {
         two := AnfOp.ARecord(
           TypeId.{ id: 0 },
           [
-            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+            .{ field: .{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: .{ id: 1 }, value: .ALocal(lid(1)) },
           ],
         )
         s := summ1("f", 2, .Let(lid(2), two, .Atom(.ALocal(lid(2)))))
@@ -1509,8 +1503,8 @@ pub fn suite() runner.Suite {
         two := AnfOp.ARecord(
           TypeId.{ id: 0 },
           [
-            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+            .{ field: .{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: .{ id: 1 }, value: .ALocal(lid(1)) },
           ],
         )
         s := summ1("f", 2, .Let(lid(2), two, .Atom(.ALocal(lid(2)))))
@@ -1527,8 +1521,8 @@ pub fn suite() runner.Suite {
         two := AnfOp.ARecord(
           TypeId.{ id: 0 },
           [
-            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(0)) },
+            .{ field: .{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: .{ id: 1 }, value: .ALocal(lid(0)) },
           ],
         )
         s := summ1("f", 1, .Let(lid(1), two, .Atom(.ALocal(lid(1)))))
@@ -1542,8 +1536,8 @@ pub fn suite() runner.Suite {
         rec := AnfOp.ARecord(
           TypeId.{ id: 0 },
           [
-            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+            .{ field: .{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: .{ id: 1 }, value: .ALocal(lid(1)) },
           ],
         )
         fresh := AnfOp.ARecord(TypeId.{ id: 1 }, [])
@@ -1575,15 +1569,12 @@ pub fn suite() runner.Suite {
         // retention -> path_prov[.f0]=[.f1]=[] (shell-only; interior [.g]=x not
         // folded on the non-retention branch). A path_prov-only [] must NOT classify
         // OwnedFresh (both fields alias x through inner) -> field_own gate drops them.
-        inner := AnfOp.ARecord(
-          TypeId.{ id: 1 },
-          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
-        )
+        inner := AnfOp.ARecord(TypeId.{ id: 1 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }])
         o := AnfOp.ARecord(
           TypeId.{ id: 0 },
           [
-            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(1)) },
-            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+            .{ field: .{ id: 0 }, value: .ALocal(lid(1)) },
+            .{ field: .{ id: 1 }, value: .ALocal(lid(1)) },
           ],
         )
         body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), o, .Atom(.ALocal(lid(2)))))
@@ -1595,10 +1586,7 @@ pub fn suite() runner.Suite {
     .test(
       "fn f(x){ Variant#7(Record{f0:x}) } -> ret_paths V7[0]=fresh AND V7[0].f0=from(p0)",
       fn() {
-        inner := AnfOp.ARecord(
-          TypeId.{ id: 0 },
-          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
-        )
+        inner := AnfOp.ARecord(TypeId.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }])
         vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 7 }, [.ALocal(lid(1))])
         body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), vop, .Atom(.ALocal(lid(2)))))
         s := summ1("f", 1, body)
@@ -1616,20 +1604,14 @@ pub fn suite() runner.Suite {
         // meet drops both (empty ret_paths). The tag-aware meet meets each tag's
         // paths only across sites that can return that tag, so both arms survive.
         b := b_reg()
-        ok_rec := AnfOp.ARecord(
-          TypeId.{ id: 0 },
-          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
-        )
+        ok_rec := AnfOp.ARecord(TypeId.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }])
         ok_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))])
         then_b: AnfExpr = .Let(
           lid(1),
           ok_rec,
           .Let(lid(2), ok_var, .Return(.Some(.ALocal(lid(2))))),
         )
-        err_rec := AnfOp.ARecord(
-          TypeId.{ id: 0 },
-          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(3)) }],
-        )
+        err_rec := AnfOp.ARecord(TypeId.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(3)) }])
         err_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.ALocal(lid(4))])
         else_b: AnfExpr = .Let(
           lid(3),
@@ -1654,7 +1636,7 @@ pub fn suite() runner.Suite {
         // irrelevant to them -> Some[0].f0 survives.
         some_rec := AnfOp.ARecord(
           TypeId.{ id: 0 },
-          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
+          [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }],
         )
         some_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))])
         then_b: AnfExpr = .Let(

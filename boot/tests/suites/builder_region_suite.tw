@@ -103,8 +103,8 @@ fn fu1_function(extra_read: Bool) AnfFunctionDef {
     AnfOp.AInit(Atom.ALitInt(1)),
     AnfExpr.Let(LocalId.{ id: 2 }, AnfOp.AAssign(acc, Atom.ALocal(r)), tail),
   )
-  AnfFunctionDef.{
-    func_id: FuncId.{ id: 7 },
+  .{
+    func_id: .{ id: 7 },
     name: "m",
     is_init: false,
     params: [],
@@ -116,13 +116,13 @@ fn fu1_function(extra_read: Bool) AnfFunctionDef {
 
 fn fu1_candidate() detect.RegionCandidate {
   detect.RegionCandidate.{
-    func_id: FuncId.{ id: 7 },
+    func_id: .{ id: 7 },
     func: "m",
     family: "string",
-    push_id: FuncId.{ id: 0 },
-    accumulator: LocalId.{ id: 0 },
-    seed_site: LocalId.{ id: 0 },
-    loop_site: LocalId.{ id: 0 },
+    push_id: .{ id: 0 },
+    accumulator: .{ id: 0 },
+    seed_site: .{ id: 0 },
+    loop_site: .{ id: 0 },
     fold_sites: [LocalId.{ id: 1 }],
     structural_ok: true,
     reason: "",
@@ -135,13 +135,13 @@ fn fu1_candidate() detect.RegionCandidate {
 // keys on seed_site (after func_id), so varying seed_site sets the key rank.
 fn mk_candidate(seed: Int, loop_id: Int, fold: Int, acc: Int) detect.RegionCandidate {
   detect.RegionCandidate.{
-    func_id: FuncId.{ id: 7 },
+    func_id: .{ id: 7 },
     func: "m",
     family: "string",
-    push_id: FuncId.{ id: 0 },
-    accumulator: LocalId.{ id: acc },
-    seed_site: LocalId.{ id: seed },
-    loop_site: LocalId.{ id: loop_id },
+    push_id: .{ id: 0 },
+    accumulator: .{ id: acc },
+    seed_site: .{ id: seed },
+    loop_site: .{ id: loop_id },
     fold_sites: [LocalId.{ id: fold }],
     structural_ok: true,
     reason: "",
@@ -851,7 +851,7 @@ pub fn suite() runner.Suite {
           family: d.family,
           accumulator: d.accumulator,
           seed_site: d.seed_site,
-          loop_site: LocalId.{ id: 999999 },
+          loop_site: .{ id: 999999 },
           fold_sites: d.fold_sites,
           builder_local: d.builder_local,
           freeze_local: d.freeze_local,

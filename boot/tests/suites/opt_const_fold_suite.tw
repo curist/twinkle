@@ -8,7 +8,7 @@ use compiler.opt.const_fold.{constant_fold}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 // ── constant_fold: int arithmetic ───────────────────────────────────

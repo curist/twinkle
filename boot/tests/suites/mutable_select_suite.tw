@@ -5,11 +5,11 @@ use compiler.codegen.mutable_select
 use compiler.core_ir.{FuncId, LocalId}
 
 fn fid(id: Int) FuncId {
-  FuncId.{ id }
+  .{ id }
 }
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn decision(

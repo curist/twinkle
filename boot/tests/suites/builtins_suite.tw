@@ -6,13 +6,7 @@ use compiler.codegen.wasm_ir.{AbiContract}
 use compiler.core_ir.{FuncId}
 
 fn empty_registry() BuiltinRegistry {
-  BuiltinRegistry.{
-    by_name: Dict.new(),
-    by_id: Dict.new(),
-    by_canonical: Dict.new(),
-    entries: [],
-    next_id: 0,
-  }
+  .{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
 }
 
 pub fn suite() runner.Suite {

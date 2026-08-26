@@ -7,15 +7,15 @@ use compiler.opt.defer_elim.{eliminate_defers}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn fid(id: Int) FuncId {
-  FuncId.{ id }
+  .{ id }
 }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(1),
     name: "test",
     is_init: false,
@@ -27,7 +27,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
 }
 
 fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(1),
     name: "test",
     is_init: false,

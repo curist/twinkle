@@ -9,15 +9,15 @@ use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn fid(id: Int) FuncId {
-  FuncId.{ id }
+  .{ id }
 }
 
 fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name: "$init",
     is_init: true,
@@ -29,7 +29,7 @@ fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
 }
 
 fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name,
     is_init: false,
@@ -41,7 +41,7 @@ fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
 }
 
 fn make_func_with_params(id: Int, name: String, params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name,
     is_init: false,
@@ -73,7 +73,7 @@ fn test_cross_round_chain() Result<Void, String> {
     ),
   )
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -105,7 +105,7 @@ fn test_branch_simp_then_dead_elim() Result<Void, String> {
     ),
   )
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -133,7 +133,7 @@ fn test_pinned_locals_preserved() Result<Void, String> {
   // other func: body references local 0 (free variable from $init)
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))
   other_func := make_func(101, "other", other_body)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [init_func, other_func],
     init_func_id: .Some(fid(100)),
     extern_imports: Dict.new(),
@@ -155,7 +155,7 @@ fn test_no_init_no_pinning() Result<Void, String> {
   // let x = 42; Atom(Void) — x is unused and should be eliminated
   body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
   func := make_func(1, "test", body)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -189,7 +189,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
     .Atom(.ALocal(lid(0))),
   )
   func2 := make_func(2, "f2", body2)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func1, func2],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -216,7 +216,7 @@ fn test_already_optimal() Result<Void, String> {
   // let x = ACall(f, []); Atom(x) — cannot optimize
   body: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(0))))
   func := make_func(1, "test", body)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -246,7 +246,7 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
   // other func references local 0 as free
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))
   other_func := make_func(101, "other", other_body)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [init_func, other_func],
     init_func_id: .Some(fid(100)),
     extern_imports: Dict.new(),
@@ -281,7 +281,7 @@ fn test_nested_multi_round() Result<Void, String> {
     ),
   )
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -309,7 +309,7 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
     ),
   )
   func := make_func(1, "test", expr)
-  module: AnfModule = AnfModule.{
+  module: AnfModule = .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),

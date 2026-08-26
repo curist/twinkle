@@ -14,7 +14,7 @@ use compiler.codegen.mutable_select
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wasm_plan_types.{CaptureEntry, FuncSigEntry, StringPoolEntry, WasmTypeRegistry}
-use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param, VariantId}
+use compiler.core_ir.{FuncId, GlobalId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, TypeEntry}
@@ -38,11 +38,11 @@ fn simple_builtins() BuiltinRegistry {
 }
 
 fn mk_local(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn mk_func(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn mono1(key: Int, val: MonoType) Dict<Int, MonoType> {
@@ -59,7 +59,7 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  f: AnfFunctionDef = AnfFunctionDef.{
+  f: AnfFunctionDef = .{
     func_id: mk_func(id),
     name,
     params,
@@ -72,7 +72,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  m: AnfModule = AnfModule.{
+  m: AnfModule = .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -84,7 +84,7 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 
 fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) ResolvedEnv {
   entry := TypeEntry.{
-    id: TypeId.{ id: type_id },
+    id: .{ id: type_id },
     arity: 0,
     def: .Some(ResolvedTypeDef.Record(name, [], fields)),
     span: dummy_span(),
@@ -95,7 +95,7 @@ fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) Re
 
 fn env_with_two_records() ResolvedEnv {
   inner := TypeEntry.{
-    id: TypeId.{ id: 10 },
+    id: .{ id: 10 },
     arity: 0,
     def: .Some(
       ResolvedTypeDef.Record("Inner", [], [ResolvedField.{ name: "value", ty: MonoType.Int }]),
@@ -104,7 +104,7 @@ fn env_with_two_records() ResolvedEnv {
     is_extern: false,
   }
   outer := TypeEntry.{
-    id: TypeId.{ id: 11 },
+    id: .{ id: 11 },
     arity: 0,
     def: .Some(
       ResolvedTypeDef.Record(
@@ -121,7 +121,7 @@ fn env_with_two_records() ResolvedEnv {
 
 fn env_with_recursive_record() ResolvedEnv {
   node := TypeEntry.{
-    id: TypeId.{ id: 12 },
+    id: .{ id: 12 },
     arity: 0,
     def: .Some(
       ResolvedTypeDef.Record(
@@ -255,8 +255,8 @@ pub fn test_plan_record_type() Result<Void, String> {
       .ARecord(
         TypeId.{ id: 10 },
         [
-          FieldAtom.{ field: FieldId.{ id: 0 }, value: .ALitInt(1) },
-          FieldAtom.{ field: FieldId.{ id: 1 }, value: .ALitInt(2) },
+          FieldAtom.{ field: .{ id: 0 }, value: .ALitInt(1) },
+          FieldAtom.{ field: .{ id: 1 }, value: .ALitInt(2) },
         ],
       ),
       .Atom(.ALocal(mk_local(0))),

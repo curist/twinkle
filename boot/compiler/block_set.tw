@@ -6,7 +6,7 @@ pub type BlockSet = .{ inner: Dict<Int, Bool> }
 
 /// Empty block-id set.
 pub fn block_set() BlockSet {
-  BlockSet.{ inner: Dict.new() }
+  .{ inner: Dict.new() }
 }
 
 /// Add a block id (persistent: returns a new set).

@@ -13,7 +13,7 @@ use compiler.pipeline
 use compiler.summary
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn b_reg() builtins.BuiltinRegistry {
@@ -35,8 +35,8 @@ fn dict_set_call(b: builtins.BuiltinRegistry, base: LocalId) AnfOp {
 }
 
 fn module_of(name: String, body: AnfExpr) AnfModule {
-  func: AnfFunctionDef = AnfFunctionDef.{
-    func_id: FuncId.{ id: 1 },
+  func: AnfFunctionDef = .{
+    func_id: .{ id: 1 },
     name,
     is_init: false,
     params: [],
@@ -44,7 +44,7 @@ fn module_of(name: String, body: AnfExpr) AnfModule {
     body,
     return_ty: MonoType.Int,
   }
-  AnfModule.{
+  .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -333,7 +333,7 @@ pub fn suite() runner.Suite {
         // case (a fresh dict) { .Variant(L5) => { L6 = init L5; 0 } }
         // L5 is bound by the pattern (invisible to the analysis), used in the arm.
         b := b_reg()
-        arm: AnfMatchArm = AnfMatchArm.{
+        arm: AnfMatchArm = .{
           pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
           body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
         }
@@ -545,7 +545,7 @@ pub fn suite() runner.Suite {
       "phase3 patbind: pattern-bound local is killed at arm entry (not live-in)",
       fn() {
         b := b_reg()
-        arm: AnfMatchArm = AnfMatchArm.{
+        arm: AnfMatchArm = .{
           pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
           body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
         }

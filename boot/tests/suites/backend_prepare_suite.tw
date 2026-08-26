@@ -33,11 +33,11 @@ use compiler.resolver.{ResolvedEnv}
 
 // ── Construction helpers ─────────────────────────────────────────────
 fn lid(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn fid(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn empty_env() ResolvedEnv {
@@ -45,7 +45,7 @@ fn empty_env() ResolvedEnv {
 }
 
 fn empty_registry() WasmTypeRegistry {
-  WasmTypeRegistry.{
+  .{
     type_defs: [],
     layout_cache: Dict.new(),
     in_progress: Dict.new(),
@@ -88,7 +88,7 @@ fn no_captures() Dict<Int, Vector<CaptureParam>> {
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {
-  Param.{ local: lid(id), ty }
+  .{ local: lid(id), ty }
 }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
@@ -109,7 +109,7 @@ fn mk_func_def(
   body: AnfExpr,
   mono_map: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
+  .{
     func_id: fid(id),
     name,
     params,
@@ -121,7 +121,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
+  .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -131,7 +131,7 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
-  AbiContract.{ param_types: params, result_types: results }
+  .{ param_types: params, result_types: results }
 }
 
 fn find_slot_id_by_local(pf: PreparedFunc, local_id: Int) Int {
@@ -245,7 +245,7 @@ fn find_vector_set_site(prepared: PreparedModule, builtins: BuiltinRegistry) Vec
   for pf in prepared.funcs {
     if pf.name == "set_one" {
       case find_vector_set_slots_expr(pf.body, set_id) {
-        .Some(slots) => return VectorSetSite.{ func: pf, result: slots.result, base: slots.base },
+        .Some(slots) => return .{ func: pf, result: slots.result, base: slots.base },
         .None => {},
       }
     }
@@ -677,7 +677,7 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Atom(.ALitVoid)
         func := mk_func_def(1, "h", [], .Void, body, Dict.new())
         anf := mk_module([func])
-        cap: CaptureParam = CaptureParam.{ local_id: lid(0), param_local: lid(100), ty: .Int }
+        cap: CaptureParam = .{ local_id: lid(0), param_local: lid(100), ty: .Int }
         captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
         captures[42] = [cap]
         prepared := prepare_backend(anf, empty_env(), empty_builtins(), captures)

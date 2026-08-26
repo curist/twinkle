@@ -4,7 +4,7 @@ pub type LocalSet = .{ inner: Dict<Int, Bool> }
 
 /// Empty local-id set.
 pub fn local_set() LocalSet {
-  LocalSet.{ inner: Dict.new() }
+  .{ inner: Dict.new() }
 }
 
 /// Add a local id (persistent: returns a new set).

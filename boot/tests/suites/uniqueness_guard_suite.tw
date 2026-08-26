@@ -10,7 +10,7 @@ gpub: Cell<Vector<Int>> = Cell.new([0])
 // not corrupt what the callee kept. A read-only callee returning an Int would be
 // vacuous — the Int is computed before the rebind and could never go red.
 fn keep_in_box(v: Vector<Int>) Box {
-  Box.{ items: v }
+  .{ items: v }
 }
 
 // Helper for the closure-capture guard.

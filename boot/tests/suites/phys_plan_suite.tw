@@ -3,7 +3,7 @@ use @std.testing as runner
 
 use compiler.backend.phys_plan
 use compiler.backend.repr_policy
-use compiler.backend.typed_param_abi.{ParamAbi, ReprAnalysis, phys_plan_from_analysis}
+use compiler.backend.typed_param_abi.{ReprAnalysis, phys_plan_from_analysis}
 use compiler.codegen.wasm_layout.{pvec_wasm_type}
 
 fn test_keys_are_stable() Result<Void, String> {
@@ -48,7 +48,7 @@ fn test_analysis_projection_sets_abi_entries() Result<Void, String> {
   r := ReprAnalysis.{
     typed_fields: Dict.new(),
     typed_payloads: Dict.new(),
-    param_abi: ParamAbi.{ typeable_params: Dict.new(), typeable_return },
+    param_abi: .{ typeable_params: Dict.new(), typeable_return },
     capture_abi,
   }
   p := phys_plan_from_analysis(r)

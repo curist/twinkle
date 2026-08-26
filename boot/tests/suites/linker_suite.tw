@@ -9,7 +9,7 @@ use compiler.codegen.wasm_ir.{
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn empty_module(ns: String) WasmModule {
-  WasmModule.{
+  .{
     namespace: ns,
     types: [],
     imports: [],

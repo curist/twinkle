@@ -24,7 +24,6 @@ use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.backend.verify.{verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_layout.{pvec_wasm_type, val_type_of_mono}
-use compiler.core_ir.{FuncId, LocalId}
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
 
@@ -267,8 +266,8 @@ bool_field_gather_result_source :=
 // at the edge check, not the slot-metadata check.
 fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
   ys := SlotInfo.{
-    slot: SlotId.{ id: 0 },
-    source_local: LocalId.{ id: 0 },
+    slot: .{ id: 0 },
+    source_local: .{ id: 0 },
     role: .Param,
     mono: .Vector(.Int),
     repr: .TypedVec(.I64),
@@ -276,8 +275,8 @@ fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
   }
   ws := if typed_dest {
     SlotInfo.{
-      slot: SlotId.{ id: 1 },
-      source_local: LocalId.{ id: 1 },
+      slot: .{ id: 1 },
+      source_local: .{ id: 1 },
       role: .Local,
       mono: .Vector(.Int),
       repr: .TypedVec(.I64),
@@ -285,8 +284,8 @@ fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
     }
   } else {
     SlotInfo.{
-      slot: SlotId.{ id: 1 },
-      source_local: LocalId.{ id: 1 },
+      slot: .{ id: 1 },
+      source_local: .{ id: 1 },
       role: .Local,
       mono: .Vector(.Int),
       repr: .TypedRef(.Vector(.Int)),
@@ -296,8 +295,8 @@ fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = ys
   slots[1] = ws
-  PreparedFunc.{
-    func_id: FuncId.{ id: 900 },
+  .{
+    func_id: .{ id: 900 },
     name: "copy_probe",
     is_init: false,
     captures: [],

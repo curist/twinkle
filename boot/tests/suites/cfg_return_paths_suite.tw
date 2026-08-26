@@ -13,7 +13,7 @@ use compiler.summary
 use compiler.variant_id
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn b_reg() builtins.BuiltinRegistry {
@@ -28,8 +28,8 @@ fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
   params: Vector<Param> = collect i in range(nparams) {
     Param.{ local: lid(i), ty: MonoType.Int }
   }
-  AnfFunctionDef.{
-    func_id: FuncId.{ id },
+  .{
+    func_id: .{ id },
     name,
     is_init: false,
     params,
@@ -40,7 +40,7 @@ fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
 }
 
 fn module_of(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
+  .{
     functions: funcs,
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -152,7 +152,7 @@ fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
 }
 
 fn wrapper_record(field_val: LocalId) AnfOp {
-  .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
+  .ARecord(TypeId.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(field_val) }])
 }
 
 // Record{f0: field_val, f1: fresh}: two fields so the caller has a SIBLING to
@@ -161,8 +161,8 @@ fn wrapper_record2(field_val: LocalId, fresh_val: LocalId) AnfOp {
   .ARecord(
     TypeId.{ id: 0 },
     [
-      .{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) },
-      .{ field: FieldId.{ id: 1 }, value: .ALocal(fresh_val) },
+      .{ field: .{ id: 0 }, value: .ALocal(field_val) },
+      .{ field: .{ id: 1 }, value: .ALocal(fresh_val) },
     ],
   )
 }
@@ -371,11 +371,11 @@ fn case_w_out_liveout_fixture() Vector<AnfFunctionDef> {
 // The single-Var arm records payload_src; the wildcard arm stays .None.
 fn payload_src_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
-  ok_arm: AnfMatchArm = AnfMatchArm.{
+  ok_arm: AnfMatchArm = .{
     pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
     body: .Atom(.ALitInt(0)),
   }
-  wild_arm: AnfMatchArm = AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(0)) }
+  wild_arm: AnfMatchArm = .{ pattern: .Wildcard, body: .Atom(.ALitInt(0)) }
   body: AnfExpr = .Let(
     lid(0),
     dict_new_call(b), // s := Dict.new()
@@ -422,7 +422,7 @@ fn ok_load_helper() AnfFunctionDef {
     1,
     .Let(
       lid(1),
-      .ARecord(TypeId.{ id: 5 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }]), // inner := Record{f0: s}
+      .ARecord(TypeId.{ id: 5 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }]), // inner := Record{f0: s}
       .Let(
         lid(2),
         .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]), // v := .Ok(inner)
@@ -435,11 +435,11 @@ fn ok_load_helper() AnfFunctionDef {
 // The two-arm case body shared by the Case R callers. `ok_body` runs in the .Ok
 // arm (payload bound to L10); the .Err arm binds L11 and returns it.
 fn case_r_match(ok_body: AnfExpr) AnfOp {
-  ok_arm: AnfMatchArm = AnfMatchArm.{
+  ok_arm: AnfMatchArm = .{
     pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
     body: ok_body,
   }
-  err_arm: AnfMatchArm = AnfMatchArm.{
+  err_arm: AnfMatchArm = .{
     pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
     body: .Return(.Some(.ALocal(lid(11)))),
   }
@@ -539,11 +539,11 @@ fn case_r_inarm_read_fixture() Vector<AnfFunctionDef> {
 // Confirms the tag keeps arms disjoint: an Err arm cannot recover an Ok-only fact.
 fn case_r_tag_isolation_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
-  ok_arm: AnfMatchArm = AnfMatchArm.{
+  ok_arm: AnfMatchArm = .{
     pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
     body: .Atom(.ALitInt(0)),
   }
-  err_arm: AnfMatchArm = AnfMatchArm.{
+  err_arm: AnfMatchArm = .{
     pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
     body: .Return(.Some(.ALocal(lid(11)))),
   }

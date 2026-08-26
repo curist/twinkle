@@ -12,7 +12,7 @@ fn dummy_span() span.Span {
 }
 
 fn dummy_expr(kind: ExprKind) Expr {
-  Expr.{ id: 0, kind, span: dummy_span() }
+  .{ id: 0, kind, span: dummy_span() }
 }
 
 fn make_value_item(name: String) ImportItem {
@@ -28,7 +28,7 @@ fn make_type_item(name: String) ImportItem {
 }
 
 fn make_use_decl(path: Vector<String>, items: Vector<ImportItem>?) UseDecl {
-  UseDecl.{ is_stdlib: false, is_relative: false, path, alias: .None, items, span: dummy_span() }
+  .{ is_stdlib: false, is_relative: false, path, alias: .None, items, span: dummy_span() }
 }
 
 pub fn suite() runner.Suite {

@@ -16,11 +16,11 @@ use compiler.resolver
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn mk_local(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn mk_func(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn mk_func_def(
@@ -31,15 +31,7 @@ fn mk_func_def(
   body: AnfExpr,
   op_result_mono: Dict<Int, MonoType>,
 ) AnfFunctionDef {
-  AnfFunctionDef.{
-    func_id: mk_func(id),
-    name,
-    params,
-    return_ty,
-    body,
-    op_result_mono,
-    is_init: false,
-  }
+  .{ func_id: mk_func(id), name, params, return_ty, body, op_result_mono, is_init: false }
 }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> {

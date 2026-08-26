@@ -11,7 +11,7 @@ use compiler.opt.semantics.{
 }
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn test_vector_len_effect_is_read_only() Result<Void, String> {

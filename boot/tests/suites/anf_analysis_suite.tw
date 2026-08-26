@@ -11,7 +11,7 @@ use compiler.mono_type.{TypeId}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn empty_set() Dict<Int, Bool> {

@@ -18,11 +18,11 @@ use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
 
 fn lid(n: Int) LocalId {
-  LocalId.{ id: n }
+  .{ id: n }
 }
 
 fn fid(n: Int) FuncId {
-  FuncId.{ id: n }
+  .{ id: n }
 }
 
 fn empty_env() ResolvedEnv {

@@ -39,26 +39,26 @@ pub fn find_path(module: Module, offset: Int) AstPath {
       .Function(decl) => if decl.span.contains(offset) {
         nodes = [NodeRef.FnDecl(decl)]
         nodes = .concat(path_in_block(decl.body, offset))
-        return AstPath.{ nodes }
+        return .{ nodes }
       },
       .Type(decl) => if decl.span.contains(offset) {
-        return AstPath.{ nodes: [NodeRef.TypeDecl(decl)] }
+        return .{ nodes: [NodeRef.TypeDecl(decl)] }
       },
       .Use(decl) => if decl.span.contains(offset) {
-        return AstPath.{ nodes: [NodeRef.UseDecl(decl)] }
+        return .{ nodes: [NodeRef.UseDecl(decl)] }
       },
       .Stmt(stmt) => {
         child := path_in_stmt(stmt, offset)
 
         if child.len() > 0 {
-          return AstPath.{ nodes: child }
+          return .{ nodes: child }
         }
       },
       _ => {},
     }
   }
 
-  AstPath.{ nodes: [] }
+  .{ nodes: [] }
 }
 
 /// Return the deepest node in the path, or .None if the path is empty.

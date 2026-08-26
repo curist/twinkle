@@ -12,11 +12,11 @@ use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn fid(id: Int) FuncId {
-  FuncId.{ id }
+  .{ id }
 }
 
 fn uses_for(uses: Dict<Int, Int>, id: Int) Int {

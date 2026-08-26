@@ -257,7 +257,7 @@ fn test_op_make_closure() Result<Void, String> {
 
 fn test_op_record() Result<Void, String> {
   tid := TypeId.{ id: 7 }
-  fields := [FieldAtom.{ field: FieldId.{ id: 0 }, value: .ALitInt(10) }]
+  fields := [FieldAtom.{ field: .{ id: 0 }, value: .ALitInt(10) }]
   op: AnfOp = .ARecord(tid, fields)
 
   case op {
@@ -382,9 +382,9 @@ fn test_op_defer() Result<Void, String> {
 // ── AnfFunctionDef & AnfModule ──────────────────────────────────────
 fn test_function_def() Result<Void, String> {
   fdef := AnfFunctionDef.{
-    func_id: FuncId.{ id: 41 },
+    func_id: .{ id: 41 },
     name: "my_func",
-    params: [Param.{ local: LocalId.{ id: 0 }, ty: .Int }],
+    params: [Param.{ local: .{ id: 0 }, ty: .Int }],
     op_result_mono: Dict.new(),
     body: .Atom(.ALocal(LocalId.{ id: 0 })),
     return_ty: .Int,
@@ -402,7 +402,7 @@ fn test_function_def() Result<Void, String> {
 
 fn test_module() Result<Void, String> {
   fdef := AnfFunctionDef.{
-    func_id: FuncId.{ id: 41 },
+    func_id: .{ id: 41 },
     name: "f",
     params: [],
     op_result_mono: Dict.new(),

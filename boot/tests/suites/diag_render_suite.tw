@@ -7,7 +7,6 @@ use compiler.query.diag_render.{RenderCtx}
 use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind}
 use lib.source.registry
-use lib.source.report.{RenderConfig}
 use lib.source.span
 use lib.source.span.{Span}
 
@@ -16,11 +15,11 @@ fn s(start: Int, end: Int) Span {
 }
 
 fn ctx() RenderCtx {
-  RenderCtx.{
+  .{
     registry: registry.empty(),
     env: .None,
     module: .None,
-    config: RenderConfig.{ color: false },
+    config: .{ color: false },
     type_names: .None,
   }
 }
@@ -282,7 +281,7 @@ pub fn suite() runner.Suite {
           registry: registry.empty(),
           env: .None,
           module: .None,
-          config: RenderConfig.{ color: false },
+          config: .{ color: false },
           type_names: .Some(names),
         }
         r := diag_render.to_report(kind, snapshot_ctx)

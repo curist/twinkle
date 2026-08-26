@@ -5,7 +5,7 @@ use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.anf.{FieldAtom}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FieldId, FuncId, LocalId}
+use compiler.core_ir.{FieldId, LocalId}
 use compiler.field_facts as ff
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
@@ -13,7 +13,7 @@ use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 
 fn lid(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn b_reg() builtins.BuiltinRegistry {
@@ -37,8 +37,8 @@ fn vec_make_call(b: builtins.BuiltinRegistry, fill: LocalId) AnfOp {
 }
 
 fn module_of(name: String, body: AnfExpr) AnfModule {
-  func: AnfFunctionDef = AnfFunctionDef.{
-    func_id: FuncId.{ id: 1 },
+  func: AnfFunctionDef = .{
+    func_id: .{ id: 1 },
     name,
     is_init: false,
     params: [],
@@ -46,7 +46,7 @@ fn module_of(name: String, body: AnfExpr) AnfModule {
     body,
     return_ty: MonoType.Int,
   }
-  AnfModule.{
+  .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
@@ -81,7 +81,7 @@ fn one(p: ff.AccessPath) ff.FieldMap {
 }
 
 fn field_atom(fid: Int, v: LocalId) FieldAtom {
-  FieldAtom.{ field: FieldId.{ id: fid }, value: .ALocal(v) }
+  .{ field: .{ id: fid }, value: .ALocal(v) }
 }
 
 fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {

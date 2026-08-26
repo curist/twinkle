@@ -34,11 +34,11 @@ fn function(src: String, name: String) Result<cfg.CfgFunction, String> {
 }
 
 fn local(id: Int) LocalId {
-  LocalId.{ id }
+  .{ id }
 }
 
 fn func_id(id: Int) FuncId {
-  FuncId.{ id }
+  .{ id }
 }
 
 fn direct_value_break_module() AnfModule {
@@ -49,7 +49,7 @@ fn direct_value_break_module() AnfModule {
     .ALoop(.Break(.Some(.ALocal(payload)))),
     .Atom(.ALocal(loop_result)),
   )
-  func: AnfFunctionDef = AnfFunctionDef.{
+  func: AnfFunctionDef = .{
     func_id: func_id(1),
     name: "value_break_direct",
     is_init: false,
@@ -58,7 +58,7 @@ fn direct_value_break_module() AnfModule {
     body,
     return_ty: MonoType.Int,
   }
-  AnfModule.{
+  .{
     functions: [func],
     init_func_id: .None,
     extern_imports: Dict.new(),
