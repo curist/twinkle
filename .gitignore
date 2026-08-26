@@ -16,3 +16,4 @@ playground/public/*
 # LLM agents artifacts
 /.pi-subagents/
 /.superpowers/
+/.worktrees/
