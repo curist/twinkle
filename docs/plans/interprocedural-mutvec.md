@@ -69,6 +69,71 @@ support **both** exit shapes, matching the existing S2 one-exit rule:
 Everywhere this doc previously said "freeze once after the loop," read "materialize
 at the single boundary **if the chain escapes; otherwise not at all**."
 
+### Spike validation (2026-08-27) — parity is reachable without inlining
+
+A decomposition spike (four `sieve` variants, same checksum, WAT-verified lowering)
+resolved the open question "is `sieve_mut` parity reachable *without* wrapper
+inlining?". The gap splits into two independent costs:
+
+| Variant | Verified lowering | Role |
+|---|---|---|
+| `wrap` (today's `sieve`) | `collect`→freeze→PVec; per-write **call → `set_in_place`** (trie) | baseline |
+| `direct_pv` | PVec; per-write inline `set_in_place` (trie), **no call** | isolates call cost |
+| `direct_mv` | flat `MutVecBool` (`mutvec_get/set_bool`), **no freeze, no call** | the S4 ceiling |
+| `buffer` (today's `sieve_mut`) | `@std.buffer` linear memory | the "0.86ms" floor |
+
+- **`trie → flat` is ~94–100% of the gap** (`direct_pv − direct_mv`) — the cost S4
+  removes by keeping the handle flat across the boundary.
+- **Per-write call overhead is measured in the noise** (`wrap − direct_pv`, ranging
+  from ~0 to a few % across runs at 2000 iters) — the engine's JIT erases the
+  trivial `set_at` call. This is the *only* cost the current (no-inlining) plan
+  leaves on the table, and it is negligible.
+- **The `0.86ms` floor is a `@std.buffer` number, but flat `MutVec<Bool>` matches
+  it independently** (`direct_mv ≈ buffer`, within measurement noise). So the line-33
+  "direct index-assign → flat MutVec → 0.86ms" claim is *validated*: MutVec, not
+  linear memory, is the representation that reaches parity.
+
+**Conclusion:** the perf ceiling is not the blocker — S4-without-inlining projects
+to at/near the buffer floor. Wrapper inlining's marginal contribution to `sieve` is
+~0; dropping it (see the abandoned `inlining-fusion` branch) costs this plan
+nothing. The residual risk is entirely **implementation correctness**: the parity
+projection assumes S4 hits its success mode (handle stays flat, **zero** in-loop
+materialization). The failure mode the risks section warns about — a per-call
+freeze/thaw that re-materializes O(n) each iteration — would land *worse than
+today's 5ms*, not at 0.86ms. So the perf gate guards the verifier, not the ceiling.
+
+Spike variants + the decomposition harness live at
+`scratchpad/mutvec-spike/` (not committed); promoting a `direct_mv`-shaped
+reference bench into the awfy suite is a task-sequence item (it gives a permanent,
+non-buffer MutVec floor to gate against).
+
+### Verified structural assumptions (2026-08-27)
+
+Probed against the current compiler so the HP sections rest on facts, not intent:
+
+- **Clone + route are actually applied** (HP-2/HP-5 premise): in the `sieve` shape,
+  `run_wrap`'s final WAT calls `set_at__Bool_v389` — `variant_specialize` both
+  clones the owned `set_at` and *routes the owned caller to it*, and the clone emits
+  `rt_arr__set_in_place`. Routes are not hypothetical.
+- **Threading is a plain `call`, not `call_indirect`** (HP-2 pass-ordering premise):
+  the sieve method-call shape lowers to a direct call, so the handle threading is
+  visible as a plain call at the S4 insertion point (post-`variant_specialize`,
+  pre-`convert_closures`). First-class-`fn`-valued wrappers (closures) are out of
+  slice-1 scope, consistent with this.
+- **`VariantRoute` carries `route_sites: Vector<Int>`** (`variant_route.tw`) — the
+  route record already enumerates the specific caller sites, so HP-5's
+  "sibling-clone + reroute only the S4-compatible sites" is structurally supported;
+  no new route-partitioning primitive is needed, only a partition predicate.
+- **HP-1 confirmed necessary (top risk):** `classify_producer` /
+  `trace_collect_builder` (`mutvec_region.tw`) run at `codegen.tw:135`, *before*
+  `builder_region` (`:139`). The current S2 detector recognizes the *raw* `collect`
+  (`CollectSeed`) — which is why the `direct_mv` spike variant flattens today. But
+  S4 runs *after* `builder_region` (post-`:151`), where the `collect` is already a
+  `builder_new → builder_push* → builder_freeze` chain. S4 therefore **cannot reuse
+  `classify_producer`'s entry point unchanged**; it must recognize the
+  post-`builder_region` builder-chain form. This is the largest implementation gap
+  and the first task-sequence spike.
+
 ---
 
 ## High-priority design (the load-bearing parts)
@@ -312,11 +377,13 @@ at every behavior-changing step.
 ## Non-goals
 
 - **Wrapper inlining.** Inlining an owned trivial wrapper clone back into the
-  caller so the *existing* intra-function MutVec detector fires is a real
-  alternative for the sieve-class case, but it is a **separate concern with its own
-  plan doc**, handled independently. This plan does the general interprocedural-
-  storage path, which also unblocks `nbody`'s param-sourced `advance` (inlining
-  would not, cleanly).
+  caller so the *existing* intra-function MutVec detector fires would also flatten
+  the sieve-class case — but the spike above shows its marginal value here is ~0
+  (the wrapper call itself is in the measurement noise; the gap is all
+  representation, which this plan removes). The `inlining-fusion` branch that
+  pursued it was abandoned, and this plan deliberately does **not** depend on it.
+  This plan does the general interprocedural-storage path, which additionally
+  unblocks `nbody`'s param-sourced `advance` (inlining would not, cleanly).
 - **`MutDict` / S5.** Dict stay-low is a different storage target (flat `MutDict`,
   three-tier publication); out of scope.
 - **Multi-hop chains, recursive/SCC edges carrying MutVec, branch/multi-exit
