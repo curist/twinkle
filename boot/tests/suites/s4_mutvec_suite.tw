@@ -32,10 +32,12 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.artifacts.{PipelineArtifacts}
+use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutvec_region
 use compiler.codegen.s4_region
+use compiler.codegen.s4_verify
 use compiler.codegen.variant_specialize
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType}
@@ -262,6 +264,149 @@ fn synth_call_result_func() AnfFunctionDef {
   }
 }
 
+fn verdict_is_accept(v: s4_verify.S4Verdict) Bool {
+  case v {
+    .Accept => true,
+    .Reject(_) => false,
+  }
+}
+
+fn reject_reason_is(v: s4_verify.S4Verdict, name: String) Bool {
+  case v {
+    .Accept => false,
+    .Reject(r) => reject_reason_name(r) == name,
+  }
+}
+
+fn reject_reason_name(r: s4_verify.S4RejectReason) String {
+  case r {
+    .NonContinuationReturn => "NonContinuationReturn",
+    .AliasSurvives => "AliasSurvives",
+    .CalleeRepublishes => "CalleeRepublishes",
+    .MultiExit => "MultiExit",
+    .ReprDisagree => "ReprDisagree",
+  }
+}
+
+// A hand-built owned-clone body in the exact "in-place mutate + return
+// receiver" shape a slice-1 `set_at` clone has: `set_unsafe(recv, i, v)` result
+// reclaimed onto `recv`, then `recv` returned. `set_unsafe_id` is resolved from
+// the live registry so the whitelist match is id-correct for this compilation.
+fn synth_passthrough_clone(b: BuiltinRegistry) AnfFunctionDef {
+  recv := LocalId.{ id: 7 }
+  idx := LocalId.{ id: 8 }
+  val := LocalId.{ id: 9 }
+  wr := LocalId.{ id: 11 }
+  su := builtins.id(b, "vector$set_unsafe")
+  body := AnfExpr.Let(
+    wr,
+    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]),
+    AnfExpr.Let(
+      LocalId.{ id: 12 },
+      AnfOp.AAssign(recv, Atom.ALocal(wr)),
+      AnfExpr.Atom(Atom.ALocal(recv)),
+    ),
+  )
+  synth_clone_def(recv, idx, val, body)
+}
+
+// Same in-place mutate, but the tail returns a DIFFERENT vector local instead of
+// the receiver — violates continuation identity (condition 1).
+fn synth_diff_return_clone(b: BuiltinRegistry) AnfFunctionDef {
+  recv := LocalId.{ id: 7 }
+  idx := LocalId.{ id: 8 }
+  val := LocalId.{ id: 9 }
+  wr := LocalId.{ id: 11 }
+  su := builtins.id(b, "vector$set_unsafe")
+  body := AnfExpr.Let(
+    wr,
+    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]),
+    AnfExpr.Let(
+      LocalId.{ id: 12 },
+      AnfOp.AAssign(recv, Atom.ALocal(wr)),
+      // return some other local, not recv
+      AnfExpr.Return(.Some(Atom.ALocal(LocalId.{ id: 20 }))),
+    ),
+  )
+  synth_clone_def(recv, idx, val, body)
+}
+
+// The receiver is copied into another live local (`L = init recv`) before the
+// return — a surviving backing alias the callee republishes (condition 3).
+fn synth_republish_clone(b: BuiltinRegistry) AnfFunctionDef {
+  recv := LocalId.{ id: 7 }
+  idx := LocalId.{ id: 8 }
+  val := LocalId.{ id: 9 }
+  body := AnfExpr.Let(
+    LocalId.{ id: 30 },
+    AnfOp.AInit(Atom.ALocal(recv)),
+    AnfExpr.Atom(Atom.ALocal(recv)),
+  )
+  synth_clone_def(recv, idx, val, body)
+}
+
+// A hand-built CALLER whose handle (L5) is copied into another live local
+// (`L1 = init handle`) — a surviving pre-call alias (condition 2). The alias
+// guard runs before `spec` is touched, so a real (reused) spec is harmless.
+fn synth_caller_alias() AnfFunctionDef {
+  handle := LocalId.{ id: 5 }
+  body := AnfExpr.Let(
+    LocalId.{ id: 1 },
+    AnfOp.AInit(Atom.ALocal(handle)),
+    AnfExpr.Atom(Atom.ALitVoid),
+  )
+  synth_caller_def(body)
+}
+
+// A hand-built CALLER that returns the handle (L5) on BOTH arms of a branch —
+// two handle-carrying exits (condition 4). The multi-exit guard runs before
+// `spec` is touched.
+fn synth_caller_multi_exit() AnfFunctionDef {
+  handle := LocalId.{ id: 5 }
+  body := AnfExpr.Let(
+    LocalId.{ id: 1 },
+    AnfOp.AIf(
+      Atom.ALitBool(true),
+      AnfExpr.Return(.Some(Atom.ALocal(handle))),
+      AnfExpr.Return(.Some(Atom.ALocal(handle))),
+    ),
+    AnfExpr.Atom(Atom.ALitVoid),
+  )
+  synth_caller_def(body)
+}
+
+fn synth_caller_def(body: AnfExpr) AnfFunctionDef {
+  .{
+    func_id: FuncId.{ id: 9200 },
+    name: "synth_caller",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Vector(MonoType.Bool),
+  }
+}
+
+fn synth_region_for(handle: LocalId) s4_region.S4Region {
+  .{ handle, producer: .CollectSeed, thread_calls: [], exit_kind: .Scratch }
+}
+
+fn synth_clone_def(recv: LocalId, idx: LocalId, val: LocalId, body: AnfExpr) AnfFunctionDef {
+  .{
+    func_id: FuncId.{ id: 9100 },
+    name: "synth_set_at__Bool$v9100",
+    is_init: false,
+    params: [
+      Param.{ local: recv, ty: MonoType.Vector(MonoType.Bool) },
+      Param.{ local: idx, ty: MonoType.Int },
+      Param.{ local: val, ty: MonoType.Bool },
+    ],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Vector(MonoType.Bool),
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
@@ -359,6 +504,171 @@ pub fn suite() runner.Suite {
         r := regions[0]
         try assert.equal(r.thread_calls.len(), 1)
         try assert.equal(exit_is_scratch(r.exit_kind), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "verify_region accepts the sieve scratch region",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        run_fn := find_func(st.prime, "run")
+        r := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
+        try assert.is_true(
+          verdict_is_accept(s4_verify.verify_region(r, run_fn, st.spec, st.builtins)),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "verify_region accepts the sieve_escape (single escaping exit) region",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_escape"))
+        run_fn := find_func(st.prime, "run")
+        r := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
+        try assert.is_true(
+          verdict_is_accept(s4_verify.verify_region(r, run_fn, st.spec, st.builtins)),
+        )
+        .Ok({})
+      },
+    )
+    // Condition 3 negative — callee/wrapper republishes (stores the handle).
+    .test(
+      "verify_region rejects a wrapper that captures the handle",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("wrap_capture"))
+        run_fn := find_func(st.prime, "run")
+        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+
+        // Either discovery rejects it outright, or the verifier does — both are
+        // correct (sound rejection).
+        ok := rs.len() == 0
+          or reject_reason_is(
+            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            "CalleeRepublishes",
+          )
+        try assert.is_true(ok)
+        .Ok({})
+      },
+    )
+    // Condition 1 negative — non-continuation return (a different vector).
+    .test(
+      "verify_region rejects a wrapper that returns a different vector",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("wrap_diff_return"))
+        run_fn := find_func(st.prime, "run")
+        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        ok := rs.len() == 0
+          or reject_reason_is(
+            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            "NonContinuationReturn",
+          )
+        try assert.is_true(ok)
+        .Ok({})
+      },
+    )
+    // Condition 2 negative — a pre-call alias of the handle survives.
+    .test(
+      "verify_region rejects a caller that keeps a live alias of the handle",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("caller_alias"))
+        run_fn := find_func(st.prime, "run")
+        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        ok := rs.len() == 0
+          or reject_reason_is(
+            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            "AliasSurvives",
+          )
+        try assert.is_true(ok)
+        .Ok({})
+      },
+    )
+    // Condition 4 — materializable exits: a branch-carried handle is rejected at
+    // discovery (zero regions), the single-exit rule that discharges condition 4.
+    .test(
+      "detect_call_thread_regions yields zero regions for a multi-exit wrapper",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("wrap_multi_exit"))
+        run_fn := find_func(st.prime, "run")
+        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        try assert.equal(rs.len(), 0)
+        .Ok({})
+      },
+    )
+    // Conditions 1 + 3 unit tests: drive the callee continuation scan directly
+    // with hand-built clone bodies (no SpecializeResult needed), so each guard's
+    // reject path has real RED/GREEN coverage independent of discovery.
+    .test(
+      "verify_clone_continuation accepts an in-place-mutate-and-return-receiver clone",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        clone := synth_passthrough_clone(st.builtins)
+        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        try assert.is_true(verdict_is_accept(v))
+        .Ok({})
+      },
+    )
+    .test(
+      "verify_clone_continuation rejects a clone that returns a different vector",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        clone := synth_diff_return_clone(st.builtins)
+        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        try assert.is_true(reject_reason_is(v, "NonContinuationReturn"))
+        .Ok({})
+      },
+    )
+    .test(
+      "verify_clone_continuation rejects a clone that republishes the receiver",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        clone := synth_republish_clone(st.builtins)
+        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        try assert.is_true(reject_reason_is(v, "CalleeRepublishes"))
+        .Ok({})
+      },
+    )
+    // Condition 2 (defensive guard) — a surviving pre-call alias in the caller
+    // makes verify_region reject with AliasSurvives, driven directly so the
+    // guard has real coverage even though the caller_alias fixture is rejected
+    // earlier at discovery.
+    .test(
+      "verify_region rejects a caller with a surviving handle alias (AliasSurvives guard)",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        caller := synth_caller_alias()
+        region := synth_region_for(LocalId.{ id: 5 })
+        v := s4_verify.verify_region(region, caller, st.spec, st.builtins)
+        try assert.is_true(reject_reason_is(v, "AliasSurvives"))
+        .Ok({})
+      },
+    )
+    // Condition 4 (defensive guard) — two handle-carrying caller exits make
+    // verify_region reject with MultiExit.
+    .test(
+      "verify_region rejects a caller with two handle-carrying exits (MultiExit guard)",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        caller := synth_caller_multi_exit()
+        region := synth_region_for(LocalId.{ id: 5 })
+        v := s4_verify.verify_region(region, caller, st.spec, st.builtins)
+        try assert.is_true(reject_reason_is(v, "MultiExit"))
+        .Ok({})
+      },
+    )
+    // Condition 5 — repr agreement. A caller/callee element-family mismatch is
+    // structurally unreachable in slice-1 (8G clones are per-monotype; see
+    // s4_verify.tw's header), so it is discharged by justification, but the
+    // defensive ReprDisagree guard is exercised directly here.
+    .test(
+      "repr_agrees is true for a matching element family and false for a mismatch",
+      fn() Result<Void, String> {
+        try assert.is_true(
+          s4_verify.repr_agrees(MonoType.Vector(MonoType.Bool), MonoType.Vector(MonoType.Bool)),
+        )
+        try assert.is_true(
+          !s4_verify.repr_agrees(MonoType.Vector(MonoType.Bool), MonoType.Vector(MonoType.Int)),
+        )
+        try assert.is_true(!s4_verify.repr_agrees(MonoType.Int, MonoType.Vector(MonoType.Bool)))
         .Ok({})
       },
     )
