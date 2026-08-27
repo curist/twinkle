@@ -37,6 +37,7 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.s4_phase
 use compiler.codegen.variant_route
 use compiler.codegen.variant_specialize
 use compiler.codegen.wasm.{emit_linked_wasm, emit_linked_wasm_buffer}
@@ -161,7 +162,13 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
       fix_cache: variant_specialize.no_reuse_fix_cache(),
     }
   }
-  anf_spec := spec.anf
+
+  // S4 (interprocedural MutVec, HP-2): discover + verify call-thread regions
+  // over the post-specialize module. INERT here — `decision.module` is
+  // `spec.anf` unchanged; no rewrite happens until a later task lands ABI
+  // support for an accepted region.
+  decision := s4_phase.run_s4(spec, builtins)
+  anf_spec := decision.module
   tvs := date.now()
 
   if timed {

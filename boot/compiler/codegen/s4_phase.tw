@@ -1,0 +1,42 @@
+//! S4 (interprocedural MutVec) — HP-2 phase entrypoint.
+//!
+//! Wires `s4_region`'s discovery and `s4_verify`'s verifier into a single
+//! per-module pass: for every function in the post-`variant_specialize`
+//! module, discover its call-thread regions, then verify each discovered
+//! region and keep the ones the verifier accepts. Discovery MUST run before
+//! verification for a given region — `verify_region`'s condition-2 alias
+//! check is only sound when called on a region that already passed
+//! discovery (a hand-built or otherwise non-discovered region is not a valid
+//! input), so `run_s4` never calls `verify_region` outside that order.
+//!
+//! This task wires the phase in but keeps it INERT: `accepted` is populated
+//! (so discovery/verification genuinely run over real modules), but the
+//! returned `module`/`spec` are `spec.anf`/`spec` unchanged — no ABI change
+//! and no rewrite happen yet. That proves the phase is safe (byte-identical
+//! output, self-host fixed point holds) before any codegen change lands in a
+//! later task.
+
+use compiler.anf.{AnfModule}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.s4_region.{S4Region, detect_call_thread_regions}
+use compiler.codegen.s4_verify.{verify_region}
+use compiler.codegen.variant_specialize.{SpecializeResult}
+
+pub type S4Decision = .{ accepted: Vector<S4Region>, module: AnfModule, spec: SpecializeResult }
+
+// Discover + verify every call-thread region across `spec.anf`'s functions.
+// INERT in this task: `module`/`spec` pass through unchanged; `accepted` is
+// populated but not yet consumed downstream.
+pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
+  accepted: Vector<S4Region> = []
+  for func in spec.anf.functions {
+    regions := detect_call_thread_regions(func, spec, b)
+    for r in regions {
+      case verify_region(r, func, spec, b) {
+        .Accept => accepted = .append(r),
+        .Reject(_) => {},
+      }
+    }
+  }
+  .{ accepted, module: spec.anf, spec }
+}

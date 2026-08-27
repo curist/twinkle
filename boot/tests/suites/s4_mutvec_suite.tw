@@ -36,6 +36,8 @@ use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutvec_region
+use compiler.codegen.ownership_verdicts
+use compiler.codegen.s4_phase
 use compiler.codegen.s4_region
 use compiler.codegen.s4_verify
 use compiler.codegen.variant_specialize
@@ -141,6 +143,17 @@ pub fn s4_stage(path: String) S4Stage {
     .with_ref_fields(resolver.build_ref_field_table(art.env))
   spec := variant_specialize.specialize_module_with_sem(anf_prime, b, sem)
   .{ prime: anf_prime, spec, builtins: b }
+}
+
+// A stable string hash of an ANF module, for the S4 inertness proof (Task
+// 4): `run_s4` must leave the module byte-identical, and comparing two
+// `anf_fingerprint` values is cheaper and more robust than a structural
+// deep-equal. Reuses `ownership_verdicts.artifact_key_for_anf`, which already
+// hashes every `Atom`/`AnfExpr`/`AnfOp`/`CorePattern` variant exhaustively
+// (no wildcard) for the same "did this module change" purpose (the
+// call-swap stale-artifact guard).
+pub fn anf_fingerprint(m: AnfModule) String {
+  ownership_verdicts.artifact_key_for_anf(m).anf_hash.to_string()
 }
 
 // Locate a function by name in an ANF module (copied from
@@ -669,6 +682,20 @@ pub fn suite() runner.Suite {
           !s4_verify.repr_agrees(MonoType.Vector(MonoType.Bool), MonoType.Vector(MonoType.Int)),
         )
         try assert.is_true(!s4_verify.repr_agrees(MonoType.Int, MonoType.Vector(MonoType.Bool)))
+        .Ok({})
+      },
+    )
+    // HP-2 inertness proof: `run_s4` discovers + verifies over the real
+    // post-specialize module (so `accepted` is non-empty for a real
+    // discoverable region), but must leave the module byte-identical — no
+    // ABI change, no rewrite — until a later task lands one.
+    .test(
+      "run_s4 leaves the module byte-identical when nothing is applied",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(anf_fingerprint(dec.module), anf_fingerprint(st.spec.anf))
+        try assert.is_true(dec.accepted.len() >= 1)
         .Ok({})
       },
     )
