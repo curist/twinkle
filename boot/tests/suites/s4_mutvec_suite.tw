@@ -93,6 +93,24 @@ pub fn wat_func_body(wat: String, marker: String) String? {
   .None
 }
 
+// Like `wat_func_body`, but the matched function header must additionally
+// contain (`want == true`) or NOT contain (`want == false`) the substring
+// `sub`. Used to disambiguate a partitioned clone family in emitted WAT: the
+// `${clone_name}$mv` sibling mangles to a header carrying the `_mv` marker,
+// while the persistent original clone shares the base name but lacks it.
+pub fn wat_func_body_where(wat: String, marker: String, sub: String, want: Bool) String? {
+  for p in wat.split("\n  (func ") {
+    header := case p.split("\n").first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) and header.contains(sub) == want {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
 // Count `call $...` instruction lines whose target contains `op_name`, scoped
 // to the single function whose header contains `marker`. Returns 0 if no
 // function matches `marker` (callers that need to distinguish "not found"
@@ -944,6 +962,120 @@ pub fn suite() runner.Suite {
         }
         offenders := produced.rows.filter(fn(r) { r.func == "run" or r.func == clone_name })
         try assert.equal(offenders.len(), 0)
+        .Ok({})
+      },
+    )
+    // ── Task 6 (HP-5): route partitioning + sibling clone ────────────────────
+    // Fixture shape (Step 0): `mixed_owned` has two caller-born OWNED callers of
+    // the same `set_at__Bool` clone. `scratch_caller` is the sieve-shape S4
+    // target (accepted); `escaping_multi` threads the same owned `set_at` loop
+    // but returns its handle on two branches (a multi-exit escape) — uniqueness
+    // still owned-routes it to the SAME clone, but S4 discovery rejects it (>1
+    // handle-carrying exit). So the shared clone's route_sites is {scratch,
+    // escaping} with accepted = {scratch}: a strict, non-empty subset — the exact
+    // HP-5 partition trigger. (A parameter-sourced second caller does NOT work:
+    // its owned-ness is caller-dependent, so it never owned-routes to the shared
+    // clone — verified empirically while settling on this fixture.)
+    .test(
+      "run_s4 partitions a mixed owned caller into a MutVec sibling",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("mixed_owned"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+
+        // Exactly one upgrade — for a fresh `$mv` sibling, NOT an original 8G
+        // clone route (that would mean the shared clone's ABI was mutated in
+        // place, the trap HP-5 exists to prevent).
+        try assert.equal(dec.abi_upgrades.len(), 1)
+        u := dec.abi_upgrades[0]
+        orig := st.spec.routes.find(fn(r) { r.clone_func == u.clone_func })
+        try assert.ok(
+          orig.is_none(),
+          "upgrade must target the sibling, not an original clone route",
+        )
+        sib := dec.module.functions.find(fn(f) { f.func_id.id == u.clone_func })
+        try assert.ok(
+          case sib {
+            .Some(f) => f.name.contains("$mv"),
+            .None => false,
+          },
+          "a deterministically-named `$mv` sibling must exist in the module",
+        )
+
+        // The partition genuinely fired on a strict subset: the shared clone had
+        // two owned routed sites, only one accepted.
+        shared := st.spec.routes.find(fn(r) { r.route_sites.len() == 2 })
+        try assert.ok(shared.is_some(), "the shared clone must carry two owned routed sites")
+        .Ok({})
+      },
+    )
+    // End-to-end WAT: only the S4-compatible owned site gets the MutVec sibling;
+    // the original clone stays persistent for the rejected owned caller, and the
+    // two ABIs never cross (scratch caller flat → sibling MutVec; escaping caller
+    // persistent → original PVec).
+    .test(
+      "mixed callers: the sibling is flat MutVec and the original clone stays persistent",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("mixed_owned")
+
+        // The `$mv` sibling (mangled `_mv`) writes via the flat mutvec op.
+        sib := case wat_func_body_where(wat, "set_at__Bool", "_mv", true) {
+          .Some(b) => b,
+          .None => return .Err("no set_at__Bool `_mv` sibling found in WAT"),
+        }
+        try assert.ok(sib.contains("mutvec_set_bool"), "sibling writes via the flat mutvec op")
+        try assert.ok(
+          !sib.contains("rt_arr__set_in_place"),
+          "sibling must drop the persistent trie write",
+        )
+
+        // The persistent original clone (base name, no `_mv`) is untouched.
+        base := case wat_func_body_where(wat, "set_at__Bool", "_mv", false) {
+          .Some(b) => b,
+          .None => return .Err("no persistent set_at__Bool clone found in WAT"),
+        }
+        try assert.ok(
+          base.contains("rt_arr__set_in_place"),
+          "original clone must keep the persistent trie write",
+        )
+        try assert.ok(!base.contains("mutvec_set_bool"), "original clone must NOT be flattened")
+
+        // The accepted caller went flat (reads via mutvec_get) and stays flat —
+        // zero in-loop freeze (the scratch-chain invariant).
+        try assert.ok(
+          case wat_func_body(wat, "scratch_caller") {
+            .Some(b) => b.contains("mutvec_get_bool"),
+            .None => false,
+          },
+          "the accepted caller must read flat (mutvec_get_bool)",
+        )
+        try assert.equal(count_op_calls(wat, "scratch_caller", "mutvec_freeze"), 0)
+        .Ok({})
+      },
+    )
+    // Step 2 (deferred multi-clone-region gate, now e2e-constructible): a single
+    // caller-born handle threaded through TWO distinct owned wrapper clones
+    // (`set_at` + `bump`) in one accepted region. Both clones are upgraded and
+    // the region flattened consistently — the sibling/upgrade mechanism keeps a
+    // shared region all-or-nothing per region (option (a) of the brief), so the
+    // `surviving_clones` DROP path never has to fire here. That drop path stays
+    // provably unreachable in slice-1 (any clone threaded by an ACCEPTED region
+    // necessarily has an accepted site → is itself upgraded), and keeps its
+    // direct unit coverage above; this test proves the positive: no partial
+    // upgrade, no cross-repr trap in the emitted WAT.
+    .test(
+      "multi-clone accepted region upgrades every threaded clone (no partial-upgrade trap)",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("multi_wrap"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.accepted.len(), 1)
+        try assert.equal(dec.accepted[0].thread_calls.len(), 2) // two distinct clones threaded
+        try assert.equal(dec.abi_upgrades.len(), 2) // both upgraded, all-or-nothing
+        wat := try compile_fixture_wat("multi_wrap")
+        try assert.ok(wat.contains("mutvec_set_bool"), "both threaded clones write flat")
+        try assert.ok(
+          !wat.contains("rt_arr__set_in_place"),
+          "no persistent trie write survives — the region is upgraded whole",
+        )
         .Ok({})
       },
     )

@@ -1,0 +1,51 @@
+// Two caller-born OWNED callers of the same `set_at` wrapper clone. One is the
+// sieve-shape S4 target (accepted); the other threads its handle through the
+// same owned `set_at` loop but then returns it on TWO branches (a multi-exit
+// escaping shape), which uniqueness still owned-routes to the same clone yet S4
+// discovery rejects (>1 handle-carrying exit). The shared clone therefore has
+// two owned route_sites with accepted a strict subset — the HP-5 partition.
+pub fn scratch_caller(size: Int) Int {
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  count := 0
+  i := 2
+  for i <= size {
+    if flags[i] {
+      count = count + 1
+      k := i + i
+      for k <= size {
+        flags = .set_at(k, false)
+        k = k + i
+      }
+    }
+    i = i + 1
+  }
+  count
+}
+
+pub fn escaping_multi(size: Int, pick: Bool) Vector<Bool> {
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  i := 0
+  for i <= size {
+    flags = .set_at(i, false)
+    i = i + 1
+  }
+  if pick {
+    return flags
+  }
+  flags
+}
+
+base := escaping_multi(4, true)
+
+println(
+  (scratch_caller(30)
+    + if base[0] {
+      0
+    } else {
+      1
+    }).to_string(),
+)
