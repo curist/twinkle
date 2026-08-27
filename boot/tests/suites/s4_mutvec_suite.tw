@@ -32,6 +32,7 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.artifacts.{PipelineArtifacts}
+use compiler.backend.repr_policy.{ElemRepr}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
@@ -223,6 +224,15 @@ fn exit_is_scratch(k: s4_region.S4Exit) Bool {
   case k {
     .Scratch => true,
     .EscapeReturn => false,
+  }
+}
+
+fn elem_repr_name(e: ElemRepr) String {
+  case e {
+    .I64 => "I64",
+    .F64 => "F64",
+    .I32 => "I32",
+    .Byte => "Byte",
   }
 }
 
@@ -738,6 +748,55 @@ pub fn suite() runner.Suite {
         try assert.equal(producer_name(r.producer), "collect")
         try assert.equal(r.thread_calls.len(), 1)
         try assert.equal(exit_is_scratch(r.exit_kind), false)
+        .Ok({})
+      },
+    )
+    // HP-4: the sieve_scratch clone's ONLY routed site is its own accepted
+    // thread call, so the completeness guard is trivially satisfied and the
+    // clone gets exactly one ABI-upgrade record, typed to the Bool family.
+    .test(
+      "run_s4 computes an ABI upgrade for the sieve_scratch clone's sole routed site",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.abi_upgrades.len(), 1)
+        u := dec.abi_upgrades[0]
+        try assert.is_true(u.return_mutvec)
+        try assert.equal(u.param_slots.len(), 1)
+        try assert.equal(elem_repr_name(u.fam), "I32") // Bool family -> I32 ElemRepr tag
+        route := st.spec.routes.find(fn(r) { r.clone_func == u.clone_func })
+        try assert.ok(route.is_some(), "upgrade's clone_func must match a real route")
+        .Ok({})
+      },
+    )
+    // Same shape for the escaping variant — the upgrade decision does not
+    // depend on exit_kind (Task 7 handles the freeze-boundary distinction).
+    .test(
+      "run_s4 computes an ABI upgrade for the sieve_escape clone's sole routed site",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_escape"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.abi_upgrades.len(), 1)
+        u := dec.abi_upgrades[0]
+        try assert.is_true(u.return_mutvec)
+        try assert.equal(elem_repr_name(u.fam), "I32")
+        .Ok({})
+      },
+    )
+    // HP-4 SOUNDNESS GUARD — direct unit coverage of the core predicate: a
+    // clone upgrades only when EVERY one of its routed sites is accepted, not
+    // merely some of them. This is the guard that keeps the partition/sibling
+    // case (Task 6) from wrongly upgrading a clone that still has a
+    // non-accepted caller.
+    .test(
+      "all_sites_accepted requires every routed site, not a majority",
+      fn() Result<Void, String> {
+        accepted: Dict<Int, Bool> = Dict.new()
+        accepted[1] = true
+        accepted[2] = true
+        try assert.is_true(s4_phase.all_sites_accepted([1, 2], accepted))
+        try assert.is_true(!s4_phase.all_sites_accepted([1, 2, 3], accepted))
+        try assert.is_true(!s4_phase.all_sites_accepted([3], accepted))
         .Ok({})
       },
     )

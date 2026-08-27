@@ -102,8 +102,10 @@ fn resolve_verify_ids(b: BuiltinRegistry) VerifyIds {
 // ── Clone (callee) lookup ─────────────────────────────────────────────────
 // Flatten every routed call-site key -> clone `func_id` out of `spec.routes`
 // (a local reconstruction of `s4_region`'s private `route_site_targets`, kept
-// here to avoid widening that module's surface).
-fn clone_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
+// here to avoid widening that module's surface). `pub` so `s4_phase`'s HP-4
+// ABI-upgrade decision can reuse the exact same clone lookup this verifier
+// already proved correct, instead of re-deriving a third copy.
+pub fn clone_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
   out: Dict<Int, Int> = Dict.new()
   for r in spec.routes {
     for sk in r.route_sites {
@@ -113,14 +115,16 @@ fn clone_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> 
   out
 }
 
-fn func_def_of(spec: variant_specialize.SpecializeResult, func_id: Int) AnfFunctionDef? {
+pub fn func_def_of(spec: variant_specialize.SpecializeResult, func_id: Int) AnfFunctionDef? {
   spec.anf.functions.find(fn(f) { f.func_id.id == func_id })
 }
 
 // The single argument index at which `handle` is passed to `call_op`, or `.None`
 // when it is absent or passed more than once (an ambiguous shape the verifier
-// cannot soundly attribute a single receiver param to — reject).
-fn sole_receiver_index(call_op: AnfOp, handle: LocalId) Int? {
+// cannot soundly attribute a single receiver param to — reject). `pub` so
+// `s4_phase`'s ABI-upgrade decision can locate the same receiver param index
+// this verifier already validated for a thread call.
+pub fn sole_receiver_index(call_op: AnfOp, handle: LocalId) Int? {
   case call_op {
     .ACall(_, args) => {
       found: Int? = .None

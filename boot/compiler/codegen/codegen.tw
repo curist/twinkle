@@ -111,6 +111,13 @@ pub type PreparedCodegen = .{
   optimizer_semantics: OptimizerSemantics,
   builder_anf: AnfModule,
   specialization: variant_specialize.SpecializeResult,
+  // The HP-2/HP-4 interprocedural-MutVec decision (`s4_phase.run_s4`), carried
+  // forward past its computation point so a later pass (e.g. Task 7's
+  // clone-body + caller-region rewrite) can reach `s4_decision.abi_upgrades`
+  // without re-running discovery/verify. Not yet consumed by anything in
+  // `prepared` below — see `mutvec_repr.tw`'s header for why acting on
+  // `abi_upgrades` needs that later rewrite first.
+  s4_decision: s4_phase.S4Decision,
   closure_conversion: ClosureConversion,
   produced_decisions: mutable_produce.ProducedDecisions,
   prepared: PreparedModule,
@@ -235,6 +242,7 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
     optimizer_semantics: sem_env,
     builder_anf: anf_prime,
     specialization: spec,
+    s4_decision: decision,
     closure_conversion,
     produced_decisions,
     prepared,

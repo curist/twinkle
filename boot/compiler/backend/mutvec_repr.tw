@@ -14,6 +14,46 @@
 //! and types it explicitly to the PVecI64 wasm type (and sets phys_return + types
 //! caller result slots). Marking it here with `TypedVec(I64)` would duplicate and
 //! conflict with that ownership, so this pass leaves frozen slots to route.
+//!
+//! ── HP-4 (interprocedural S4) ABI-upgrade decision: NOT consumed here yet ──
+//!
+//! `s4_phase.run_s4` (`compiler.codegen.s4_phase`) now computes
+//! `S4Decision.abi_upgrades: Vector<S4AbiUpgrade>` — for every owned clone
+//! whose EVERY routed call site is an accepted interprocedural region, a
+//! record naming the clone's receiver param(s) + return as safe to type
+//! `MutVec<fam>` instead of the persistent PVec ABI. That decision output is
+//! real and tested (`s4_mutvec_suite.tw`). This module does NOT yet act on it
+//! (no new pass here consumes `abi_upgrades`), and that omission is
+//! deliberate, not an oversight — traced concretely, not assumed:
+//!
+//! Unlike the S2-local case above (where `mutvec_region.rewrite_module`
+//! already rewrote every receiver-touching op to `mutvec_*` BEFORE this pass
+//! ever runs, so `assign_mutvec_reprs` only has to relabel slots whose ops
+//! already match), an S4-accepted clone's body still calls the GENERIC boxed
+//! ops (`vector$set_unsafe`/`vector$get`/`vector$len`, retargeted to
+//! `vector$set_in_place` by ownership's mutable-decision table) — no pass
+//! rewrites those calls to `vector$__mutvec_set${suffix}`/`get`/`len` for the
+//! interprocedural case (that clone-body op rewrite, plus the caller-side
+//! producer-chain rewrite — `collect` staying a MutVec builder instead of
+//! freezing to a PVec — is Task 7's explicit scope, per
+//! `docs/plans/2026-08-27-interprocedural-mutvec-slice1.md`). Typing the
+//! receiver SLOT as `MutVec(fam)` while its body still calls the boxed PVec
+//! ops (and the caller's producer/rebind boundary still binds a real PVec)
+//! would not merely be an incomplete feature: `compiler.codegen.emit.coercions.emit_coerce_stack`
+//! only knows how to bridge a family's boxed PVec <-> the SAME family's typed
+//! PVec wrapper (`fam.box_call`/`fam.unbox_call`, keyed off `fam.pvec_type`);
+//! it has no MutVec<->PVec case (MutVec has no boxed/persistent counterpart —
+//! there is a one-way `mutvec_freeze` runtime op, no reverse "thaw"). A
+//! MutVec-typed slot assigned from (or coerced into) a PVec-typed value falls
+//! through to the fully generic `.RefCast` fallback at the bottom of
+//! `emit_coerce_stack` — a `ref.cast` between two unrelated GC struct types,
+//! which either fails Wasm validation or traps at runtime (confirmed by
+//! reading `emit_coerce_stack` end to end, not inferred). So a slot-only
+//! retype here is unsound in exactly the way the S4 design's own soundness
+//! posture ("fallback is always correct; never emit a partial MutVec ABI")
+//! forbids. Consuming `abi_upgrades` belongs alongside the clone-body +
+//! caller-region rewrite that makes the physical types agree everywhere the
+//! value actually flows — i.e. Task 7, not this pass.
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,

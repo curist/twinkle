@@ -9,34 +9,215 @@
 //! discovery (a hand-built or otherwise non-discovered region is not a valid
 //! input), so `run_s4` never calls `verify_region` outside that order.
 //!
-//! This task wires the phase in but keeps it INERT: `accepted` is populated
-//! (so discovery/verification genuinely run over real modules), but the
-//! returned `module`/`spec` are `spec.anf`/`spec` unchanged — no ABI change
-//! and no rewrite happen yet. That proves the phase is safe (byte-identical
-//! output, self-host fixed point holds) before any codegen change lands in a
-//! later task.
+//! HP-2 (Task 4) kept the phase INERT: `accepted` was populated but the
+//! returned `module`/`spec` passed through `spec.anf`/`spec` unchanged — no
+//! ABI change and no rewrite. `module`/`spec` are STILL unchanged here (the
+//! caller-region + clone-body rewrite is Task 7's job); this task (HP-4) adds
+//! the ABI-UPGRADE DECISION on top: `abi_upgrades` records, for every owned
+//! clone whose EVERY routed site is an accepted region (never a partial
+//! subset — see `compute_abi_upgrades`), that its receiver param + return may
+//! be typed as a flat `MutVec<fam>` instead of the persistent PVec ABI. This
+//! is decision output only: consult `mutvec_repr.tw`'s module header for why
+//! actually applying it to a real clone body is not yet wired into the
+//! default pipeline (it needs a clone-body op rewrite — set_unsafe/get/len on
+//! the receiver retargeted to the matching `mutvec_*` op, itself needing an
+//! elem un/boxing swap — which is squarely Task 7's "clone-body rewrite",
+//! not this task's "ABI typing" scope; see that file's header for the full
+//! trace of why typing the slot alone is not sound without it).
 
-use compiler.anf.{AnfModule}
+use compiler.anf.{AnfFunctionDef, AnfModule, AnfOp}
+use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_region.{collect_defs}
 use compiler.codegen.s4_region.{S4Region, detect_call_thread_regions}
-use compiler.codegen.s4_verify.{verify_region}
+use compiler.codegen.s4_verify.{clone_site_targets, func_def_of, sole_receiver_index, verify_region}
 use compiler.codegen.variant_specialize.{SpecializeResult}
+use compiler.elem_family.{elem_family_of}
+use compiler.variant_id as vid
 
-pub type S4Decision = .{ accepted: Vector<S4Region>, module: AnfModule, spec: SpecializeResult }
+pub type S4Decision = .{
+  accepted: Vector<S4Region>,
+  module: AnfModule,
+  spec: SpecializeResult,
+  abi_upgrades: Vector<S4AbiUpgrade>,
+}
 
-// Discover + verify every call-thread region across `spec.anf`'s functions.
-// INERT in this task: `module`/`spec` pass through unchanged; `accepted` is
-// populated but not yet consumed downstream.
+// HP-4: an owned clone whose every routed site is an accepted S4 region —
+// safe to type its receiver param + return as a flat `MutVec<fam>` instead of
+// the persistent PVec ABI. `param_slots` holds the clone's own receiver LOCAL
+// id(s) (today always exactly one entry — the sole receiver param a routed
+// thread call resolves to, per `s4_verify.sole_receiver_index`); `fam` is the
+// element family shared by every accepted caller of this clone (condition 5
+// in `s4_verify` already proves caller/callee repr agreement per site, so one
+// `fam` covers the whole clone).
+pub type S4AbiUpgrade = .{
+  clone_func: Int,
+  param_slots: Vector<Int>,
+  return_mutvec: Bool,
+  fam: ElemRepr,
+}
+
+// One accepted thread call's clone attribution: which clone it routes to,
+// which of the clone's own params is the receiver, and the element family.
+// Recorded per accepted region so the module-wide "every routed site
+// accepted" completeness guard (`compute_abi_upgrades`) can check against the
+// full `spec.routes` picture before committing to an upgrade — a single
+// accepted region is never sufficient on its own, since the same clone may
+// have OTHER routed sites (other callers, or other regions in this same
+// function) that were rejected.
+type ThreadObservation = .{ clone_func: Int, recv_local: Int, fam: ElemRepr }
+
+// Discover + verify every call-thread region across `spec.anf`'s functions,
+// and derive the HP-4 ABI-upgrade table from the accepted ones. `module`/
+// `spec` still pass through unchanged (Task 7 applies the actual rewrite);
+// `abi_upgrades` is real decision output, consumed by `mutvec_repr` — see
+// that module's header for the current (deliberately unwired) state of
+// consumption.
 pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
   accepted: Vector<S4Region> = []
+  accepted_sites: Dict<Int, Bool> = Dict.new()
+  obs: Vector<ThreadObservation> = []
+
   for func in spec.anf.functions {
     regions := detect_call_thread_regions(func, spec, b)
-    for r in regions {
-      case verify_region(r, func, spec, b) {
-        .Accept => accepted = .append(r),
-        .Reject(_) => {},
+    if regions.len() > 0 {
+      defs := collect_defs(func.body, Dict.new())
+      site_to_clone := clone_site_targets(spec)
+      for r in regions {
+        case verify_region(r, func, spec, b) {
+          .Accept => {
+            accepted = .append(r)
+            for cr in r.thread_calls {
+              accepted_sites[vid.site_key(func.func_id.id, cr)] = true
+            }
+            obs = .concat(region_observations(r, func, defs, site_to_clone, spec))
+          },
+          .Reject(_) => {},
+        }
       }
     }
   }
-  .{ accepted, module: spec.anf, spec }
+
+  .{
+    accepted,
+    module: spec.anf,
+    spec,
+    abi_upgrades: compute_abi_upgrades(spec, accepted_sites, obs),
+  }
+}
+
+// The element family of `handle_id` in `func`, projected to the `ElemRepr`
+// tag `mutvec_repr`'s slot typing already uses. `.None` when the family
+// can't be resolved (no mono recorded, or not a registered element family) —
+// treated by the caller as "cannot prove a repr", the same reject-by-default
+// posture `s4_verify.repr_agrees` takes for its own condition-5 check.
+fn handle_elem_repr(func: AnfFunctionDef, handle_id: Int) ElemRepr? {
+  case func.op_result_mono.get(handle_id) {
+    .Some(ty) => case elem_family_of(ty) {
+      .Some(fam) => elem_repr_of_mono_key(fam.mono_key),
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+// Every thread call in an ACCEPTED region, resolved to its clone + receiver
+// param + element family. Mirrors the exact same site-key/clone/receiver-index
+// lookups `s4_verify.verify_region` already performed to accept this region
+// (reusing its own `clone_site_targets`/`func_def_of`/`sole_receiver_index`),
+// so this recomputation can never disagree with what was actually verified.
+fn region_observations(
+  region: S4Region,
+  func: AnfFunctionDef,
+  defs: Dict<Int, AnfOp>,
+  site_to_clone: Dict<Int, Int>,
+  spec: SpecializeResult,
+) Vector<ThreadObservation> {
+  fam := case handle_elem_repr(func, region.handle.id) {
+    .Some(f) => f,
+    .None => return [],
+  }
+  out: Vector<ThreadObservation> = []
+  for cr in region.thread_calls {
+    case defs.get(cr) {
+      .Some(call_op) => case site_to_clone.get(vid.site_key(func.func_id.id, cr)) {
+        .Some(clone_id) => case sole_receiver_index(call_op, region.handle) {
+          .Some(idx) => case func_def_of(spec, clone_id) {
+            .Some(clone) => if idx < clone.params.len() {
+              out = .append(
+                ThreadObservation.{
+                  clone_func: clone_id,
+                  recv_local: clone.params[idx].local.id,
+                  fam,
+                },
+              )
+            },
+            .None => {},
+          },
+          .None => {},
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  out
+}
+
+// `pub` so the guard's core predicate — "every site, not a majority" — has
+// direct unit coverage independent of a full SpecializeResult/discovery
+// walk (see s4_mutvec_suite.tw).
+pub fn all_sites_accepted(route_sites: Vector<Int>, accepted_sites: Dict<Int, Bool>) Bool {
+  for sk in route_sites {
+    if !accepted_sites.has(sk) {
+      return false
+    }
+  }
+  true
+}
+
+fn find_observation(obs: Vector<ThreadObservation>, clone_func: Int) ThreadObservation? {
+  for o in obs {
+    if o.clone_func == clone_func {
+      return .Some(o)
+    }
+  }
+  .None
+}
+
+// The HP-4 SOUNDNESS guard: a clone upgrades only when EVERY routed site
+// `spec.routes` records against it — not merely the ones this module's own
+// discovery/verify pass happened to accept — is itself an accepted thread
+// call. Any non-accepted routed site (a mixed owned+generic caller, or a
+// partially-accepted set of owned callers) leaves the clone off
+// `abi_upgrades` entirely, so it falls back to the persistent ABI. Carving
+// out just the accepted subset via a sibling `…$mv` clone is Task 6 (HP-5) —
+// out of scope here, where the only safe move for a partial match is "don't
+// upgrade."
+fn compute_abi_upgrades(
+  spec: SpecializeResult,
+  accepted_sites: Dict<Int, Bool>,
+  obs: Vector<ThreadObservation>,
+) Vector<S4AbiUpgrade> {
+  out: Vector<S4AbiUpgrade> = []
+  for r in spec.routes {
+    if r.route_sites.len() < 1 {
+      continue
+    }
+    if !all_sites_accepted(r.route_sites, accepted_sites) {
+      continue
+    }
+    case find_observation(obs, r.clone_func) {
+      .Some(o) => out = .append(
+        S4AbiUpgrade.{
+          clone_func: r.clone_func,
+          param_slots: [o.recv_local],
+          return_mutvec: true,
+          fam: o.fam,
+        },
+      ),
+      .None => {},
+    }
+  }
+  out
 }
