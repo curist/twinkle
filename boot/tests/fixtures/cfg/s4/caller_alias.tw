@@ -1,0 +1,25 @@
+// Negative: the caller binds a second live name (`snapshot`) to the handle
+// before the write loop and reads it back after — a pre-call alias that
+// survives past the routed calls (HP-3 condition 2: AliasSurvives).
+pub fn run(size: Int) Int {
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  snapshot := flags
+  count := 0
+  i := 2
+  for i <= size {
+    if flags[i] {
+      count = count + 1
+      k := i + i
+      for k <= size {
+        flags = .set_at(k, false)
+        k = k + i
+      }
+    }
+    i = i + 1
+  }
+  count + snapshot.len()
+}
+
+println(run(30).to_string())

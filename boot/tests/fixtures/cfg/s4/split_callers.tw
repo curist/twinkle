@@ -1,0 +1,27 @@
+// Mixed owned + generic caller of the same `set_at` wrapper (mirrors
+// sound_uniqueness/shared_wrapper_set_at_split.tw): `owned_caller` is the
+// S4-target shape (last-use handle threaded through the loop), while
+// `aliased_caller` keeps a live alias across the call and must stay generic.
+pub fn owned_caller(n: Int) Int {
+  xs: Vector<Int> = collect i in range(n) {
+    i
+  }
+  i := 0
+  for i < n {
+    xs = .set_at(i, i + 1)
+    i = i + 1
+  }
+  xs.at(0)
+}
+
+pub fn aliased_caller(seed: Vector<Int>) Int {
+  before := seed
+  changed := seed.set_at(0, 99)
+  before.at(0) + changed.at(0)
+}
+
+base: Vector<Int> = collect i in range(3) {
+  i
+}
+
+println((owned_caller(3) + aliased_caller(base)).to_string())

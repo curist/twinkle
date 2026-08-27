@@ -10,6 +10,7 @@ use .nbody_mut
 use .permute
 use .queens
 use .sieve
+use .sieve_direct
 use .sieve_mut
 use .smoke
 use .storage
@@ -39,6 +40,14 @@ harness.run_all([
     size: sieve.size,
     expected: sieve.expected,
     run: sieve.run,
+  },
+  Benchmark.{
+    name: "sieve_direct",
+    warmup: sieve_direct.warmup,
+    iters: sieve_direct.iters,
+    size: sieve_direct.size,
+    expected: sieve_direct.expected,
+    run: sieve_direct.run,
   },
   Benchmark.{
     name: "queens",

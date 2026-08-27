@@ -1,0 +1,182 @@
+// S4 (interprocedural MutVec) test harness + fixtures.
+//
+// Scaffolding only — this suite makes no compiler behavior change. It builds
+// the inspection seam every later S4 task (docs/plans/2026-08-27-interprocedural-mutvec-slice1.md)
+// tests against: `s4_stage` reproduces `link_program`'s pass order up to and
+// including `variant_specialize` (codegen.tw:135-152) using already-public
+// entrypoints, so post-builder_region + post-specialize ANF and routes are
+// inspectable before the S4 phase itself exists.
+//
+// Step 0 (late-cliff discovery): grepped boot's own compiler + stdlib source
+// for the "run_wrap" shape (a locally-born `collect`/`Vector.make` vector
+// threaded through an owned-wrapper mutate call — e.g. `.set_at(...)` — inside
+// a loop, in the SAME function that gave birth to it). Found no exact match:
+//   - `ownership.tw::fixv_isort` rebinds `.set_at` in a loop, but the vector is
+//     PARAMETER-sourced (`out := xs`), not locally born — a dev-only fixpoint
+//     verification helper, not production self-host code.
+//   - `regexp/vm.tw::add_thread` does `g.seen = .set_at(pc, true)`, but `seen`
+//     is born in a DIFFERENT function (`new_gen`'s `Vector.make`) and threaded
+//     through a record field, not a direct same-function producer->wrapper call.
+//   - `regexp/program.tw::emit_alt` rebinds `a = .set_at(...)`, but `a` is the
+//     PARAMETER accumulator threaded across many mutually-recursive `emit*`
+//     functions (multi-hop), not a single-function producer+wrapper-call shape.
+// None of these is the precise single-hop shape S4 targets. So Task 7 (the
+// self-host fixed-point gate) is the first time S4 would fire on real,
+// non-fixture code — its self-host convergence is walking into unknown
+// territory; that task's gate step should not assume a known-good precedent
+// here and should treat a first-time convergence failure as plausible, not
+// a surprise.
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.anf.{AnfModule}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.builder_region
+use compiler.codegen.mutvec_region
+use compiler.codegen.variant_specialize
+use compiler.opt.semantics as semantics
+use compiler.pipeline
+use compiler.resolver
+use lib.module.loader
+
+fn fixtures_dir() String {
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/s4"
+}
+
+// Path to a named fixture under fixtures/cfg/s4/, for direct use with
+// `s4_stage` (which — like the pipeline entrypoints it wraps — takes a path).
+pub fn fixture_path(name: String) String {
+  "${fixtures_dir()}/${name}.tw"
+}
+
+pub fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
+  case pipeline.compile_entry_path(fixture_path(name)) {
+    .Ok(a) => .Ok(a),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+pub fn compile_fixture_wat(name: String) Result<String, String> {
+  case pipeline.compile_entry_path(fixture_path(name)) {
+    .Ok(a) => .Ok(pipeline.emit_wat(a)),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+// Extract a single WAT function body: the `(func …)` block whose header contains
+// `marker`, sliced to the next top-level `(func …)` so assertions are scoped to
+// that one function rather than the whole module.
+// (copied from variant_specialize_suite.tw — keep in sync if it changes.)
+pub fn wat_func_body(wat: String, marker: String) String? {
+  parts := wat.split("\n  (func ")
+  for p in parts {
+    lines := p.split("\n")
+    header := case lines.first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
+// Count `call $...` instruction lines whose target contains `op_name`, scoped
+// to the single function whose header contains `marker`. Returns 0 if no
+// function matches `marker` (callers that need to distinguish "not found"
+// from "found with zero calls" should call `wat_func_body` directly).
+pub fn count_op_calls(wat: String, marker: String, op_name: String) Int {
+  case wat_func_body(wat, marker) {
+    .Some(body) => {
+      n := 0
+      for line in body.split("\n") {
+        t := line.trim()
+        if t.starts_with("call ") and t.contains(op_name) {
+          n = n + 1
+        }
+      }
+      n
+    },
+    .None => 0,
+  }
+}
+
+// The reproduced pre-S4 insertion point: post-mutvec_region (S2), post-
+// builder_region, post-variant_specialize (8G) — the exact ANF' shape any
+// future S4 phase would consume. Fields named to match the brief: `prime` is
+// the post-builder_region ANF (what `link_program` calls `anf_prime`), `spec`
+// is the full specialize result (routes + the post-clone module), `builtins`
+// is threaded through for later tasks that need it alongside `spec`/`prime`.
+pub type S4Stage = .{
+  prime: AnfModule,
+  spec: variant_specialize.SpecializeResult,
+  builtins: BuiltinRegistry,
+}
+
+// Reproduces `link_program`'s pass order (codegen.tw:125-152) up to and
+// including `variant_specialize`, using only public entrypoints. Traps (via
+// `error`) on a compile failure — same convention as mutvec_region_suite's
+// `region_ids` — since every caller here is a test harness over a known-good
+// fixture, not a user-facing API.
+pub fn s4_stage(path: String) S4Stage {
+  art := case pipeline.compile_entry_path(path) {
+    .Ok(a) => a,
+    .Err(e) => error("compile failed: ${format_compile_error(e)}"),
+  }
+  b := art.builtins
+  anf_mutvec := mutvec_region.rewrite_module(art.opt, b)
+  anf_prime := builder_region.rewrite_module(anf_mutvec, b)
+
+  // Exact construction from codegen.tw:125.
+  sem := semantics
+    .make_prelude_optimizer_semantics(b)
+    .with_ref_fields(resolver.build_ref_field_table(art.env))
+  spec := variant_specialize.specialize_module_with_sem(anf_prime, b, sem)
+  .{ prime: anf_prime, spec, builtins: b }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("s4 mutvec harness")
+    .test(
+      "s4_stage compiles sieve_scratch and routes its set_at wrapper",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        try assert.ok(st.spec.routes.len() >= 1, "expected at least one variant route")
+        .Ok({})
+      },
+    )
+    .test(
+      "sieve_scratch's owned set_at clone call survives post-variant_specialize (inliner-fragility guard)",
+      fn() Result<Void, String> {
+        // S4's entire premise is that the routed `set_at` call survives as a
+        // plain call post-variant_specialize. The ANF inliner (and the
+        // in-progress closure-devirtualizer) sit near this pipeline slot and
+        // could later eat that call shape, silently turning S4 into a no-op
+        // with no test failure of its own. This test is independent of
+        // `s4_stage` / S4 itself, and asserts on the REAL compiler pipeline's
+        // WAT output (via `compile_fixture_wat`, i.e. `pipeline.emit_wat`),
+        // so a future optimizer change that breaks the premise fails here
+        // loudly instead of silently regressing a benchmark nobody watches.
+        wat := try compile_fixture_wat("sieve_scratch")
+        body := case wat_func_body(wat, "_run") {
+          .Some(b) => b,
+          .None => return .Err("run function not found in WAT"),
+        }
+        has_clone_call := body
+          .split("\n")
+          .any(fn(line) {
+            t := line.trim()
+            t.starts_with("call ") and t.contains("set_at__Bool")
+          })
+        try assert.ok(
+          has_clone_call,
+          "run's body must still call a set_at__Bool owned clone post-variant_specialize",
+        )
+        .Ok({})
+      },
+    )
+}
