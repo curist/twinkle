@@ -299,48 +299,33 @@ git commit -m "codegen(s4): wire inert interprocedural MutVec phase after varian
 
 ---
 
-### Task 5: HP-4 — MutVec-ABI decision input (clone param/return + call-result repr)
+### Task 5: HP-4 — MutVec-ABI decision input (decision-only; RESCOPED)
 
-Now let the accepted decision type the clone's param + return as `MutVec<fam>` and propagate the caller call-result slot repr. Still no caller-region rewrite of the *writes* (Task 7) — this task lands the ABI typing so signatures flip, verified at the WAT signature level. Because it changes emitted types, it rides the self-host gate.
+> **RESCOPED (controller ruling, 2026-08-27).** The original plan split "type the clone param/return `MutVec<fam>`" (Task 5) from "rewrite the clone body writes" (Task 7). Implementation proved this split UNSOUND: typing the ABI without rewriting the clone body ops (`set_unsafe`/`get`/`len`, boxed `Anyref`) to `mutvec_*` (unboxed) traps — `emit_coerce_stack` has no MutVec↔PVec bridge, so it emits a `ref.cast` that fails validation. The ABI typing + clone-body rewrite + caller producer-chain must land together and are therefore **all moved to Task 7**. Task 5 delivers only the **sound decision-computation subset**, deliberately **not wired** into emission.
 
-**Cross-stage plumbing (do this first):** `mutvec_repr` (`assign_mutvec_reprs`) runs in the backend **prepare** stage over `PreparedFunc`/`PreparedIR`, which is *downstream* of `link_program` where `S4Decision` is computed. So `S4Decision.abi_upgrades` must be **threaded from codegen into the prepare stage** — trace how `link_program`'s output reaches `prepare_codegen`/the backend and carry the upgrade table alongside it (a new field on the codegen→prepare hand-off, keyed by `clone_func`). This is real plumbing the design understates; budget a step for it.
+This task computes the ABI-upgrade decision (`S4Decision.abi_upgrades`) with the soundness guard, and stores it. It does **not** wire the decision into `mutvec_repr`/emission (that's Task 7), so emitted output is unchanged and the self-host fixed point holds. Tests are at the decision level (guard predicate + upgrade fields), **not** the WAT signature level. The signature-level WAT assertion moves to Task 7.
 
 **Files:**
-- Modify: `boot/compiler/backend/mutvec_repr.tw` (new MutVec-ABI decision input above `assign_mutvec_reprs`; do not extend the local-slot pass)
-- Modify: `boot/compiler/codegen/s4_phase.tw` (emit the ABI-upgrade records into `S4Decision`)
+- Modify: `boot/compiler/codegen/s4_phase.tw` (compute the ABI-upgrade records into `S4Decision`)
 - Test: `boot/tests/suites/s4_mutvec_suite.tw`
 
 **Interfaces:**
 - Consumes: `S4Decision.accepted`; `route.clone_func`/`clone_name`.
-- Produces: `s4_phase.S4AbiUpgrade = .{ clone_func: Int, param_slots: Vector<Int>, return_mutvec: Bool, fam: ElemRepr }`, carried on `S4Decision.abi_upgrades`; consumed by `mutvec_repr` to type those slots `MutVec<fam>` and the routed call-result slots at each caller site.
+- Produces: `s4_phase.S4AbiUpgrade = .{ clone_func: Int, param_slots: Vector<Int>, return_mutvec: Bool, fam: ElemRepr }`, carried on `S4Decision.abi_upgrades`. **Not consumed anywhere in this task** — Task 7 consumes it.
 
-- [ ] **Step 1: Discovery** — read `mutvec_repr.tw` header + `:223`/`:261` and record how `route_typed_vec` types a frozen-`PVec` producer result, so the new MutVec-return path is a sibling of that, not an edit to it.
+- [ ] **Step 1: Compute the decision + guard** — for each accepted region's clone, build an `S4AbiUpgrade` (`clone_func`, `param_slots`, `return_mutvec`, `fam` from the existing `ElemRepr` machinery). **Soundness guard:** emit an upgrade for a clone ONLY when EVERY routed owned site for that clone is in `accepted`; otherwise emit nothing for it (fallback; the partition/sibling case is Task 6). Store on `S4Decision.abi_upgrades`.
 
-- [ ] **Step 2: Write the signature-level failing test**
+- [ ] **Step 2: Decision-level tests (TDD)** — assert, on the `sieve_scratch` fixture via `run_s4`, that `abi_upgrades` contains the expected `S4AbiUpgrade` for the `set_at` clone (`fam` = Bool, `return_mutvec` true, `param_slots` names the threaded param), and that the guard suppresses the upgrade when a routed site is not accepted (fault-inject a missing accept). No WAT signature test here — that moves to Task 7.
 
-```twinkle
-.test("accepted sieve clone gets a MutVecBool param and result", fn() {
-  wat := compile_fixture_wat("sieve_scratch")   // emit_wat through the full pipeline
-  clone := wat_func_body(wat, "set_at__Bool").unwrap_or("")
-  try assert.true(clone.contains("MutVecBool"))          // param/result typed MutVec
-  try assert.true(!clone.contains("rt_arr__set_in_place")) // no persistent trie ABI
-  .Ok({})
-})
-```
-
-- [ ] **Step 3: Run (fail), implement the ABI-upgrade emission + `mutvec_repr` consumption** — for each accepted region's clone, mark param slots + return as `MutVec<fam>`; at each routed caller site, type the call-result slot `MutVec<fam>`. Guard: if any routed owned site for that clone is not in `accepted`, do **not** upgrade in place (defer to Task 6 partitioning) — for now, only upgrade when the clone's every routed site is accepted; otherwise leave persistent (fallback).
-
-- [ ] **Step 4: Run to verify the signature test passes.**
-
-- [ ] **Step 5: Full self-host gate (sequential) + commit**
+- [ ] **Step 3: Full self-host gate (sequential) + commit** — the decision is computed but NOT wired, so emitted output is unchanged and the self-host fixed point must still hold.
 
 ```bash
-target/twk fmt boot/compiler/backend/mutvec_repr.tw boot/compiler/codegen/s4_phase.tw && target/twk lint boot/main.tw
+target/twk fmt boot/compiler/codegen/s4_phase.tw && target/twk lint boot/main.tw
 make bundle-cli
 target/twk run boot/tests/main.tw 2>&1 | tail -3
 cargo test --release 2>&1 | tail -5
-git add boot/compiler/backend/mutvec_repr.tw boot/compiler/codegen/s4_phase.tw boot/tests/suites/s4_mutvec_suite.tw
-git commit -m "backend(s4): MutVec-ABI param/return/call-result decision input (HP-4)"
+git add boot/compiler/codegen/s4_phase.tw boot/tests/suites/s4_mutvec_suite.tw
+git commit -m "codegen(s4): MutVec-ABI upgrade decision input, deliberately not wired (HP-4)"
 ```
 
 ---
@@ -389,16 +374,22 @@ git commit -m "codegen(s4): sibling-clone route partitioning for mixed callers (
 
 ---
 
-### Task 7: End-to-end rewrite + parity gate
+### Task 7: End-to-end — ABI typing + clone-body rewrite + caller producer-chain + parity gate
 
-Turn on the caller-region + clone-body rewrite: `flags[i]`→`mutvec_get`, `flags = flags.set_at(...)`→ threaded `mutvec_set` across the call, `collect`→ stays `MutVec` (no freeze). Enforce zero in-loop `mutvec_freeze` (scratch) / exactly one (escape), correct results, and `sieve` reaching the `sieve_direct` floor.
+> **ABSORBED FROM TASK 5 (controller ruling, 2026-08-27).** Because typing a clone's param/return `MutVec<fam>` is unsound without simultaneously rewriting the clone body ops (`set_unsafe`/`get`/`len` → `mutvec_*`), this task now owns the **whole atomic sound unit**: (a) consume Task 5's `S4Decision.abi_upgrades` to type the clone param/return `MutVec<fam>` and the routed caller call-result slot (the wiring into `mutvec_repr`/emission that Task 5 deliberately left unwired); (b) rewrite the clone body's boxed ops to `mutvec_*`; (c) rewrite the caller region so `collect` stays a `MutVec` builder (no freeze for Scratch) and `flags[i]`→`mutvec_get`, threading `mutvec_set` across the call; (d) the WAT signature-level assertion moved here from Task 5. All of (a)–(d) land together or the intermediate state traps.
+
+Turn on the full flat path: clone param/return typed `MutVec<fam>`; clone body writes/reads use `mutvec_*`; `flags[i]`→`mutvec_get`; `flags = flags.set_at(...)`→ threaded `mutvec_set` across the call; `collect`→ stays `MutVec` (no freeze). Enforce zero in-loop `mutvec_freeze` (scratch) / exactly one (escape), correct results, and `sieve` reaching the `sieve_direct` floor. **This is the highest-risk task: the doc's headline failure mode (a per-call freeze/thaw that re-materializes O(n) each iteration → slower than today) surfaces here — the parity gate is what catches it.**
 
 **Files:**
+- Modify: `boot/compiler/backend/mutvec_repr.tw` (consume `abi_upgrades`: type clone param/return + routed caller call-result slot `MutVec<fam>`; sits above `assign_mutvec_reprs`, mirroring `route_typed_vec`'s frozen-PVec path — read `mutvec_repr.tw` header + `:223`/`:261` first). Thread `abi_upgrades` from where `run_s4` produces it to where `assign_mutvec_reprs` runs (both in the codegen prepare path — short hop).
 - Modify: `boot/compiler/codegen/s4_phase.tw` (apply the region + clone-body rewrite)
+- Modify: `boot/compiler/codegen/mutable_produce.tw` (non-interaction comment, Step 5)
 - Test: `boot/tests/suites/s4_mutvec_suite.tw`
 
 **Interfaces:**
-- Consumes: everything above. Produces: `S4Decision.module` now carries the rewritten caller region + clone body.
+- Consumes: `S4Decision.abi_upgrades` + `accepted` (Task 5). Produces: `S4Decision.module` carries the rewritten caller region + clone body, and the ABI typing is now wired into emission.
+
+- [ ] **Step 0: Signature-level test (moved from Task 5)** — after the rewrite lands, `compile_fixture_wat("sieve_scratch")`'s `set_at__Bool` clone body contains `MutVecBool` param/result AND does NOT contain `rt_arr__set_in_place`. Write this alongside Step 1's test; both must be green by Step 3.
 
 - [ ] **Step 1: Write the scratch parity + freeze-count test**
 
@@ -433,7 +424,7 @@ Expected: `sieve` checksum 669 and its ms now at/near `sieve_direct` (the flat f
 - [ ] **Step 7: `queens` unchanged + full self-host gate (sequential)**
 
 ```bash
-target/twk fmt boot/compiler/codegen/s4_phase.tw && target/twk lint boot/main.tw
+target/twk fmt boot/compiler/backend/mutvec_repr.tw boot/compiler/codegen/s4_phase.tw boot/compiler/codegen/mutable_produce.tw && target/twk lint boot/main.tw
 make bundle-cli
 target/twk run boot/tests/main.tw 2>&1 | tail -3
 cargo test --release 2>&1 | tail -5
@@ -444,7 +435,7 @@ Expected: all green; `queens` unchanged; `sieve` at parity.
 - [ ] **Step 8: Commit + update the design doc**
 
 ```bash
-git add boot/compiler/codegen/s4_phase.tw boot/tests/suites/s4_mutvec_suite.tw
+git add boot/compiler/backend/mutvec_repr.tw boot/compiler/codegen/s4_phase.tw boot/compiler/codegen/mutable_produce.tw boot/tests/suites/s4_mutvec_suite.tw
 git commit -m "codegen(s4): end-to-end flat-MutVec across the sieve set_at boundary — parity (HP-1..HP-5 slice 1)"
 ```
 Then update `docs/plans/interprocedural-mutvec.md` (mark slice 1 landed) and, per repo convention, remove its row from `docs/plans/README.md` only when the *whole* S4 plan is done — for slice 1, leave the row and note "slice 1 landed; param-sourced `nbody` next".
