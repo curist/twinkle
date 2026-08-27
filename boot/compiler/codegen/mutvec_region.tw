@@ -85,7 +85,10 @@ fn resolve_ids(b: BuiltinRegistry) OpIds {
 }
 
 // ── Definition map (local id -> its defining op), for producer classification ──
-fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+// `pub` so `s4_region.tw` (the post-builder_region producer recognizer) can
+// reuse this generic AST walker instead of duplicating it — it has no
+// family/suffix dependency, unlike the rest of this module's detector state.
+pub fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   case e {
     .Let(local, op, body) => {
       defs[local.id] = op
@@ -95,7 +98,7 @@ fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   }
 }
 
-fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+pub fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   case op {
     .AIf(_, t, e) => collect_defs(e, collect_defs(t, defs)),
     .AMatch(_, arms) => {

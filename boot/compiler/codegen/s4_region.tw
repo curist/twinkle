@@ -47,11 +47,20 @@
 //! Region discovery/rewrite (walking a function to find and lower a full S4
 //! region across a call boundary) is Task 2 — this module only adds the
 //! producer-shape recognizer.
+//!
+//! `collect_defs`/`collect_defs_in_op` (the local-id -> defining-op walk) are
+//! reused directly from `mutvec_region.tw` (made `pub` there for this) since
+//! they're a generic AST walker with no family/suffix dependency — no
+//! divergence from this module's needs, so no reason to duplicate them.
+//! `producer_of_op`/`traces_to_builder_new` below are NOT reused the same
+//! way: `mutvec_region`'s analogs are wired to its private, `suffix`-scoped
+//! `OpIds` and rewrite-only alias-set state, so they're re-derived here
+//! against this module's narrower `ProducerIds`.
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
+use compiler.anf.{AnfFunctionDef, AnfOp}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
-use compiler.codegen.mutvec_region.{MutVecProducer}
+use compiler.codegen.mutvec_region.{MutVecProducer, collect_defs}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.elem_family.{mutvec_families}
 
@@ -91,35 +100,6 @@ fn is_typed_freeze(id: Int, ids: ProducerIds) Bool {
     }
   }
   false
-}
-
-// ── Definition map (local id -> its defining op) — mirrors
-// `mutvec_region.collect_defs` (private there), needed here to walk the
-// producer's def chain from a bare `func`/`handle` pair. ──
-fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
-  case e {
-    .Let(local, op, body) => {
-      defs[local.id] = op
-      collect_defs(body, collect_defs_in_op(op, defs))
-    },
-    _ => defs,
-  }
-}
-
-fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
-  case op {
-    .AIf(_, t, e) => collect_defs(e, collect_defs(t, defs)),
-    .AMatch(_, arms) => {
-      cur := defs
-      for arm in arms {
-        cur = collect_defs(arm.body, cur)
-      }
-      cur
-    },
-    .ALoop(b) => collect_defs(b, defs),
-    .ADefer(b) => collect_defs(b, defs),
-    _ => defs,
-  }
 }
 
 // Trace a builder-chain argument back through its `AInit` alias hops to a

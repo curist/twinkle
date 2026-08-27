@@ -30,14 +30,15 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutvec_region
 use compiler.codegen.s4_region
 use compiler.codegen.variant_specialize
-use compiler.core_ir.{LocalId}
+use compiler.core_ir.{FuncId, LocalId, Param}
+use compiler.mono_type.{MonoType}
 use compiler.opt.semantics as semantics
 use compiler.pipeline
 use compiler.resolver
@@ -203,6 +204,57 @@ fn producer_name(p: mutvec_region.MutVecProducer) String {
   }
 }
 
+// Hand-built (not fixture-compiled) negative-case functions: unlike the
+// positive `sieve_scratch` case, "an unrelated call result" can't be located
+// structurally in a real compiled function without already knowing which
+// callee ids are builder/make ops (the freeze call and an arbitrary call can
+// both be 1-arg) — hand-constructing the ANF sidesteps that and pins the
+// exact shape being asserted on.
+// `handle` is a bare function parameter — never appears as a `Let` binding,
+// so `classify_producer_prime` must reject it (no def at all).
+fn synth_param_func() AnfFunctionDef {
+  h := LocalId.{ id: 1 }
+  .{
+    func_id: FuncId.{ id: 9001 },
+    name: "synth_param",
+    is_init: false,
+    params: [Param.{ local: h, ty: MonoType.Vector(MonoType.Bool) }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Return(.Some(Atom.ALocal(h))),
+    return_ty: MonoType.Vector(MonoType.Bool),
+  }
+}
+
+// `handle` binds (through one `AInit` passthrough copy, same shape as a real
+// collect/make handle) to the result of an arbitrary 0-arg call to a callee
+// unrelated to any mutvec producer op. 0 args deliberately fails BOTH
+// `vector$make`'s (2-arg) and `vector$builder_freeze`'s (1-arg) arity guards
+// unconditionally, so this is callee-id-independent — no risk of an
+// accidental collision with whatever ids a given `BuiltinRegistry` resolves
+// `vector$make`/`vector$builder_new`/`vector$builder_freeze` to.
+fn synth_call_result_func() AnfFunctionDef {
+  call_res := LocalId.{ id: 1 }
+  handle := LocalId.{ id: 2 }
+  body := AnfExpr.Let(
+    call_res,
+    AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 999999 }), []),
+    AnfExpr.Let(
+      handle,
+      AnfOp.AInit(Atom.ALocal(call_res)),
+      AnfExpr.Return(.Some(Atom.ALocal(handle))),
+    ),
+  )
+  .{
+    func_id: FuncId.{ id: 9002 },
+    name: "synth_call_result",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Vector(MonoType.Bool),
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
@@ -214,6 +266,27 @@ pub fn suite() runner.Suite {
         handle := flags_handle(run_fn)
         prod := s4_region.classify_producer_prime(run_fn, handle, st.builtins)
         try assert.equal(producer_name(prod.unwrap_or(.MakeSeed)), "collect")
+        .Ok({})
+      },
+    )
+    .test(
+      "classify_producer_prime rejects a function-parameter handle",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        f := synth_param_func()
+        prod := s4_region.classify_producer_prime(f, f.params[0].local, st.builtins)
+        try assert.ok(prod.is_none(), "expected .None for a parameter-sourced handle")
+        .Ok({})
+      },
+    )
+    .test(
+      "classify_producer_prime rejects a handle bound to an unrelated call result",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        f := synth_call_result_func()
+        handle := LocalId.{ id: 2 }
+        prod := s4_region.classify_producer_prime(f, handle, st.builtins)
+        try assert.ok(prod.is_none(), "expected .None for an unrelated call-result handle")
         .Ok({})
       },
     )
