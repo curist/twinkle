@@ -30,12 +30,14 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
-use compiler.anf.{AnfModule}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutvec_region
+use compiler.codegen.s4_region
 use compiler.codegen.variant_specialize
+use compiler.core_ir.{LocalId}
 use compiler.opt.semantics as semantics
 use compiler.pipeline
 use compiler.resolver
@@ -138,9 +140,83 @@ pub fn s4_stage(path: String) S4Stage {
   .{ prime: anf_prime, spec, builtins: b }
 }
 
+// Locate a function by name in an ANF module (copied from
+// builder_region_suite.tw — keep in sync if it changes).
+fn find_func(anf: AnfModule, name: String) AnfFunctionDef {
+  for f in anf.functions {
+    if f.name == name {
+      return f
+    }
+  }
+  error("function not found: ${name}")
+}
+
+// The local bound to `flags` in `run`, found structurally rather than by a
+// magic local id: `flags` is the only vector indexed in the fixture
+// (`flags[i]`), so the base of the first array-index read identifies it,
+// independent of exactly how many ANF locals earlier passes allocate.
+fn flags_handle(f: AnfFunctionDef) LocalId {
+  case find_index_base(f.body) {
+    .Some(l) => l,
+    .None => error("no array-index op found to locate the flags handle"),
+  }
+}
+
+fn find_index_base(e: AnfExpr) LocalId? {
+  case e {
+    .Let(_, op, body) => case find_index_base_op(op) {
+      .Some(l) => .Some(l),
+      .None => find_index_base(body),
+    },
+    _ => .None,
+  }
+}
+
+fn find_index_base_op(op: AnfOp) LocalId? {
+  case op {
+    .AIndex(.ALocal(base), _, .Array, _) => .Some(base),
+    .AIf(_, t, e) => case find_index_base(t) {
+      .Some(l) => .Some(l),
+      .None => find_index_base(e),
+    },
+    .AMatch(_, arms) => {
+      out: LocalId? = .None
+      for arm in arms {
+        out = case out {
+          .Some(l) => .Some(l),
+          .None => find_index_base(arm.body),
+        }
+      }
+      out
+    },
+    .ALoop(b) => find_index_base(b),
+    .ADefer(b) => find_index_base(b),
+    _ => .None,
+  }
+}
+
+fn producer_name(p: mutvec_region.MutVecProducer) String {
+  case p {
+    .CollectSeed => "collect",
+    .MakeSeed => "make",
+    .ArrayLitSeed => "arraylit",
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
+    .test(
+      "classify_producer_prime recognizes a post-builder_region collect",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        run_fn := find_func(st.prime, "run")
+        handle := flags_handle(run_fn)
+        prod := s4_region.classify_producer_prime(run_fn, handle, st.builtins)
+        try assert.equal(producer_name(prod.unwrap_or(.MakeSeed)), "collect")
+        .Ok({})
+      },
+    )
     .test(
       "s4_stage compiles sieve_scratch and routes its set_at wrapper",
       fn() Result<Void, String> {

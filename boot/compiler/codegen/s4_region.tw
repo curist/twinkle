@@ -1,0 +1,186 @@
+//! S4 (interprocedural MutVec) — post-`builder_region` producer recognizer.
+//!
+//! Discovery (Step 1, recorded per the task brief): read `builder_region.tw`
+//! and `builder_region_detect.tw`, then confirmed against a scratch dump of
+//! `s4_stage(fixture).prime` (`ir_print.render_anf_module`) for
+//! `boot/tests/fixtures/cfg/s4/sieve_scratch.tw`'s `run` function. Findings:
+//!
+//!   - A `collect` lowers to a boxed builder chain at ANF-lowering time (Core
+//!     IR -> ANF), not via `builder_region`'s fold-to-builder promotion.
+//!     `builder_region`'s detector (`fold_chunk`) recognizes a DIFFERENT
+//!     shape — a persistent `acc = acc.append(x)` / `.concat(chunk)` fold
+//!     loop written by hand — and promotes THAT to a builder chain. A
+//!     `collect` never has that shape to begin with (it is emitted directly
+//!     as a builder chain), so `builder_region.rewrite_module` is a no-op on
+//!     it: `sieve_scratch.tw`'s raw (`--anf`), pre-`builder_region`
+//!     (`--opt` / `art.opt`), and post-`builder_region`
+//!     (`s4_stage(...).prime`) ANF for the `flags` collect are BYTE
+//!     IDENTICAL.
+//!   - The concrete op sequence (boxed/generic — `vector$builder_new` /
+//!     `vector$builder_push` / `vector$builder_freeze` — NOT a typed family
+//!     variant; `Vector<Bool>` doesn't hit typed-builder routing):
+//!       L_builder = call vector$builder_new()                   // 0 args
+//!       ... loop ... call vector$builder_push(L_builder, elem)  // 2 args, Void result
+//!       L_frozen  = call vector$builder_freeze(L_builder)       // 1 arg
+//!       L_handle  = init L_frozen                                // AInit passthrough
+//!     The handle local (the source-level `flags` variable) binds to the
+//!     freeze result through exactly one `AInit` hop — the same shape
+//!     `mutvec_region.classify_producer` already expects
+//!     (`mutvec_region.tw:139`).
+//!   - What this module exists for, then, is not a different ANF shape but a
+//!     standalone entrypoint: `mutvec_region`'s recognizer is wired to its
+//!     own private, rewrite-scoped `OpIds` (built for its own detect/rewrite
+//!     pass, keyed to one element-family `suffix` at a time) and isn't
+//!     reusable post-`builder_region` without threading a `BuiltinRegistry`
+//!     through a new, narrower entrypoint. Every builtin `FuncId` in a
+//!     compiled module is assigned per-compilation (only-used builtins are
+//!     numbered in use order — this fixture's builder calls landed on
+//!     `Fn31`/`Fn32`/`Fn33`, not any fixed id), so a `BuiltinRegistry` is
+//!     required to resolve `vector$builder_new`/`_push`/`_freeze`/
+//!     `vector$make` to this compilation's actual ids. `classify_producer_prime`
+//!     therefore takes a `BuiltinRegistry` alongside `func`/`handle` — wider
+//!     than the brief's illustrative 2-arg call, which elides it — and
+//!     `s4_stage`'s `builtins` field (in `s4_mutvec_suite.tw`) exists exactly
+//!     for this: "threaded through for later tasks that need it alongside
+//!     `spec`/`prime`".
+//!
+//! Region discovery/rewrite (walking a function to find and lower a full S4
+//! region across a call boundary) is Task 2 — this module only adds the
+//! producer-shape recognizer.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_region.{MutVecProducer}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.elem_family.{mutvec_families}
+
+// Builtin FuncIds this recognizer keys on. Deliberately narrower than
+// `mutvec_region`'s own (private) `OpIds`: this module only classifies
+// PRODUCERS (not in-region set/push/get/len ops), so it resolves just the
+// ids a producer shape can reference. `typed_freeze` lists every registered
+// mutvec family's `vector$builder_freeze<suffix>` id, so a promoted typed
+// builder freeze counts as a collect producer too, even though today's
+// fixtures only exercise the boxed form (see the discovery notes above).
+type ProducerIds = .{
+  make: FuncId,
+  builder_new: FuncId,
+  freeze_box: FuncId,
+  typed_freeze: Vector<Int>,
+}
+
+fn typed_freeze_ids(b: BuiltinRegistry) Vector<Int> {
+  collect f in mutvec_families() {
+    builtins.id(b, "vector$builder_freeze${f.suffix}").id
+  }
+}
+
+fn resolve_producer_ids(b: BuiltinRegistry) ProducerIds {
+  .{
+    make: builtins.id(b, "vector$make"),
+    builder_new: builtins.id(b, "vector$builder_new"),
+    freeze_box: builtins.id(b, "vector$builder_freeze"),
+    typed_freeze: typed_freeze_ids(b),
+  }
+}
+
+fn is_typed_freeze(id: Int, ids: ProducerIds) Bool {
+  for v in ids.typed_freeze {
+    if v == id {
+      return true
+    }
+  }
+  false
+}
+
+// ── Definition map (local id -> its defining op) — mirrors
+// `mutvec_region.collect_defs` (private there), needed here to walk the
+// producer's def chain from a bare `func`/`handle` pair. ──
+fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+  case e {
+    .Let(local, op, body) => {
+      defs[local.id] = op
+      collect_defs(body, collect_defs_in_op(op, defs))
+    },
+    _ => defs,
+  }
+}
+
+fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+  case op {
+    .AIf(_, t, e) => collect_defs(e, collect_defs(t, defs)),
+    .AMatch(_, arms) => {
+      cur := defs
+      for arm in arms {
+        cur = collect_defs(arm.body, cur)
+      }
+      cur
+    },
+    .ALoop(b) => collect_defs(b, defs),
+    .ADefer(b) => collect_defs(b, defs),
+    _ => defs,
+  }
+}
+
+// Trace a builder-chain argument back through its `AInit` alias hops to a
+// zero-arg `builder_new` call. Mirrors the shape of `mutvec_region`'s
+// private `trace_builder` (`mutvec_region.tw:613`) — same recursion, but
+// classification only needs a yes/no answer, not the alias set (that's
+// rewrite-only state Task 2 will need, not Task 1).
+fn traces_to_builder_new(cur: Int, defs: Dict<Int, AnfOp>, ids: ProducerIds) Bool {
+  case defs.get(cur) {
+    .Some(op) => case op {
+      .AInit(.ALocal(prev)) => traces_to_builder_new(prev.id, defs, ids),
+      .ACall(.AGlobalFunc(g), a) => g.id == ids.builder_new.id and a.len() == 0,
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
+// Classify a producer op directly: a builder freeze (collect) whose builder
+// lineage traces back to a `builder_new` with no foreign aliasing, a
+// `Vector.make` call, or an array literal. Mirrors
+// `mutvec_region.producer_of_op`.
+fn producer_of_op(op: AnfOp, defs: Dict<Int, AnfOp>, ids: ProducerIds) MutVecProducer? {
+  case op {
+    .AArrayLit(_) => .Some(.ArrayLitSeed),
+    .ACall(.AGlobalFunc(f), args) => if f.id == ids.make.id and args.len() == 2 {
+      .Some(.MakeSeed)
+    } else if (f.id == ids.freeze_box.id or is_typed_freeze(f.id, ids)) and args.len() == 1 {
+      case args[0] {
+        .ALocal(builder) => if traces_to_builder_new(builder.id, defs, ids) {
+          .Some(.CollectSeed)
+        } else {
+          .None
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+// Post-`builder_region` producer recognizer: is `handle` a caller-born value
+// in `func` — a collect (builder chain), a `Vector.make` call, or an array
+// literal — or is it foreign (a function parameter or some other call's
+// result)? Mirrors `mutvec_region.classify_producer`'s one-`AInit`-hop shape:
+// the handle binds to its producer either directly, or through exactly one
+// passthrough copy (both `collect` and `Vector.make` bind a temp that an
+// `AInit` re-binds to the source-level handle local).
+pub fn classify_producer_prime(func: AnfFunctionDef, handle: LocalId, b: BuiltinRegistry) MutVecProducer? {
+  ids := resolve_producer_ids(b)
+  defs := collect_defs(func.body, Dict.new())
+  case defs.get(handle.id) {
+    .Some(op) => case op {
+      .AInit(.ALocal(src)) => case defs.get(src.id) {
+        .Some(srcop) => producer_of_op(srcop, defs, ids),
+        .None => .None,
+      },
+      _ => producer_of_op(op, defs, ids),
+    },
+    .None => .None, // parameter or undefined — not a locally-born owned value
+  }
+}
