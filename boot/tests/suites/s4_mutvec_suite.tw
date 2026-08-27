@@ -204,6 +204,13 @@ fn producer_name(p: mutvec_region.MutVecProducer) String {
   }
 }
 
+fn exit_is_scratch(k: s4_region.S4Exit) Bool {
+  case k {
+    .Scratch => true,
+    .EscapeReturn => false,
+  }
+}
+
 // Hand-built (not fixture-compiled) negative-case functions: unlike the
 // positive `sieve_scratch` case, "an unrelated call result" can't be located
 // structurally in a real compiled function without already knowing which
@@ -325,6 +332,33 @@ pub fn suite() runner.Suite {
           has_clone_call,
           "run's body must still call a set_at__Bool owned clone post-variant_specialize",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "detect_call_thread_regions finds the sieve set_at thread",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        run_fn := find_func(st.prime, "run")
+        regions := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        r := regions[0]
+        try assert.equal(producer_name(r.producer), "collect")
+        try assert.equal(r.thread_calls.len(), 1) // the single set_at clone call
+        try assert.is_true(exit_is_scratch(r.exit_kind)) // returns count, not flags
+        .Ok({})
+      },
+    )
+    .test(
+      "detect_call_thread_regions finds the sieve_escape set_at thread as an escaping exit",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_escape"))
+        run_fn := find_func(st.prime, "run")
+        regions := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        r := regions[0]
+        try assert.equal(r.thread_calls.len(), 1)
+        try assert.equal(exit_is_scratch(r.exit_kind), false)
         .Ok({})
       },
     )

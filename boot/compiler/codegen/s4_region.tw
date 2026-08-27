@@ -44,9 +44,31 @@
 //!     for this: "threaded through for later tasks that need it alongside
 //!     `spec`/`prime`".
 //!
-//! Region discovery/rewrite (walking a function to find and lower a full S4
-//! region across a call boundary) is Task 2 — this module only adds the
-//! producer-shape recognizer.
+//! Region discovery (walking a function to find a producer-rooted handle
+//! threaded through one or more routed owned-clone calls) is added below.
+//! Verifying the handoff against the callee's own summary and lowering a
+//! claimed region to mutvec ops is a separate, later pass.
+//!
+//! `detect_call_thread_regions` route-site matching: `VariantRoute.route_sites`
+//! (`variant_route.tw`) holds `vid.site_key(caller_func_id, call_result_local_id)`
+//! keys — confirmed against `variant_specialize.tw`'s own call-target rewrite
+//! (`rewrite_op`, `variant_specialize.tw:663-674`), which looks up
+//! `site_to_clone.get(vid.site_key(caller, result.id))` to decide whether to
+//! retarget a call. That rewrite runs INSIDE `variant_specialize_module_with_sem`
+//! itself — the `func: AnfFunctionDef` this module's `detect_call_thread_regions`
+//! receives is `s4_stage`'s `prime` (pre-specialize: `builder_region`'s output,
+//! the same pre-clone module `collect_groups` recorded `route_sites` against), so
+//! its call targets are still the GENERIC callee, not the clone. Reconstructing
+//! `site_to_clone` from `spec.routes` (`route_sites[i] -> clone_func`) and keying
+//! on `vid.site_key(func.func_id.id, call_result_local.id)` — exactly mirroring
+//! `rewrite_op`'s own lookup — identifies a routed call directly against `func`
+//! without needing `spec.anf`'s post-rewrite tree at all. This was preferred over
+//! matching a call's target `FuncId` against `route.clone_func`: that check only
+//! works against the POST-rewrite function body (`spec.anf`), which would require
+//! locating `func`'s counterpart there by `func_id` and trusting structural
+//! (local-id) correspondence across the rewrite — an extra hop the site-key
+//! table sidesteps, and one already proven correct by `variant_specialize.tw`'s
+//! own use of it for the identical purpose.
 //!
 //! `collect_defs`/`collect_defs_in_op` (the local-id -> defining-op walk) are
 //! reused directly from `mutvec_region.tw` (made `pub` there for this) since
@@ -57,12 +79,15 @@
 //! `OpIds` and rewrite-only alias-set state, so they're re-derived here
 //! against this module's narrower `ProducerIds`.
 
-use compiler.anf.{AnfFunctionDef, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
+use compiler.builder_region_detect.{any_arg_is_local, atom_is_local, op_references_deep}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutvec_region.{MutVecProducer, collect_defs}
+use compiler.codegen.variant_specialize
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.elem_family.{mutvec_families}
+use compiler.variant_id as vid
 
 // Builtin FuncIds this recognizer keys on. Deliberately narrower than
 // `mutvec_region`'s own (private) `OpIds`: this module only classifies
@@ -163,4 +188,323 @@ pub fn classify_producer_prime(func: AnfFunctionDef, handle: LocalId, b: Builtin
     },
     .None => .None, // parameter or undefined — not a locally-born owned value
   }
+}
+
+// ── Call-thread region discovery ──────────────────────────────────────────
+pub type S4Exit = { Scratch, EscapeReturn }
+
+// A claimed producer-rooted call-thread region: `handle` is a caller-born
+// producer (per `classify_producer_prime`) threaded through one or more
+// routed owned-clone calls, with the clone's result rebound straight back
+// onto `handle` each time (the loop-carried shape). `thread_calls` holds the
+// call-result local id of each such routed call, in program order.
+// `exit_kind` distinguishes the two claimable shapes: `Scratch` when `handle`
+// never reaches a top-level terminal (a pure reduction — e.g. `sieve_scratch`
+// returns `count`, not `flags`) and `EscapeReturn` when it is returned exactly
+// once at the top level (e.g. `sieve_escape`).
+pub type S4Region = .{
+  handle: LocalId,
+  producer: MutVecProducer,
+  thread_calls: Vector<Int>,
+  exit_kind: S4Exit,
+}
+
+// Every call-site key routed to an owned clone, flattened out of
+// `spec.routes` (`route_sites[i] -> clone_func`). Built once per
+// `detect_call_thread_regions` call; a plain reconstruction of the same table
+// `variant_specialize.tw`'s own `rewrite_op` builds and looks up call-target
+// rewrites against (see the module-header note above).
+fn route_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for r in spec.routes {
+    for sk in r.route_sites {
+      out[sk] = r.clone_func
+    }
+  }
+  out
+}
+
+// Every local id that is the *source* of an `AAssign(handle, ALocal(src))`
+// rebind somewhere in `e` — i.e. a candidate call-result local for the
+// loop-carried thread-call shape. Precomputed ahead of the main use-scan so a
+// routed call, visited at ITS OWN `Let`-binding site (the call-result local,
+// not `handle`), can tell "my result flows back into `handle`" without
+// needing to look ahead in a single forward walk.
+fn collect_rebind_sources(e: AnfExpr, handle: LocalId, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case e {
+    .Let(local, op, body) => collect_rebind_sources(
+      body,
+      handle,
+      collect_rebind_sources_in_op(op, handle, out),
+    ),
+    _ => out,
+  }
+}
+
+fn collect_rebind_sources_in_op(op: AnfOp, handle: LocalId, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .AAssign(target, atom) => if target.id == handle.id {
+      case atom {
+        .ALocal(src) => {
+          out[src.id] = true
+          out
+        },
+        _ => out,
+      }
+    } else {
+      out
+    },
+    .AIf(_, t, e) => collect_rebind_sources(e, handle, collect_rebind_sources(t, handle, out)),
+    .AMatch(_, arms) => {
+      cur := out
+      for arm in arms {
+        cur = collect_rebind_sources(arm.body, handle, cur)
+      }
+      cur
+    },
+    .ALoop(b) => collect_rebind_sources(b, handle, out),
+    .ADefer(b) => collect_rebind_sources(b, handle, out),
+    _ => out,
+  }
+}
+
+// Threaded context for the use-scan below: everything that rides unchanged
+// through the walk (the def map, the route-site table, the precomputed
+// rebind sources, the caller's own func id, the resolved `vector$len` id)
+// bundled so calls read as inherent-method steps (`ctx.scan_uses(...)`).
+type ScanCtx = .{
+  handle: LocalId,
+  defs: Dict<Int, AnfOp>,
+  site_to_clone: Dict<Int, Int>,
+  rebind_sources: Dict<Int, Bool>,
+  func_id: Int,
+  len_id: Int,
+}
+
+// Is `src` the call-result local of a call routed to an owned clone (its
+// call-site key is in `ctx.site_to_clone`) that took `ctx.handle` as one of
+// its arguments? This is the one place route membership is actually checked
+// — the paired `AAssign(handle, ALocal(src))` visit (see `classify_leaf_use`)
+// defers to it instead of re-deriving the site key itself.
+fn is_routed_thread_source(ctx: ScanCtx, src: LocalId) Bool {
+  case ctx.defs.get(src.id) {
+    .Some(op) => case op {
+      .ACall(.AGlobalFunc(_), args) => case ctx.site_to_clone.get(vid.site_key(ctx.func_id, src.id)) {
+        .Some(_clone_func) => any_arg_is_local(args, ctx.handle),
+        .None => false,
+      },
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
+// ── Handle-use scan (sound-by-rejection, mirrors `mutvec_region`'s S2 scan) ──
+type UseScan = .{ supported: Bool, thread_calls: Vector<Int>, exit_count: Int }
+
+fn empty_use_scan() UseScan {
+  .{ supported: true, thread_calls: [], exit_count: 0 }
+}
+
+fn reject(s: UseScan) UseScan {
+  .{ supported: false, thread_calls: s.thread_calls, exit_count: s.exit_count }
+}
+
+fn record_thread_call(s: UseScan, call_res: Int) UseScan {
+  .{
+    supported: s.supported,
+    thread_calls: s.thread_calls.append(call_res),
+    exit_count: s.exit_count,
+  }
+}
+
+fn bump_exit(s: UseScan) UseScan {
+  .{ supported: s.supported, thread_calls: s.thread_calls, exit_count: s.exit_count + 1 }
+}
+
+fn scan_uses(ctx: ScanCtx, e: AnfExpr, s: UseScan) UseScan {
+  ctx.scan_uses_at(e, s, true)
+}
+
+fn scan_uses_at(ctx: ScanCtx, e: AnfExpr, s: UseScan, terminal_exit_ok: Bool) UseScan {
+  case e {
+    .Let(local, op, body) => {
+      s2 := ctx.scan_use_op(op, local, s)
+      ctx.scan_uses_at(body, s2, terminal_exit_ok)
+    },
+    .Atom(a) => if atom_is_local(a, ctx.handle) {
+      if terminal_exit_ok {
+        s.bump_exit()
+      } else {
+        s.reject()
+      }
+    } else {
+      s
+    },
+    .Return(.Some(a)) => if atom_is_local(a, ctx.handle) {
+      if terminal_exit_ok {
+        s.bump_exit()
+      } else {
+        s.reject()
+      }
+    } else {
+      s
+    },
+    .Return(.None) => s,
+    // A `break value` carrying the handle is a second, non-freezable
+    // publication path — reject the whole region.
+    .Break(.Some(a)) => if atom_is_local(a, ctx.handle) {
+      s.reject()
+    } else {
+      s
+    },
+    .Break(.None) => s,
+    .Continue => s,
+  }
+}
+
+fn scan_use_op(ctx: ScanCtx, op: AnfOp, local: LocalId, s: UseScan) UseScan {
+  case op {
+    // Control flow: never a direct use of the handle itself (aside from the
+    // predicate/scrutinee, checked below); recurse into sub-exprs with
+    // `terminal_exit_ok=false` — a branch- or loop-carried exit is not the
+    // single top-level terminal this region shape claims.
+    .AIf(cnd, t, e) => {
+      s0 := if atom_is_local(cnd, ctx.handle) {
+        s.reject()
+      } else {
+        s
+      }
+      ctx.scan_uses_at(e, ctx.scan_uses_at(t, s0, false), false)
+    },
+    .AMatch(scrut, arms) => {
+      s0 := if atom_is_local(scrut, ctx.handle) {
+        s.reject()
+      } else {
+        s
+      }
+      cur := s0
+      for arm in arms {
+        cur = ctx.scan_uses_at(arm.body, cur, false)
+      }
+      cur
+    },
+    .ALoop(body) => ctx.scan_uses_at(body, s, false),
+    .ADefer(body) => ctx.scan_uses_at(body, s, false),
+    // Leaf ops: only classify when this op references the handle at all.
+    _ => if op_references_deep(op, ctx.handle) {
+      ctx.classify_leaf_use(op, local, s)
+    } else {
+      s
+    },
+  }
+}
+
+fn classify_leaf_use(ctx: ScanCtx, op: AnfOp, local: LocalId, s: UseScan) UseScan {
+  case op {
+    // The loop-carried rebind: `handle = <call result>`. Supported only when
+    // the source call is a routed owned-clone call that took `handle` as an
+    // argument; any other rebind source is an unsupported shape.
+    .AAssign(target, atom) => if target.id == ctx.handle.id {
+      case atom {
+        .ALocal(src) => if ctx.is_routed_thread_source(src) {
+          s.record_thread_call(src.id)
+        } else {
+          s.reject()
+        },
+        _ => s.reject(),
+      }
+    } else {
+      // `handle` flowing INTO a different local via assign is an alias escape.
+      s.reject()
+    },
+    // `handle` passed as an argument to a global-func call: supported only
+    // when this call's own result is later rebound onto `handle` (checked via
+    // `rebind_sources`, precomputed over the whole body) — the routing itself
+    // is validated once, at that paired `AAssign` visit above. A call whose
+    // result is never reclaimed is a plain escape (handle handed to another
+    // owned-clone call site, or a call site that isn't routed at all). The
+    // one exception is a `vector$len` read, an in-region use like `AIndex`.
+    .ACall(.AGlobalFunc(g), args) => if g.id == ctx.len_id
+      and args.len() == 1 and atom_is_local(args[0], ctx.handle) {
+      s
+    } else if ctx.rebind_sources.has(local.id) {
+      s
+    } else {
+      s.reject()
+    },
+    // Any other callee form (closure/local callee) carrying the handle.
+    .ACall(_, _) => s.reject(),
+    // In-region read: `handle[idx]` with the index itself not the handle.
+    .AIndex(base, idx, .Array, _) => if atom_is_local(base, ctx.handle)
+      and !atom_is_local(idx, ctx.handle) {
+      s
+    } else {
+      s.reject()
+    },
+    // Stored into a record/variant/array, captured by a closure, copied by an
+    // `AInit` alias, wrapped, etc. — escape.
+    _ => s.reject(),
+  }
+}
+
+fn eligible_region(
+  func: AnfFunctionDef,
+  handle: LocalId,
+  producer: MutVecProducer,
+  defs: Dict<Int, AnfOp>,
+  site_to_clone: Dict<Int, Int>,
+  len_id: Int,
+) S4Region? {
+  rebind_sources := collect_rebind_sources(func.body, handle, Dict.new())
+  ctx := ScanCtx.{ handle, defs, site_to_clone, rebind_sources, func_id: func.func_id.id, len_id }
+  scan := ctx.scan_uses(func.body, empty_use_scan())
+  if !scan.supported {
+    return .None
+  }
+
+  // The defining shape: threaded through at least one routed owned-clone
+  // call, and at most one top-level terminal carries it back out.
+  if scan.thread_calls.len() < 1 {
+    return .None
+  }
+  if scan.exit_count > 1 {
+    return .None
+  }
+  exit_kind: S4Exit = if scan.exit_count == 1 {
+    .EscapeReturn
+  } else {
+    .Scratch
+  }
+  .Some(S4Region.{ handle, producer, thread_calls: scan.thread_calls, exit_kind })
+}
+
+// Find every producer-rooted call-thread region in `func`: a caller-born
+// producer handle (per `classify_producer_prime`) threaded through one or
+// more routed owned-clone calls (per `spec.routes`), with the loop-carried
+// rebind coming back from those calls and no other unsupported use. Program
+// order (candidate handles are walked in first-definition order); disjoint
+// from S2's local-write regions (`mutvec_region.detect_regions`), which key
+// on an in-function `vector$set_unsafe` call rather than a routed call to
+// another function.
+pub fn detect_call_thread_regions(
+  func: AnfFunctionDef,
+  spec: variant_specialize.SpecializeResult,
+  b: BuiltinRegistry,
+) Vector<S4Region> {
+  defs := collect_defs(func.body, Dict.new())
+  site_to_clone := route_site_targets(spec)
+  len_id := builtins.id(b, "vector$len").id
+  regions: Vector<S4Region> = []
+  for id, _op in defs {
+    handle := LocalId.{ id }
+    case classify_producer_prime(func, handle, b) {
+      .Some(producer) => case eligible_region(func, handle, producer, defs, site_to_clone, len_id) {
+        .Some(r) => regions = .append(r),
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  regions
 }
