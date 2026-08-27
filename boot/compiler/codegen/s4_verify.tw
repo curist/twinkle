@@ -399,9 +399,17 @@ fn caller_alias_op(op: AnfOp, handle: LocalId) Bool {
 
 // ── Top-level verifier ─────────────────────────────────────────────────────
 // Verify a discovered call-thread region is safe to keep flat across its routed
-// owned-clone call(s). `func` is the caller (pre-clone `prime`); `spec` supplies
-// the post-clone module (`spec.anf`) and routes; `b` resolves per-compilation
-// builtin ids. Reject-by-default: the first failing condition names the reason.
+// owned-clone call(s). `func` is the caller: production (`s4_phase.run_s4`)
+// passes the POST-`variant_specialize` copy from `spec.anf` (the same module
+// `spec` itself supplies, alongside routes); some tests instead pass the
+// pre-clone `prime` copy. Both are valid inputs — every routing lookup here
+// and in `s4_region.detect_call_thread_regions` keys purely on
+// `vid.site_key(func_id, call_result_local_id)` against a table built from
+// `spec.routes`, never on a call op's target `FuncId`, and `variant_specialize`'s
+// in-place call-target retargeting changes neither a caller's `func_id` nor its
+// locals' ids — so the two copies of `func` are equivalent for this verifier's
+// purposes. `b` resolves per-compilation builtin ids. Reject-by-default: the
+// first failing condition names the reason.
 //
 // NOTE: the brief's illustrative signature is `verify_region(region, func,
 // spec)`; a `BuiltinRegistry` is threaded as a fourth argument (needed to

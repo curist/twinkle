@@ -699,4 +699,46 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    // Post-rewrite-scan equivalence: Task 2's own test
+    // ("detect_call_thread_regions finds the sieve set_at thread", above)
+    // asserts this exact region shape by scanning the PRE-rewrite `prime`
+    // copy of `run`. `run_s4` (production) scans the POST-rewrite `spec.anf`
+    // copy instead (see the design note in s4_phase.tw / the Task 4 report:
+    // routing is resolved purely by `vid.site_key(func_id, call_result_id)`
+    // lookups into a table built from `spec.routes`, which is invariant to
+    // the call-target retargeting `variant_specialize` performs in place).
+    // This test locks that equivalence down with real assertions instead of
+    // just a non-zero count, so a future change that breaks it on the
+    // post-rewrite path — while leaving the prime-based test green — fails
+    // loudly here.
+    .test(
+      "run_s4 finds the same sieve_scratch region shape via the post-rewrite path",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.accepted.len(), 1)
+        r := dec.accepted[0]
+        try assert.equal(producer_name(r.producer), "collect")
+        try assert.equal(r.thread_calls.len(), 1)
+        try assert.is_true(exit_is_scratch(r.exit_kind)) // returns count, not flags
+        .Ok({})
+      },
+    )
+    // Escape counterpart: sieve_escape returns the mutated vector itself, so
+    // the accepted region's exit is the escaping (materializing) kind, not
+    // Scratch — same distinction Task 2's prime-based escape test checks,
+    // sourced here from the post-rewrite `run_s4` path.
+    .test(
+      "run_s4 finds the sieve_escape region as an escaping exit via the post-rewrite path",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_escape"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.accepted.len(), 1)
+        r := dec.accepted[0]
+        try assert.equal(producer_name(r.producer), "collect")
+        try assert.equal(r.thread_calls.len(), 1)
+        try assert.equal(exit_is_scratch(r.exit_kind), false)
+        .Ok({})
+      },
+    )
 }
