@@ -509,6 +509,19 @@ pub fn produce_mutable_decisions_seeded(
 // Env-aware seeded producer: codegen-path callers pass semantics whose `ref_fields`
 // table is populated, so ownership artifacts classify record fields identically to
 // the analysis/test path.
+//
+// S4 (interprocedural MutVec) non-interaction — the analogue of the S2-vs-
+// builder_region safety note at the mutvec_region call site (codegen.tw): this
+// pass runs AFTER `s4_phase.run_s4` has rewritten an accepted owned chain, and
+// `collect_all_candidates_for` joins on the mutable catalog's FuncIds
+// (`vector$set_unsafe` and friends). An S4-claimed local's writes were retargeted
+// to family `mutvec_*` ops, which are NOT catalog entries, so they surface no
+// candidate here and thus yield no `ProducedDecision` — the flat MutVec ABI S4
+// committed to is left untouched (no persistent `set_in_place` decision competes
+// with it). A non-upgraded (mixed-caller) clone keeps its `vector$set_unsafe`
+// and is produced/routed here exactly as before. See s4_mutvec_suite's
+// "produce_mutable_decisions yields zero decisions for the S4-rewritten sieve
+// run/clone" test.
 pub fn produce_mutable_decisions_seeded_with_sem(
   opt: AnfModule,
   b: BuiltinRegistry,

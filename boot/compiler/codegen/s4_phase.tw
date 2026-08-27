@@ -9,30 +9,39 @@
 //! discovery (a hand-built or otherwise non-discovered region is not a valid
 //! input), so `run_s4` never calls `verify_region` outside that order.
 //!
-//! HP-2 (Task 4) kept the phase INERT: `accepted` was populated but the
-//! returned `module`/`spec` passed through `spec.anf`/`spec` unchanged — no
-//! ABI change and no rewrite. `module`/`spec` are STILL unchanged here (the
-//! caller-region + clone-body rewrite is Task 7's job); this task (HP-4) adds
-//! the ABI-UPGRADE DECISION on top: `abi_upgrades` records, for every owned
-//! clone whose EVERY routed site is an accepted region (never a partial
-//! subset — see `compute_abi_upgrades`), that its receiver param + return may
-//! be typed as a flat `MutVec<fam>` instead of the persistent PVec ABI. This
-//! is decision output only: consult `mutvec_repr.tw`'s module header for why
-//! actually applying it to a real clone body is not yet wired into the
-//! default pipeline (it needs a clone-body op rewrite — set_unsafe/get/len on
-//! the receiver retargeted to the matching `mutvec_*` op, itself needing an
-//! elem un/boxing swap — which is squarely Task 7's "clone-body rewrite",
-//! not this task's "ABI typing" scope; see that file's header for the full
-//! trace of why typing the slot alone is not sound without it).
+//! `abi_upgrades` records, for every owned clone whose EVERY routed site is an
+//! accepted region (never a partial subset — see `compute_abi_upgrades`), that
+//! its receiver param + return may be typed as a flat `MutVec<fam>` instead of
+//! the persistent PVec ABI.
+//!
+//! Task 7 makes the phase ACTIVE: `run_s4` now RETURNS a rewritten `module`
+//! (`apply_s4_rewrite`). Typing a clone MutVec without rewriting its body ops is
+//! unsound — `emit_coerce_stack` has no MutVec↔PVec bridge, so a MutVec slot fed
+//! from persistent-PVec ops falls to a raw `ref.cast` between unrelated GC types
+//! (validation failure / trap; see `mutvec_repr.tw`'s header). So the two edits
+//! land together: (a) each upgraded clone body's receiver `set_unsafe`/`get`/
+//! `len`/index ops retarget to the family's `mutvec_*` op; (b) each accepted
+//! caller region whose thread calls all route to an upgraded clone flattens its
+//! `collect`/`make` producer to a mutvec builder — no freeze for a Scratch exit,
+//! exactly one boundary `mutvec_freeze` for an EscapeReturn — with the threaded
+//! clone call + its `assign handle = <result>` rebind kept as-is so the handle
+//! stays flat across the boundary. The matching slot/`phys_return` typing is
+//! consumed by `mutvec_repr.apply_s4_abi_upgrades`. A region whose clone is NOT
+//! upgraded (the HP-5 mixed-caller case, Task 6) is left persistent; empty
+//! `upgrades` (boot's own source has no qualifying shape) returns `spec.anf`
+//! byte-identical, so self-host stays at its fixed point.
 
-use compiler.anf.{AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
+use compiler.builder_region_detect.{atom_is_local}
+use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
-use compiler.codegen.mutvec_region.{collect_defs}
-use compiler.codegen.s4_region.{S4Region, detect_call_thread_regions}
+use compiler.codegen.mutvec_region.{MutVecRegion, collect_defs, rewrite_regions_in_func}
+use compiler.codegen.s4_region.{S4Exit, S4Region, detect_call_thread_regions}
 use compiler.codegen.s4_verify.{clone_site_targets, func_def_of, sole_receiver_index, verify_region}
 use compiler.codegen.variant_specialize.{SpecializeResult}
-use compiler.elem_family.{elem_family_of}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.elem_family.{elem_family_of, elem_family_suffix}
 use compiler.variant_id as vid
 
 pub type S4Decision = .{
@@ -68,15 +77,20 @@ pub type S4AbiUpgrade = .{
 type ThreadObservation = .{ clone_func: Int, recv_local: Int, fam: ElemRepr }
 
 // Discover + verify every call-thread region across `spec.anf`'s functions,
-// and derive the HP-4 ABI-upgrade table from the accepted ones. `module`/
-// `spec` still pass through unchanged (Task 7 applies the actual rewrite);
-// `abi_upgrades` is real decision output, consumed by `mutvec_repr` — see
-// that module's header for the current (deliberately unwired) state of
-// consumption.
+// derive the HP-4 ABI-upgrade table from the accepted ones, and REWRITE the
+// module: upgraded clone bodies + all-sites-upgraded caller regions move to
+// flat `mutvec_*` ops (`apply_s4_rewrite`). `abi_upgrades` is the paired
+// decision output the backend consumes via `mutvec_repr.apply_s4_abi_upgrades`
+// to type the clone param/return + routed caller call-result slots MutVec.
 pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
   accepted: Vector<S4Region> = []
   accepted_sites: Dict<Int, Bool> = Dict.new()
   obs: Vector<ThreadObservation> = []
+
+  // Accepted regions keyed by their caller function id, so the rewrite (below)
+  // can re-locate every region back on the function it was discovered in
+  // without re-running discovery. Program order preserved (append per func).
+  accepted_by_func: Dict<Int, Vector<S4Region>> = Dict.new()
 
   for func in spec.anf.functions {
     regions := detect_call_thread_regions(func, spec, b)
@@ -91,6 +105,10 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
               accepted_sites[vid.site_key(func.func_id.id, cr)] = true
             }
             obs = .concat(region_observations(r, func, defs, site_to_clone, spec))
+            accepted_by_func[func.func_id.id] = case accepted_by_func.get(func.func_id.id) {
+              .Some(v) => v.append(r),
+              .None => [r],
+            }
           },
           .Reject(_) => {},
         }
@@ -98,11 +116,223 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
     }
   }
 
+  upgrades := compute_abi_upgrades(spec, accepted_sites, obs)
+
   .{
     accepted,
-    module: spec.anf,
+    module: apply_s4_rewrite(spec, upgrades, accepted_by_func, b),
     spec,
-    abi_upgrades: compute_abi_upgrades(spec, accepted_sites, obs),
+    abi_upgrades: upgrades,
+  }
+}
+
+// ── S4 rewrite: caller producer chain + clone body → flat MutVec ──────────
+// Turns the DECISION (`upgrades` + accepted regions) into actual ANF. Two
+// coordinated edits that MUST land together (typing a clone's param/return
+// MutVec without rewriting its body ops is unsound — no MutVec↔PVec coercion
+// bridge exists; see `mutvec_repr.tw`'s header):
+//   1. Every upgraded clone body: `set_unsafe`/`get`/`len`/`AIndex` on the
+//      receiver → the family's `mutvec_*` op (the receiver becomes a flat
+//      handle; its `assign recv = <write result>` reclaim + tail `return recv`
+//      are untouched — `mutvec_repr` types the param + `phys_return` MutVec).
+//   2. Every accepted caller region WHOSE thread calls all route to an upgraded
+//      clone: the `collect`/`make` producer flattens to a mutvec builder (no
+//      freeze for a Scratch exit; exactly one boundary `mutvec_freeze` for an
+//      EscapeReturn), `flags[i]` → mutvec_get, the threaded clone call + its
+//      `flags = <result>` rebind pass through unchanged (the handle stays flat
+//      across the boundary — the whole point, and the zero-in-loop-freeze
+//      invariant the parity gate guards).
+// A region whose clone was NOT upgraded (a mixed owned/generic caller — the
+// HP-5 partition case, Task 6) is left persistent: rewriting the caller to
+// expect a MutVec-returning clone while the clone stays PVec would trap.
+// `upgrades` empty (boot's own source — no qualifying S4 shape) → `spec.anf`
+// returned unchanged, byte-identical, so self-host stays at the fixed point.
+fn apply_s4_rewrite(
+  spec: SpecializeResult,
+  upgrades: Vector<S4AbiUpgrade>,
+  accepted_by_func: Dict<Int, Vector<S4Region>>,
+  b: BuiltinRegistry,
+) AnfModule {
+  if upgrades.len() == 0 {
+    return spec.anf
+  }
+  upgraded: Dict<Int, Bool> = Dict.new()
+  for u in upgrades {
+    upgraded[u.clone_func] = true
+  }
+  site_to_clone := clone_site_targets(spec)
+  m := spec.anf
+  m.functions = collect f in m.functions {
+    f1 := if upgraded.has(f.func_id.id) {
+      rewrite_clone_for(f, upgrades, b)
+    } else {
+      f
+    }
+    case accepted_by_func.get(f1.func_id.id) {
+      .Some(regs) => rewrite_caller_regions(f1, regs, site_to_clone, upgraded, b),
+      .None => f1,
+    }
+  }
+  m
+}
+
+// Rewrite each accepted caller region in `f` whose thread calls all route to an
+// upgraded clone. Builds the `MutVecRegion` the S2 lowering consumes (same
+// builder-chain flattening, index-read swap, and escape-gated boundary freeze)
+// from the S4Region's producer + exit kind, then reuses
+// `mutvec_region.rewrite_regions_in_func` verbatim.
+fn rewrite_caller_regions(
+  f: AnfFunctionDef,
+  regs: Vector<S4Region>,
+  site_to_clone: Dict<Int, Int>,
+  upgraded: Dict<Int, Bool>,
+  b: BuiltinRegistry,
+) AnfFunctionDef {
+  mregions: Vector<MutVecRegion> = []
+  for r in regs {
+    if region_all_upgraded(r, f.func_id.id, site_to_clone, upgraded) {
+      suffix := case handle_family_suffix(f, r.handle) {
+        .Some(s) => s,
+        .None => continue, // no registered family — leave persistent
+      }
+      mregions = .append(
+        MutVecRegion.{
+          func_id: f.func_id,
+          func: f.name,
+          proof_id: "s4:${f.func_id.id.to_string()}:${r.handle.id.to_string()}",
+          handle: r.handle,
+          producer: r.producer,
+          op_sites: [],
+          escapes: exit_escapes(r.exit_kind),
+          family: suffix,
+        },
+      )
+    }
+  }
+  if mregions.len() == 0 {
+    f
+  } else {
+    rewrite_regions_in_func(f, mregions, b)
+  }
+}
+
+fn exit_escapes(k: S4Exit) Bool {
+  case k {
+    .Scratch => false,
+    .EscapeReturn => true,
+  }
+}
+
+// True iff every thread call in `region` routes to a clone in `upgraded`.
+fn region_all_upgraded(
+  region: S4Region,
+  func_id: Int,
+  site_to_clone: Dict<Int, Int>,
+  upgraded: Dict<Int, Bool>,
+) Bool {
+  for cr in region.thread_calls {
+    case site_to_clone.get(vid.site_key(func_id, cr)) {
+      .Some(clone) => if !upgraded.has(clone) {
+        return false
+      },
+      .None => return false,
+    }
+  }
+  true
+}
+
+// The mutvec family suffix (`"_bool"`) of a caller handle, from its recorded
+// vector mono. `.None` when the handle has no registered element family.
+fn handle_family_suffix(f: AnfFunctionDef, handle: LocalId) String? {
+  case f.op_result_mono.get(handle.id) {
+    .Some(mono) => elem_family_suffix(mono),
+    .None => .None,
+  }
+}
+
+// Rewrite every upgraded-clone receiver in `clone` to flat mutvec ops. The
+// receiver locals come from `upgrades` (this clone's `param_slots`); the family
+// suffix is read off each receiver param's own mono, so no i64 hard-coding.
+fn rewrite_clone_for(clone: AnfFunctionDef, upgrades: Vector<S4AbiUpgrade>, b: BuiltinRegistry) AnfFunctionDef {
+  cur := clone
+  for u in upgrades {
+    if u.clone_func == clone.func_id.id {
+      for recv_local in u.param_slots {
+        recv := LocalId.{ id: recv_local }
+        case recv_param_suffix(cur, recv) {
+          .Some(suffix) => cur = rewrite_clone_body(cur, recv, suffix, b),
+          .None => {},
+        }
+      }
+    }
+  }
+  cur
+}
+
+fn recv_param_suffix(clone: AnfFunctionDef, recv: LocalId) String? {
+  for p in clone.params {
+    if p.local.id == recv.id {
+      return elem_family_suffix(p.ty)
+    }
+  }
+  .None
+}
+
+// Op ids the clone-body rewrite keys on: the generic boxed ops it swaps FROM
+// and the family's flat mutvec ops it swaps TO.
+type CloneRwIds = .{ set_unsafe: Int, get: Int, len: Int, mset: FuncId, mget: FuncId, mlen: FuncId }
+
+fn rewrite_clone_body(clone: AnfFunctionDef, recv: LocalId, suffix: String, b: BuiltinRegistry) AnfFunctionDef {
+  ids: CloneRwIds = .{
+    set_unsafe: builtins.id(b, "vector$set_unsafe").id,
+    get: builtins.id(b, "vector$get").id,
+    len: builtins.id(b, "vector$len").id,
+    mset: builtins.id(b, "vector$__mutvec_set${suffix}"),
+    mget: builtins.id(b, "vector$__mutvec_get${suffix}"),
+    mlen: builtins.id(b, "vector$__mutvec_len${suffix}"),
+  }
+  clone.body = rewrite_clone_expr(clone.body, recv, ids)
+  clone
+}
+
+fn rewrite_clone_expr(e: AnfExpr, recv: LocalId, ids: CloneRwIds) AnfExpr {
+  case e {
+    .Let(local, op, body) => .Let(
+      local,
+      rewrite_clone_op(op, recv, ids),
+      rewrite_clone_expr(body, recv, ids),
+    ),
+    _ => e,
+  }
+}
+
+fn rewrite_clone_op(op: AnfOp, recv: LocalId, ids: CloneRwIds) AnfOp {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe
+      and args.len() == 3 and atom_is_local(args[0], recv) {
+      .ACall(.AGlobalFunc(ids.mset), args)
+    } else if f.id == ids.get and args.len() == 2 and atom_is_local(args[0], recv) {
+      .ACall(.AGlobalFunc(ids.mget), args)
+    } else if f.id == ids.len and args.len() == 1 and atom_is_local(args[0], recv) {
+      .ACall(.AGlobalFunc(ids.mlen), args)
+    } else {
+      op
+    },
+    .AIndex(base, idx, .Array, _) => if atom_is_local(base, recv) and !atom_is_local(idx, recv) {
+      .ACall(.AGlobalFunc(ids.mget), [base, idx])
+    } else {
+      op
+    },
+    .AIf(cnd, t, e) => .AIf(cnd, rewrite_clone_expr(t, recv, ids), rewrite_clone_expr(e, recv, ids)),
+    .AMatch(scrut, arms) => .AMatch(
+      scrut,
+      collect arm in arms {
+        AnfMatchArm.{ pattern: arm.pattern, body: rewrite_clone_expr(arm.body, recv, ids) }
+      },
+    ),
+    .ALoop(body) => .ALoop(rewrite_clone_expr(body, recv, ids)),
+    .ADefer(body) => .ADefer(rewrite_clone_expr(body, recv, ids)),
+    _ => op,
   }
 }
 

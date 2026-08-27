@@ -20,6 +20,7 @@ use @std.proc
 use compiler.anf.{AnfModule}
 use compiler.backend.closure_convert.{ClosureConversion, convert_closures}
 use compiler.backend.context.{BackendContext}
+use compiler.backend.mutvec_repr
 use compiler.backend.prepare.{PreparedModule, backend_context, prepare_backend_with_mutable_config}
 use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
@@ -224,13 +225,27 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
 
   // Prepare backend IR, wired with those decisions.
   log_phase("begin prepare_backend")
-  prepared := prepare_backend_with_mutable_config(
+  prepared0 := prepare_backend_with_mutable_config(
     closure_conversion.anf,
     env,
     builtins,
     closure_conversion.captures,
     produced_decisions.table,
     mutable_select.enabled_emit_policy(),
+  )
+
+  // HP-4: consume the S4 ABI-upgrade decision. `run_s4` already rewrote the ANF
+  // (upgraded clone bodies + accepted caller regions now use `mutvec_*` ops);
+  // `assign_mutvec_reprs` inside prepare typed the local handle slots. This
+  // supplies the two function-ABI facts the slot seed cannot: each upgraded
+  // clone's MutVec `phys_return` + receiver param, and every routed caller's
+  // call-result slot. Empty upgrades (boot's own source) → byte-identical.
+  prepared := prepared0
+  prepared.funcs = mutvec_repr.apply_s4_abi_upgrades(
+    prepared0.funcs,
+    decision.abi_upgrades,
+    env,
+    builtins,
   )
   t2 := date.now()
 

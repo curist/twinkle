@@ -1,6 +1,13 @@
 # Interprocedural MutVec — S4 first slice (caller-born; param-sourced later)
 
-**Status:** Plan draft (revised twice after implementation-path review)
+**Status:** Slice 1 LANDED (2026-08-27). Caller-born single-hop chain: `sieve`
+4.86→0.62ms (= `sieve_direct` flat floor), checksum 669, `queens` unchanged,
+self-host fixed point + full boot/rust suites green. The accepted caller region
++ upgraded owned clone now move to flat `mutvec_*` ops across the call boundary
+(`s4_phase.apply_s4_rewrite` + `mutvec_repr.apply_s4_abi_upgrades`); no-escape
+scratch → zero in-loop freezes, escape → one boundary freeze. Remaining S4
+slices (below): param-sourced `nbody` `advance`, HP-5 sibling clones for mixed
+callers, non-Int family fixture (Test B).
 **Track:** Sound uniqueness & mutable lowering → **storage S4** (owned-specialized
 mutable ABI across calls). The S4 *design* already exists — see
 [sound-uniqueness/storage/README.md → S4](sound-uniqueness/storage/README.md#s4--owned-specialized-mutable-abi-across-calls)

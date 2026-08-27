@@ -36,6 +36,7 @@ use compiler.backend.repr_policy.{ElemRepr}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
+use compiler.codegen.mutable_produce
 use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.s4_phase
@@ -122,6 +123,8 @@ pub type S4Stage = .{
   prime: AnfModule,
   spec: variant_specialize.SpecializeResult,
   builtins: BuiltinRegistry,
+  env: resolver.ResolvedEnv,
+  sem: semantics.OptimizerSemantics,
 }
 
 // Reproduces `link_program`'s pass order (codegen.tw:125-152) up to and
@@ -143,7 +146,7 @@ pub fn s4_stage(path: String) S4Stage {
     .make_prelude_optimizer_semantics(b)
     .with_ref_fields(resolver.build_ref_field_table(art.env))
   spec := variant_specialize.specialize_module_with_sem(anf_prime, b, sem)
-  .{ prime: anf_prime, spec, builtins: b }
+  .{ prime: anf_prime, spec, builtins: b, env: art.env, sem }
 }
 
 // A stable string hash of an ANF module, for the S4 inertness proof (Task
@@ -695,17 +698,35 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
-    // HP-2 inertness proof: `run_s4` discovers + verifies over the real
-    // post-specialize module (so `accepted` is non-empty for a real
-    // discoverable region), but must leave the module byte-identical — no
-    // ABI change, no rewrite — until a later task lands one.
+    // Task 7: `run_s4` now REWRITES an accepted, all-sites-upgraded region — the
+    // sieve_scratch module is no longer byte-identical (its clone body + caller
+    // producer chain moved to `mutvec_*`). The WAT-level tests below assert the
+    // concrete op-level result; this locks the module-changed fact.
     .test(
-      "run_s4 leaves the module byte-identical when nothing is applied",
+      "run_s4 rewrites the sieve_scratch module for an upgraded region",
       fn() Result<Void, String> {
         st := s4_stage(fixture_path("sieve_scratch"))
         dec := s4_phase.run_s4(st.spec, st.builtins)
-        try assert.equal(anf_fingerprint(dec.module), anf_fingerprint(st.spec.anf))
         try assert.is_true(dec.accepted.len() >= 1)
+        try assert.is_true(dec.abi_upgrades.len() >= 1)
+        try assert.ok(
+          anf_fingerprint(dec.module) != anf_fingerprint(st.spec.anf),
+          "expected run_s4 to rewrite the module for an all-sites-upgraded region",
+        )
+        .Ok({})
+      },
+    )
+    // Complement: a mixed owned/generic caller (split_callers) leaves the clone
+    // NOT upgraded (all_sites_accepted false), so the module is byte-identical —
+    // the persistent fallback, and the guard that keeps self-host at its fixed
+    // point when no S4 shape qualifies.
+    .test(
+      "run_s4 leaves a non-upgraded (mixed-caller) module byte-identical",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("split_callers"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.abi_upgrades.len(), 0)
+        try assert.equal(anf_fingerprint(dec.module), anf_fingerprint(st.spec.anf))
         .Ok({})
       },
     )
@@ -797,6 +818,101 @@ pub fn suite() runner.Suite {
         try assert.is_true(s4_phase.all_sites_accepted([1, 2], accepted))
         try assert.is_true(!s4_phase.all_sites_accepted([1, 2, 3], accepted))
         try assert.is_true(!s4_phase.all_sites_accepted([3], accepted))
+        .Ok({})
+      },
+    )
+    // ── Task 7 end-to-end: the flat-MutVec chain in emitted WAT ──────────────
+    // Step 0 (signature-level): the upgraded set_at__Bool clone body writes via
+    // the flat `mutvec_set_bool` op and NOT the persistent `set_in_place` trie
+    // write — i.e. its receiver ABI actually moved to MutVec.
+    .test(
+      "sieve_scratch clone body uses mutvec_set_bool, not set_in_place",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("sieve_scratch")
+        clone := case wat_func_body(wat, "set_at__Bool") {
+          .Some(b) => b,
+          .None => return .Err("set_at__Bool clone not found in WAT"),
+        }
+        try assert.ok(clone.contains("mutvec_set_bool"), "clone must write via mutvec_set_bool")
+        try assert.ok(
+          !clone.contains("rt_arr__set_in_place"),
+          "clone must NOT retain the persistent set_in_place trie write",
+        )
+        .Ok({})
+      },
+    )
+    // Step 1 (scratch parity + freeze count): the caller stays flat — reads go
+    // `mutvec_get_bool`, and the no-escape scratch chain emits ZERO
+    // `mutvec_freeze` calls (a per-call freeze/thaw is the doc's headline
+    // regression; count CALLS, not substrings, so a runtime freeze DEFINITION
+    // does not inflate the count).
+    .test(
+      "sieve_scratch stays flat: mutvec_get, zero in-loop freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("sieve_scratch")
+        run_fn := case wat_func_body(wat, "_run") {
+          .Some(b) => b,
+          .None => return .Err("run function not found in WAT"),
+        }
+        try assert.ok(run_fn.contains("mutvec_get_bool"), "read went flat (mutvec_get_bool)")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 0)
+        .Ok({})
+      },
+    )
+    // Step 4 (escape): sieve_escape returns the mutated vector, so exactly ONE
+    // boundary `mutvec_freeze` materializes it — not per call.
+    .test(
+      "sieve_escape materializes with exactly one boundary mutvec_freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("sieve_escape")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        .Ok({})
+      },
+    )
+    // Codegen soundness: both fixtures compile clean through the full flat
+    // rewrite (no verifier rejection / illegal cast). Runtime checksum parity
+    // (669) is gated by the awfy harness, not reproducible in-suite.
+    .test(
+      "sieve_scratch and sieve_escape compile through the flat rewrite",
+      fn() Result<Void, String> {
+        _scratch := try compile_fixture_wat("sieve_scratch")
+        _escape := try compile_fixture_wat("sieve_escape")
+        .Ok({})
+      },
+    )
+    // Step 5: mutable_produce non-interaction. produce_mutable_decisions runs
+    // AFTER S4's rewrite and joins on the mutable catalog's FuncIds
+    // (`vector$set_unsafe` etc). S4 retargeted the sieve run + set_at__Bool clone
+    // receiver writes to `mutvec_*` ops, which are NOT in that catalog, so no
+    // candidate — and thus no ProducedDecision — is collected for either. This
+    // asserts that inertness directly (see the justifying comment in
+    // mutable_produce.tw's `produce_mutable_decisions_seeded_with_sem`).
+    .test(
+      "produce_mutable_decisions yields zero decisions for the S4-rewritten sieve run/clone",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("sieve_scratch"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        produced := mutable_produce.produce_mutable_decisions_seeded_with_sem(
+          dec.module,
+          st.builtins,
+          st.spec.seeds,
+          st.sem,
+          st.spec.summary,
+          st.spec.pruned_view,
+          st.spec.changed_funcs,
+          st.spec.fix_cache,
+        )
+
+        // The upgraded clone's exact name (e.g. `set_at__Bool$v389`) — NOT the
+        // generic `set_at__Bool`, which is legitimately still persistent (its
+        // set_unsafe is unrewritten and DOES produce a decision).
+        clone_id := dec.abi_upgrades[0].clone_func
+        clone_name := case dec.module.functions.find(fn(f) { f.func_id.id == clone_id }) {
+          .Some(f) => f.name,
+          .None => return .Err("upgraded clone func not found in rewritten module"),
+        }
+        offenders := produced.rows.filter(fn(r) { r.func == "run" or r.func == clone_name })
+        try assert.equal(offenders.len(), 0)
         .Ok({})
       },
     )
