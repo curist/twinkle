@@ -116,7 +116,28 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
     }
   }
 
-  upgrades := compute_abi_upgrades(spec, accepted_sites, obs)
+  // Candidate upgrades: clones whose every routed site is an accepted thread
+  // call (per-clone `all_sites_accepted`). This is necessary but NOT sufficient
+  // once a region can thread MORE THAN ONE clone (`is_routed_thread_source`
+  // accepts any routed owned clone, so a handle can be threaded through distinct
+  // clones A and B). If A is a candidate but shares an accepted region with a
+  // non-candidate B, that region is left persistent (`region_all_upgraded` is
+  // false), so its producer stays a PVec — yet A's body/param would still be
+  // typed MutVec, and the caller would pass a PVec handle into A's MutVec param
+  // (the `emit_coerce_stack` no-bridge `ref.cast` trap this task exists to
+  // avoid). So couple the clone-upgrade decision to region membership: a clone
+  // survives ONLY when every accepted region threading it threads exclusively
+  // candidate clones (`couple_upgrades_to_regions`, a shrink-to-fixpoint).
+  // Restricting `abi_upgrades` is the SINGLE gate — the region rewrite, the
+  // clone-body rewrite, and the slot/`phys_return` typing (`mutvec_repr`) all
+  // key off this list, so a clone dropped here is uniformly left persistent.
+  // UNREACHABLE in slice-1 (every fixture region threads exactly one clone, and
+  // boot produces zero upgrades), so this is a defensive gate; Task 6 (HP-5
+  // sibling clones) introduces the multi-clone-region shape that exercises it
+  // end-to-end. `surviving_clones` has direct unit coverage in s4_mutvec_suite.
+  candidate_upgrades := compute_abi_upgrades(spec, accepted_sites, obs)
+  region_clone_sets := build_region_clone_sets(accepted_by_func, clone_site_targets(spec))
+  upgrades := couple_upgrades_to_regions(candidate_upgrades, region_clone_sets)
 
   .{
     accepted,
@@ -124,6 +145,79 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
     spec,
     abi_upgrades: upgrades,
   }
+}
+
+// The clone ids each accepted region threads, one inner vector per region
+// (order irrelevant — the consumer is a set fixpoint). A thread call whose site
+// key resolves to no route is skipped (it cannot be an upgraded clone anyway).
+fn build_region_clone_sets(
+  accepted_by_func: Dict<Int, Vector<S4Region>>,
+  site_to_clone: Dict<Int, Int>,
+) Vector<Vector<Int>> {
+  out: Vector<Vector<Int>> = []
+  for func_id, regions in accepted_by_func {
+    for r in regions {
+      clones: Vector<Int> = []
+      for cr in r.thread_calls {
+        case site_to_clone.get(vid.site_key(func_id, cr)) {
+          .Some(c) => clones = .append(c),
+          .None => {},
+        }
+      }
+      out = .append(clones)
+    }
+  }
+  out
+}
+
+// The subset of `candidates` (clone ids) that survive the region-membership
+// coupling: drop every clone that shares an accepted region with any clone not
+// (yet) surviving, iterated to a fixpoint. Sound because it only ever SHRINKS
+// the surviving set, and at the fixpoint every region touching a surviving
+// clone touches exclusively surviving clones — so that region is fully
+// upgradeable (its `region_all_upgraded` holds) and its producer is rewritten
+// to MutVec, matching the clone's MutVec ABI. `pub` for direct unit coverage of
+// this core predicate independent of a full discovery/verify walk.
+pub fn surviving_clones(candidates: Vector<Int>, region_clone_sets: Vector<Vector<Int>>) Dict<
+  Int,
+  Bool,
+> {
+  u: Dict<Int, Bool> = Dict.new()
+  for c in candidates {
+    u[c] = true
+  }
+  changed := true
+  for changed {
+    changed = false
+    for clones in region_clone_sets {
+      any_out := false
+      for c in clones {
+        if !u.has(c) {
+          any_out = true
+        }
+      }
+      if any_out {
+        for c in clones {
+          if u.has(c) {
+            u = .remove(c)
+            changed = true
+          }
+        }
+      }
+    }
+  }
+  u
+}
+
+fn couple_upgrades_to_regions(
+  candidates: Vector<S4AbiUpgrade>,
+  region_clone_sets: Vector<Vector<Int>>,
+) Vector<S4AbiUpgrade> {
+  ids := collect u in candidates {
+    u.clone_func
+  }
+  keep := surviving_clones(ids, region_clone_sets)
+  candidates.filter(fn(u) { keep.has(u.clone_func) })
 }
 
 // ── S4 rewrite: caller producer chain + clone body → flat MutVec ──────────
