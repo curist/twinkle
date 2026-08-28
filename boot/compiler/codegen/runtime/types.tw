@@ -156,8 +156,8 @@ pub fn module() WasmModule {
       .Struct(
         "HamtNode",
         [
-          .{ name: .Some("bitmap"), mutable: false, ty: .I32 },
-          .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
+          .{ name: .Some("bitmap"), mutable: true, ty: .I32 },
+          .{ name: .Some("entries"), mutable: true, ty: .Ref(false, .Named("Array")) },
         ],
         .None,
         true,

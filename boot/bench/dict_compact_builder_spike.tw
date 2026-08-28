@@ -1,0 +1,49 @@
+//! S5 throwaway spike: measure HAMT rebuilding inside Dict compaction.
+//!
+//! Removing exactly half the keys crosses PDict's tombstones >= live threshold.
+//! All but the threshold-crossing removal happen before the timer; the final
+//! remove includes compact(), which rebuilds the HAMT and insertion-order PVec.
+//! This isolates the construction seam used to compare sequential persistent
+//! node_set against an owned/editable HAMT builder.
+
+use @std.date
+
+kmult: Int = 0 - 7046029254386353131
+
+fn key_of(i: Int) Int {
+  i * kmult + 1
+}
+
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn bench_compact(n: Int) Void {
+  m: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    m[key_of(i)] = i
+    i = i + 1
+  }
+
+  removed := n / 2 - 1
+  i = 0
+  for i < removed {
+    m = .remove(key_of(i))
+    i = i + 1
+  }
+
+  t0 := date.now()
+  m = .remove(key_of(removed))
+  t1 := date.now()
+
+  guard := m.len() + dget(m, key_of(n / 2)) + dget(m, key_of(n - 1)) + dget(m, key_of(0))
+  compact_ms := t1 - t0
+  println("compact n=${n} live=${m.len()} final_remove=${compact_ms}ms guard=${guard}")
+}
+
+bench_compact(65536)
+bench_compact(1048576)

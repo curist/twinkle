@@ -24,14 +24,12 @@ Three strategies, `Dict<Int,Int>` of `n` sparse keys, `k` random updates:
 | 1 048 576 | 25% | 239.3 | 266.8 |
 | 1 048 576 | 100% | 898.2 | 853.7 |
 
-They are equal within noise. For dicts the per-op cost is **HAMT traversal +
-hashing + insertion-order maintenance**, and the persistent path's extra node
-*allocation* is negligible on top of that. (Contrast vectors, where in-place was
-~8× rebuild because PVec spine allocation is the dominant cost.) So the existing
-8D in-place dict optimization delivers little, and — critically — **a transient
-HAMT cannot help either**: it keeps the same HAMT traversal, so its mutate cost
-≈ inplace. Its only advantage (~O(1) freeze) is moot because the in-place path
-has no freeze to begin with.
+They are equal within noise. Source inspection after round 2 found that this
+comparison says less about allocation than originally claimed: `dict$set_in_place`
+mutates only the outer `PDict`; its `node_set` still path-copies every HAMT node
+and entries array. Thus inplace ≈ rebuild isolates the outer-shell allocation,
+not a true editable/transient HAMT. Both paths still pay hashing, traversal,
+insertion-order maintenance, and internal path copying.
 
 ### 2. Flat storage wins big on mutate, but the freeze is a full dict build
 
@@ -188,11 +186,50 @@ path, not the edge), and it needs a real-program census of dict fork-sharing
 density before it's justified. Recorded as the S5 alternative to weigh against the
 gated-`MutDict` slice.
 
+## Round 3 (2026-08-28): owned/editable HAMT construction
+
+A follow-up runtime spike tested the missing comparison. It added
+`node_set_owned`, which mutates only a freshly constructed HAMT root, and routed
+only `compact()`'s rebuild through it. Ordinary persistent `set` and
+`set_in_place` retained their existing behavior. The threshold-crossing removal
+in [`dict_compact_builder_spike.tw`](../../../../boot/bench/dict_compact_builder_spike.tw)
+rebuilds a dict containing half the original entries:
+
+| original n | live entries rebuilt | sequential `node_set` | editable builder |
+|---|---:|---:|---:|
+| 65 536 | 32 768 | 10.51 ms | about 5.9–8.1 ms |
+| 1 048 576 | 524 288 | 322.74 ms | about 237–254 ms |
+
+The large case improves only about **1.3×**. This is real but not transformative:
+an editable builder removes ancestor path-copy allocation, but still hashes and
+traverses once per entry, incrementally grows node slot arrays, performs a lookup
+in the old HAMT, and appends the order vector entry by entry. Because compaction
+also performs the old-HAMT lookup, this is not a direct flat→HAMT freeze
+measurement; it is an isolation test for the allocation/path-copy lever.
+
+A direct bottom-up builder has additional headroom. Radix-partitioning entries by
+the HAMT's 5-bit hash fragments would allocate every node and exact-sized slot
+array once, avoid per-entry trie traversal, and build insertion order with one
+`arr_from_array`. A random-hash shape model at n=1M estimates roughly **6.5× less
+slot-reference copying than the editable builder**. But implementing the full
+builder requires hash partitioning, scratch storage, exact collision handling,
+and stage0/boot parity. It is therefore a plausible Tier-1 optimization, not a
+cheap tweak, and it remains O(n).
+
+**Round-3 verdict:** retain the conditional-MutDict conclusion. An editable HAMT
+builder can lower the freeze constant, invalidating the earlier claim that a
+transient builder cannot help at all, but it does not remove the flat→persistent
+crossover or the HAMT's sparse-fork advantage. Benchmark a direct bottom-up
+builder only together with the real GC-array `MutDict`, where its actual dense
+entry/hash arrays and order sidecar exist as inputs.
+
 ## Conclusions for S5 (revises the earlier decision)
 
-1. **The dict lever is flat storage (`MutDict`), not a transient HAMT.** Transient
-   HAMT keeps the traversal cost that actually dominates, so it does not beat the
-   shipped in-place path. **Drop transient-HAMT-as-default.**
+1. **The operation-throughput lever is flat storage (`MutDict`), not a transient
+   HAMT.** An editable HAMT builder improves materialization by about 1.3×, but
+   keeps HAMT traversal during construction and does not approach flat mutation
+   throughput. Drop transient-HAMT-as-the-region-representation; retain it only
+   as a possible materialization helper.
 2. **`MutDict` is conditional, unlike `MutVec`.** It wins for update-dense / wide
    regions (k ≳ n) and *loses* for build-once/lookup-heavy dicts (k < n) because
    of the O(n) HAMT freeze. So it must be gated on a proven update-density / wide
@@ -209,12 +246,12 @@ gated-`MutDict` slice.
 ## Caveats / follow-ups
 
 - Single run; n=4096 rows are near timer resolution.
-- Transient HAMT was **not** built; its mutate ≈ inplace is inferred from "both
-  traverse the HAMT" plus the measured inplace≈rebuild result, not measured
-  directly. If S5 still wants to keep it as an option, a transient proxy would
-  confirm, but the inference is strong.
-- A bulk bottom-up HAMT build might cut the freeze constant below n sequential
-  inserts, but it stays O(n) and must preserve insertion order; it does not move
-  the k≈n crossover much.
+- The owned/editable builder result comes from the existing `compact()` seam,
+  not directly from flat storage. It includes old-HAMT lookups and incremental
+  order-vector appends that a real `MutDict` freeze can avoid.
+- A radix-partitioned bottom-up HAMT build remains unmeasured. It can cut more
+  construction work than the editable builder, but stays O(n), must preserve
+  insertion order and exact collision semantics, and does not address sparse
+  forks.
 - Flat-proxy uses linear memory + open addressing; a real GC-array `MutDict` would
   be at least as fast on mutate.

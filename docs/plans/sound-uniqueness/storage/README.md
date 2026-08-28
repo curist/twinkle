@@ -88,17 +88,17 @@ freeze *constant* and the size of the win from going flat:
   wins despite the O(n) freeze; a transient PVec is not needed. *(Assumed from the
   constant-factor argument; spike-verifiable — see below.)*
 - **Dict:** measurement revised this (see
-  [spike-tier0-dict.md](spike-tier0-dict.md)). A **transient HAMT is _not_ the
-  lever**: for dicts the per-op cost is HAMT traversal + hashing (not allocation),
-  so `dict$set_in_place` ≈ persistent rebuild and a transient HAMT — which keeps
-  the same traversal — cannot beat the shipped in-place path. The real win is
-  **flat unboxed storage (`MutDict`)**: 40–70× faster on mutate, but with an O(n)
-  freeze that *is* a full dict build. That freeze creates a **real crossover at
-  k/n ≈ 1** — flat wins only when mutations exceed distinct keys and *loses* for
-  build-once/lookup-heavy dicts. So `MutDict` is **conditional**: gated on a proven
-  update-dense / wide region (the S4 stay-low-across-a-chain case), with persistent
-  fallback otherwise. It keeps an insertion-order sidecar, and old-version
-  observability stays gated on the ownership proof.
+  [spike-tier0-dict.md](spike-tier0-dict.md)). The operation-throughput lever is
+  **flat unboxed storage (`MutDict`)**: 40–70× faster on mutate. A true editable
+  HAMT builder, which the original inplace benchmark did not actually measure,
+  improves HAMT rebuilding by about 1.3× but retains per-entry hashing and trie
+  traversal. It may help as a materialization adapter; it is not the private
+  region representation. Flat→HAMT freeze remains an O(n) full build, creating a
+  real crossover near k/n ≈ 1 with the current sequential builder. `MutDict` is
+  therefore **conditional**: gated on a proven update-dense / wide region (the S4
+  stay-low-across-a-chain case), with persistent fallback otherwise. It keeps an
+  insertion-order sidecar, and old-version observability stays gated on the
+  ownership proof.
 
 ### Size-dependence and where the decision lives
 
@@ -142,12 +142,14 @@ with n), and the O(n) freeze is a cheap one-time tax with **no meaningful crosso
 in the range that matters. This confirms "build `MutVec`, flat for vectors, no
 runtime size dispatch."
 
-**Tier-0 dict result (2026-08-01, [spike-tier0-dict.md](spike-tier0-dict.md)):**
-flat `MutDict` mutate is **40–70× faster** than boxed HAMT `set_in_place`, but its
-O(n) freeze *is* a full dict build, producing a **real crossover at k/n ≈ 1**.
-`dict$set_in_place` ≈ persistent rebuild (traversal/hashing dominate, not
-allocation), so a **transient HAMT is not a useful lever** — reversing the earlier
-S5 default. `MutDict` is a *conditional* win, gated on proven update-density.
+**Tier-0 dict result (2026-08-01, extended 2026-08-28,
+[spike-tier0-dict.md](spike-tier0-dict.md)):** flat `MutDict` mutate is **40–70×
+faster** than boxed HAMT `set_in_place`, but its O(n) freeze *is* a full dict
+build, producing a **real crossover near k/n ≈ 1** with sequential insertion.
+The existing in-place helper still path-copies internal nodes, so it was not a
+transient-HAMT proxy. A true owned/editable builder improves rebuilding by about
+1.3×: useful as a freeze helper, but not competitive with flat storage as the
+region representation. `MutDict` remains a *conditional* win.
 
 ## Track invariants
 
@@ -391,16 +393,17 @@ Requirements:
 
 Introduce dict scoped regions and extend dict lowering beyond helper-call
 selection. The Tier-0 dict spike ([spike-tier0-dict.md](spike-tier0-dict.md))
-settled the representation: the target is a **flat unboxed mutable hashmap
-(`MutDict`)** with an insertion-order sidecar — **not** a transient HAMT, which
-the spike showed keeps the dominant traversal cost and so cannot beat the shipped
-`dict$set_in_place`. `MutDict` mutate is 40–70× faster, but its O(n) flat→HAMT
+settled the region representation: the target is a **flat unboxed mutable hashmap
+(`MutDict`)** with an insertion-order sidecar, not a transient HAMT. A true
+owned/editable HAMT builder improves rebuilding by about 1.3× and remains a
+candidate freeze helper, but it retains per-entry HAMT traversal and is not the
+throughput target. `MutDict` mutate is 40–70× faster, but its O(n) flat→HAMT
 freeze *is* a full dict build, so it only pays off when **k/n ≳ 1** (updates
 exceed distinct keys). `MutDict` is therefore **conditional**: emit it only for a
 proven update-dense / wide region where the freeze amortizes across many ops
-(the S4 stay-low-across-a-chain case — e.g. `run_fixpoint`'s transfer maps), and
-fall back to the persistent path for build-once / lookup-heavy dicts. The final
-target lets such owned dict update chains remain mutable internally and
+(the S4 stay-low-across-a-chain shape, but not `run_fixpoint`'s sparse transfer
+maps), and fall back to the persistent path for build-once / lookup-heavy dicts.
+The final target lets such owned dict update chains remain mutable internally and
 materialize to ordinary `Dict<K, V>` only when publication requires it.
 
 Publication is three-tier, not binary (see
@@ -408,9 +411,11 @@ Publication is three-tier, not binary (see
 in-place; old version observed but consumers stay in the private flat
 representation → **clone the flat backing** (a bulk `array.copy`, measured 14–40×
 cheaper than freeze); old version escapes the persistent `Dict` ABI → freeze to
-HAMT (deferred to the true edge). Cheap clone-on-fork is what keeps `MutDict` low
-across fork-heavy chains like `run_fixpoint`, so the S5 selector keys on
-ops-per-fork and whether the snapshot stays flat — not k/n alone.
+HAMT (deferred to the true edge). Cheap clone-on-fork can keep `MutDict` low
+across update-dense forks, so the S5 selector keys on ops-per-fork and whether
+the snapshot stays flat — not k/n alone. It does **not** make `run_fixpoint` a
+candidate: those maps are small and fork with sparse divergence, where the HAMT
+wins on both reads and structural sharing.
 
 Dict region decisions must satisfy the same lifecycle contract as S2/S4, plus the
 dict-specific semantic gates below.
@@ -471,7 +476,7 @@ param-sourced vector copy-carriers (e.g. `next_locked := locked; next_locked =
 is strict: this is an S3-gated follow-up, not doable through the boxed-PVec hooks
 alone. Orthogonal to the copy-carrier dict engine, which is complete.
 
-## Follow-up: `run_fixpoint`'s own dataflow maps — canonical S4 customer
+## Follow-up: `run_fixpoint`'s own dataflow maps — S4 analysis case, not an S5 storage customer
 
 A 2026-07-27 investigation (three self-host-verified spikes, all reverted; the standalone
 `fixpoint-map-inplace` diagnosis doc it produced is archived) established that the compiler's
@@ -501,14 +506,16 @@ Findings worth keeping:
   `persistent(aliased shell)` (the general precision ceiling), of which this is a hard,
   transitively-published sub-class.
 
-**Implication for this track:** the real win for `run_fixpoint`-class *state-threading* code is
-exactly S4's north star — keep a private `MutDict` low across the `forward_block`/`transfer_op`
-helper chain and materialize only at boundaries — which requires owned-specialized variants of
-those transfer functions that preserve `ForwardState` field-ownership instead of publishing it.
-That is the analysis prerequisite S4 must address here; do **not** re-attempt it through the
-8A–8E in-place-decision hooks. (The `merge_targeted` body rewrite that hoists its `next` reads is
-a harmless, self-host-safe cleanup that yields a clean `p1=Consumed` carrier shape; it flips
-nothing on its own and can be cherry-picked if convenient.)
+**Revised implication for this track (2026-08-28):** this remains a useful S4
+analysis case because owned-specialized variants could preserve `ForwardState`
+field ownership across the transfer chain. It is **not** an S5 `MutDict` storage
+customer, however: the maps are only about 32–60 entries and each live-base fork
+changes few entries, so the read-and-fork spike shows that persistent HAMT storage
+is the better representation. Do **not** re-attempt the existing 8A–8E hook route,
+and do not use this workload to justify flat storage. (The `merge_targeted` body
+rewrite that hoists its `next` reads is a harmless, self-host-safe cleanup that
+yields a clean `p1=Consumed` carrier shape; it flips nothing on its own and can be
+cherry-picked if convenient.)
 
 ## References
 
