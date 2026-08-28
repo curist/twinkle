@@ -1,12 +1,12 @@
 # Bottom-Up HAMT Builder Plan
 
-> **For agentic workers:** Use `subagent-driven-development` or `executing-plans` to execute this spike with review checkpoints. Keep benchmark-only machinery isolated until the performance decision is made.
+> **For agentic workers:** The correctness/performance spike is complete. Keep its benchmark-only machinery isolated while completing the production-adapter and cleanup work recorded below.
 
-**Status:** Draft spike plan. Direct bottom-up construction is unmeasured.
+**Status:** Successful spike. Direct bottom-up construction is correct on the measured random-hash workload and materially faster than both incremental builders. Size-aligned crossover calibration, adversarial hash-shape coverage, production interface design, and spike-surface cleanup remain open.
 
-**Goal:** Determine whether building the persistent HAMT directly from a dense stream of cached-hash entries materially lowers MutDict publication cost and shifts the flat→persistent crossover.
+**Goal:** Determine whether building the persistent HAMT directly from a dense stream of cached-hash entries materially lowers MutDict publication cost and shifts the flat→persistent crossover. **Answer: yes; productionization is justified, but the final crossover threshold is not yet decision-grade.**
 
-**Architecture:** The spike first synthesizes the future MutDict freeze input inside the existing `Dict.compact()` seam, then radix-partitions entries by the HAMT's 5-bit hash fragments and allocates each final node once with an exact-sized slot array. It compares the current sequential persistent builder, the experimental owned/editable incremental builder, and direct bottom-up construction without requiring real MutDict or compiler region selection.
+**Architecture:** The implemented spike synthesizes the future MutDict freeze input inside the existing `Dict.compact()` seam and a benchmark-only runtime entry point. It counting-partitions entries by successive 5-bit hash fragments, allocates each final HAMT node and compressed slot array at exact size, and bulk-builds insertion order. The three-way harness prepares one dense stream, then times sequential persistent insertion, owned/editable insertion, direct bottom-up construction, and order construction independently.
 
 **Input contract:** [mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md)
 
@@ -38,13 +38,35 @@ An experimental `node_set_owned`, routed only through `compact()` while construc
 
 The large case improves about 1.3×. It is useful but still performs one hash/trie traversal per entry, incrementally grows node slot arrays, looks values up in the old HAMT, and appends order entries individually.
 
-A random-hash shape model at n=1M estimates that exact-sized bottom-up nodes copy roughly 6.5× fewer slot references than the editable incremental builder. That model is not a runtime result. The direct route must be implemented and measured before using it to revise the S5 crossover.
+A random-hash shape model at n=1M estimated that exact-sized bottom-up nodes would copy roughly 6.5× fewer slot references than the editable incremental builder. The naive bottom-up implementation now realizes that exact-sized-node strategy. The model did not predict wall-clock speedup: measured node construction is typically about 2.2× faster than editable construction at the large scale because partitioning, recursion, temporary arrays, and GC remain.
+
+### Measured bottom-up result
+
+The shared-dense harness runs one warmup and three reported samples. Representative post-warmup phase ranges are:
+
+| benchmark label | live entries | dense prep | sequential build | editable build | bottom-up build | bulk order |
+|---|---:|---:|---:|---:|---:|---:|
+| 65K | 32 768 | about 1.4–1.5 ms | about 5–6 ms | about 2–4 ms | about 1.3–2.8 ms | about 0.5–0.7 ms |
+| 1M | 524 288 | about 50–52 ms | about 168–173 ms | about 72–75 ms | about 30–35 ms | about 12–13 ms |
+
+Occasional GC/timer outliers occur, especially in the editable phase. Every returned dictionary passes the full insertion-order stream, all live values, and all absent-key checks. The self-host reaches a fixed point and the boot suite passes.
+
+The phase boundaries matter:
+
+- dense preparation contains the sole `node_get` and is synthetic overhead absent from a real MutDict-owned dense stream;
+- all three builders consume the exact same materialized `HamtEntry` array;
+- a real dense publication at 524K live entries is approximately bottom-up build plus bulk order, about 42–48 ms in these runs;
+- the current PDict-synthesis seam also pays roughly 50 ms of dense preparation.
+
+WAT confirms that the harness calls the three distinct builders, that incremental builders perform no `node_get`, and that `compact()` calls `node_build_bottom_up` without `node_set`, `node_set_owned`, or per-entry `arr_push`.
 
 ## Spike question
 
 Can a direct bottom-up builder make flat→HAMT publication cheap enough to materially expand the profitable MutDict region, while preserving the exact persistent `Dict` representation and insertion-order semantics?
 
-This spike does not attempt to make MutDict unconditional. Sparse live-base forks remain a structural HAMT advantage regardless of freeze speed.
+**Result:** Yes on the measured workload. Bottom-up construction is already a material win in its naive form and is justified as the target MutDict-to-PDict publication adapter. It also benefits `Dict.compact()` independently.
+
+This result does not make MutDict unconditional. Sparse live-base forks remain a structural HAMT advantage regardless of freeze speed.
 
 ## Recommended construction strategy
 
@@ -58,7 +80,7 @@ Use recursive most-significant-for-the-HAMT partitioning over the HAMT fragment 
 6. Allocate each `HamtNode.entries` array at its final occupancy and fill it once.
 7. Build `PDict.order` independently from the dense insertion-order keys with `arr_from_array`.
 
-A scratch-array ping-pong partitioner is the leading implementation option. Use `node_build_bottom_up(entries, scratch, lo, hi, depth)` as the intended internal helper name so the benchmark and WAT inspection have a stable target. A full fixed-pass radix sort followed by tree construction is a valid fallback if it substantially simplifies Wasm IR, but it touches every entry at every hash fragment and must be measured rather than assumed cheaper.
+The implemented naive partitioner allocates fresh count, cursor, and scratch arrays per recursive node. This already captures the modeled slot-copy reduction and is fast enough to justify the architecture. A production interface should accept an internal workspace so shared ping-pong buffers can be added without changing publication semantics, but ping-pong is now a profiling-driven follow-up rather than a prerequisite. Measure allocation volume, peak live memory, and GC time before paying its complexity.
 
 ## Scope
 
@@ -87,13 +109,13 @@ It does not cover:
 - Modify `boot/bench/dict_compact_builder_spike.tw`
 - Inspect `boot/compiler/codegen/runtime/dict.tw`
 
-- [ ] Note the current routing: `compact()` already calls `node_set_owned` (the owned/editable builder), so the committed bench measures the editable path, not sequential. Restore or retain a separately selectable `node_set` path to reproduce the "sequential builder" column — do not assume sequential is the live baseline.
-- [ ] Keep the owned/editable result as a separately selectable builder rather than overwriting the only comparison path.
-- [ ] Warm up before reporting and record multiple samples for timer stability.
-- [ ] Keep content and insertion-order guards for every strategy.
-- [ ] Measure the builder seam separately at 65K and 1M-scale inputs.
+- [x] Account for the prior routing through `node_set_owned`; retain explicit sequential and editable adapters.
+- [x] Keep the owned/editable result as a separately selectable builder rather than overwriting the only comparison path.
+- [x] Warm up before reporting and record multiple samples for timer stability.
+- [x] Keep full content, absence, and insertion-order guards for every strategy.
+- [x] Measure dense preparation, each builder, and bulk order separately at both benchmark scales.
 
-**Precondition — shared dense input (hard requirement, not advisory):** All three strategies must consume the *same* pre-materialized dense entries produced in Task 2. The current `compact()` seam performs one `node_get` per entry (`dict.tw:2132`) to recover the value from the old HAMT; a real MutDict stream would not pay this. If the bottom-up path reads values straight from dense entries while the sequential/editable baselines still probe the old HAMT, the comparison is skewed toward bottom-up. Either all strategies read from the dense entries, or the `node_get` overhead is measured and subtracted identically from every strategy. The `compact()` seam is an input synthesizer, not the final freeze API.
+**Precondition — shared dense input (hard requirement, not advisory):** All three strategies must consume the *same* pre-materialized dense entries produced in Task 2. The current `compact()` seam performs one `node_get` per entry during dense preparation to recover the value from the old HAMT; a real MutDict stream would not pay this. If the bottom-up path reads values straight from dense entries while the sequential/editable baselines still probe the old HAMT, the comparison is skewed toward bottom-up. Either all strategies read from the dense entries, or the `node_get` overhead is measured and subtracted identically from every strategy. The `compact()` seam is an input synthesizer, not the final freeze API.
 
 ### Task 2 — Define spike-only dense entries
 
@@ -101,10 +123,10 @@ It does not cover:
 - Modify `boot/compiler/codegen/runtime/types.tw`
 - Modify `boot/compiler/codegen/runtime/dict.tw`
 
-- [ ] Add an internal entry shape or parallel arrays carrying hash, key, value, and insertion-order index.
-- [ ] Materialize those entries from `compact()`'s live order sequence while retaining the existing hash and equality functions.
-- [ ] Separate dense-entry preparation time from tree construction time where the available timing seam permits.
-- [ ] Test empty, singleton, replacement-free unique entries, deep shared prefixes, and full-hash collisions before optimizing.
+- [x] Reuse the internal `HamtEntry` shape to carry hash, key, value, and insertion-order index.
+- [x] Materialize entries from live insertion order while retaining existing hash and equality functions.
+- [x] Separate dense-entry preparation from each tree-construction strategy and bulk order construction.
+- [ ] Add explicit empty, singleton, deep-shared-prefix, full-hash-collision, and post-publication persistent-update coverage. The large random-hash parity oracle is necessary but not sufficient for these adversarial shapes.
 
 ### Task 3 — Implement recursive partitioning and exact node construction
 
@@ -112,28 +134,53 @@ It does not cover:
 - Modify `boot/compiler/codegen/runtime/dict.tw`
 - Modify `boot/compiler/codegen/runtime/types.tw` only for temporary scratch or entry types that are actually required
 
-- [ ] Write runtime-shape and behavior tests that fail before the bottom-up helper exists.
-- [ ] Implement one 32-bucket partition step over a dense range.
-- [ ] Add `node_build_bottom_up(entries, scratch, lo, hi, depth)` recursion over successive 5-bit fragments with the same depth limit as `node_get` and `node_set`.
-- [ ] Allocate the final compressed bitmap and exact-sized entries array once per node.
-- [ ] Build collision nodes for entries with identical complete hashes.
-- [ ] Construct `PDict.order` in bulk and preserve update/remove/reinsert semantics represented by the input stream.
-- [ ] Confirm ordinary persistent `set` and `remove` still use their unchanged paths.
+- [ ] Add dedicated runtime-shape tests; the spike established RED through its missing benchmark API and behavior through the full parity oracle, not targeted shape fixtures.
+- [x] Implement one stable 32-bucket counting-partition step over a dense range.
+- [x] Add `node_build_bottom_up(entries, lo, hi, depth)` recursion over successive 5-bit fragments with the same depth limit as `node_get` and `node_set`.
+- [x] Allocate the final compressed bitmap and exact-sized entries array once per node.
+- [x] Build collision nodes after all hash bits are consumed.
+- [x] Construct `PDict.order` in bulk and preserve the dense stream's insertion order.
+- [x] Confirm ordinary persistent `set` and `remove` retain their unchanged paths.
 
 ### Task 4 — Compare construction strategies
 
-- [ ] Run sequential, editable, and bottom-up builders in the same environment.
-- [ ] Report dense-entry preparation, partition/build, order construction, and total publication separately where possible.
-- [ ] Include sparse random hashes, clustered hash prefixes, and full-hash collisions.
-- [ ] Inspect WAT to confirm the bottom-up path does not call `node_set`, `node_set_owned`, or repeated `arr_push` inside construction.
-- [ ] Translate the measured publication cost back into the flat-versus-HAMT crossover using the existing mutation data.
+- [x] Run sequential, editable, and bottom-up builders from one shared dense input in the same process.
+- [x] Report dense-entry preparation, each builder, and order construction separately.
+- [ ] Add clustered-prefix and deliberate full-hash-collision workloads; the current key stream covers sparse pseudo-random hashes.
+- [x] Inspect WAT to confirm the bottom-up path does not call `node_set`, `node_set_owned`, or repeated `arr_push` inside construction.
+- [ ] Produce a decision-grade crossover from size-aligned, same-session mutation and publication measurements.
 
-### Task 5 — Decide what survives the spike
+The provisional translation uses
+`k/n = publication_cost / (persistent_cost_at_k=n - flat_cost_at_k=n)`.
+The old 1M mutation data gives 853.73 ms persistent versus 14.98 ms flat at
+`k=n`. The new harness's “1M” label contains 524K live entries, so linear
+translation—not direct substitution—is required. Extrapolating build plus order
+to 1M live entries suggests `k/n` around 0.11–0.16 for a real cached-hash dense
+MutDict input. Including the synthetic old-HAMT preparation suggests roughly
+0.23–0.28. Record this as directional evidence only; rerun with identical live
+sizes and builder-order rotation before choosing a compiler threshold.
 
-- [ ] If bottom-up construction materially shifts the end-to-end crossover, preserve the logical builder interface and make the real MutDict plan produce it directly.
-- [ ] If the improvement is marginal, retain the simpler editable builder only if `Dict.compact()` benefits independently and stage0 parity is worthwhile.
-- [ ] Remove temporary builder variants and mutable type changes that are not part of the selected result.
-- [ ] Update `sound-uniqueness/storage/spike-tier0-dict.md` and the storage README with measured evidence and limitations.
+### Task 5 — Production direction and spike cleanup
+
+- [x] Decide that direct bottom-up construction survives as the intended MutDict publication adapter and as the current `Dict.compact()` rebuild strategy.
+- [ ] Design a compiler-private dense input and workspace interface. The input owns live unique keys, values, cached full hashes, and insertion-order indices; the builder performs no lookup or rehash.
+- [ ] Make publication consume or invalidate the mutable handle and return an ordinary immutable `PDict` with no builder-owned mutable state reachable afterward.
+- [ ] Retain the naive partitioner behind the workspace interface first; add ping-pong only if allocation/GC profiling justifies it.
+- [ ] Remove spike-only public surfaces after the evidence is recorded: `Dict.bench_builders`, `Dict.bench_timings`, their builtin registrations/signatures, the timing global, and the `twinkle_runtime.now` import in `rt.dict`.
+- [ ] Remove sequential/editable benchmark adapters when the comparison harness is retired; ordinary persistent operations remain.
+- [ ] Update `sound-uniqueness/storage/spike-tier0-dict.md` and the storage README with the measured result, provisional crossover range, and remaining caveats.
+
+The production adapter should conceptually separate:
+
+```text
+MutDict dense storage
+  -> build_hamt_bottom_up(dense, workspace)
+  -> build_order_bulk(dense)
+  -> PDict
+```
+
+`Dict.compact()` may continue to synthesize the same logical dense input and reuse
+the adapter, but that synthesis cost is not part of real MutDict publication.
 
 ## Correctness requirements
 
@@ -165,20 +212,20 @@ target/twk run boot/bench/dict_compact_builder_spike.tw
 Inspect emitted construction calls:
 
 ```bash
-target/twk wat boot/bench/dict_compact_builder_spike.tw --func compact --calls
+target/twk wat boot/bench/dict_compact_builder_spike.tw --func bench_builders --calls
 target/twk wat boot/bench/dict_compact_builder_spike.tw --func node_build_bottom_up --list
+target/twk wat boot/tests/main.tw --func rt_dict__compact --calls
 ```
 
 Do not run tree-sitter tests; this plan does not touch the grammar.
 
 ## Decision output
 
-A fresh session completing this plan must report:
+1. **Construction:** At 524K live entries, bottom-up construction is typically about 30–35 ms versus 72–75 ms editable and 168–173 ms sequential.
+2. **Phase split:** Synthetic dense preparation is about 50–52 ms and bulk order about 12–13 ms at that scale. Real MutDict publication should not pay the old-HAMT `node_get` preparation seam.
+3. **Crossover:** Directional translation moves the likely flat-publication crossover from near `k/n = 1` toward roughly `0.1–0.25`; size-aligned same-session measurement remains mandatory before encoding a threshold.
+4. **Required inputs:** Cached hashes, direct key/value access, and bulk order construction are part of the intended production input contract. Without them, old-HAMT lookup and incremental order costs obscure the builder result.
+5. **Verdict:** Preserve bottom-up construction as the intended MutDict freeze adapter and as a useful `Dict.compact()` implementation. Do not preserve the benchmark APIs as public surface.
+6. **Ping-pong:** The naive builder already proves the lever. Treat shared ping-pong scratch as optional, profiling-driven optimization rather than a production gate.
 
-1. Direct bottom-up construction time versus sequential and editable construction.
-2. How much time belongs to dense-entry preparation versus HAMT node construction.
-3. The resulting estimated k/n crossover for a flat region that must publish once.
-4. Whether cached hashes and bulk order construction are required to obtain the win.
-5. Whether the implementation is justified as a MutDict freeze adapter, only as a `Dict.compact()` optimization, or not at all.
-
-No result from this plan changes the existing sparse-fork conclusion without a separate fork benchmark.
+No result from this plan changes the existing sparse-fork conclusion. Persistent HAMT remains the fallback for sparse-divergence forks and any region lacking the proofs or dense input required by MutDict.
