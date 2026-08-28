@@ -1,12 +1,9 @@
-//! S5 throwaway spike: measure HAMT rebuilding inside Dict compaction.
+//! S5 throwaway spike: compare three HAMT builders from one dense freeze stream.
 //!
-//! Removing exactly half the keys crosses PDict's tombstones >= live threshold.
-//! All but the threshold-crossing removal happen before the timer; the final
-//! remove includes compact(), which rebuilds the HAMT and insertion-order PVec.
-//! This isolates the construction seam used to compare sequential persistent
-//! node_set against an owned/editable HAMT builder.
-
-use @std.date
+//! The runtime benchmark seam materializes cached-hash entries once, then times
+//! sequential persistent insertion, owned/editable insertion, direct bottom-up
+//! construction, and bulk order construction independently. Every returned
+//! dictionary must pass the same complete key-order/value parity oracle.
 
 kmult: Int = 0 - 7046029254386353131
 
@@ -21,29 +18,64 @@ fn dget(m: Dict<Int, Int>, k: Int) Int {
   }
 }
 
-fn bench_compact(n: Int) Void {
+fn make_dense_source(n: Int) Dict<Int, Int> {
   m: Dict<Int, Int> = Dict.new()
-  i := 0
+  first_live := n / 2
+  i := first_live
   for i < n {
     m[key_of(i)] = i
     i = i + 1
   }
-
-  removed := n / 2 - 1
-  i = 0
-  for i < removed {
-    m = .remove(key_of(i))
-    i = i + 1
-  }
-
-  t0 := date.now()
-  m = .remove(key_of(removed))
-  t1 := date.now()
-
-  guard := m.len() + dget(m, key_of(n / 2)) + dget(m, key_of(n - 1)) + dget(m, key_of(0))
-  compact_ms := t1 - t0
-  println("compact n=${n} live=${m.len()} final_remove=${compact_ms}ms guard=${guard}")
+  m
 }
 
-bench_compact(65536)
-bench_compact(1048576)
+fn verify_result(m: Dict<Int, Int>, n: Int) Bool {
+  first_live := n / 2
+  expect_live := n - first_live
+  ks := m.keys()
+  ok := m.len() == expect_live and ks.len() == expect_live
+  j := 0
+  for j < ks.len() {
+    want_i := first_live + j
+    ok = ok and ks[j] == key_of(want_i) and dget(m, key_of(want_i)) == want_i
+    j = j + 1
+  }
+  r := 0
+  for r < first_live {
+    ok = ok and dget(m, key_of(r)) == 0 - 1
+    r = r + 1
+  }
+  ok
+}
+
+fn run_sample(source: Dict<Int, Int>, n: Int, label: String) Void {
+  results := source.bench_builders()
+  timings := Dict.bench_timings()
+  parity := results.len() == 3 and timings.len() == 5
+  i := 0
+  for i < results.len() {
+    parity = parity and verify_result(results[i], n)
+    i = i + 1
+  }
+  status := if parity {
+    "PASS"
+  } else {
+    "FAIL"
+  }
+  println(
+    "${label} n=${n} live=${source.len()} prep=${timings[0]}ms sequential=${timings[1]}ms editable=${timings[2]}ms bottom_up=${timings[3]}ms order=${timings[4]}ms parity=${status}",
+  )
+}
+
+fn bench_builders(n: Int) Void {
+  source := make_dense_source(n)
+
+  // Warm every builder and the timer/import paths before reporting samples.
+  run_sample(source, n, "warmup")
+  run_sample(source, n, "sample1")
+  run_sample(source, n, "sample2")
+  run_sample(source, n, "sample3")
+}
+
+bench_builders(65536)
+bench_builders(1048576)

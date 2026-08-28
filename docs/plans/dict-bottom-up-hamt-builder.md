@@ -87,13 +87,13 @@ It does not cover:
 - Modify `boot/bench/dict_compact_builder_spike.tw`
 - Inspect `boot/compiler/codegen/runtime/dict.tw`
 
-- [ ] Preserve the current sequential baseline before changing runtime routing.
+- [ ] Note the current routing: `compact()` already calls `node_set_owned` (the owned/editable builder), so the committed bench measures the editable path, not sequential. Restore or retain a separately selectable `node_set` path to reproduce the "sequential builder" column — do not assume sequential is the live baseline.
 - [ ] Keep the owned/editable result as a separately selectable builder rather than overwriting the only comparison path.
 - [ ] Warm up before reporting and record multiple samples for timer stability.
 - [ ] Keep content and insertion-order guards for every strategy.
 - [ ] Measure the builder seam separately at 65K and 1M-scale inputs.
 
-The `compact()` seam is an expedient input synthesizer, not the final freeze API. Its old-HAMT value lookups must either be timed separately or reported as overhead absent from a real MutDict stream.
+**Precondition — shared dense input (hard requirement, not advisory):** All three strategies must consume the *same* pre-materialized dense entries produced in Task 2. The current `compact()` seam performs one `node_get` per entry (`dict.tw:2132`) to recover the value from the old HAMT; a real MutDict stream would not pay this. If the bottom-up path reads values straight from dense entries while the sequential/editable baselines still probe the old HAMT, the comparison is skewed toward bottom-up. Either all strategies read from the dense entries, or the `node_get` overhead is measured and subtracted identically from every strategy. The `compact()` seam is an input synthesizer, not the final freeze API.
 
 ### Task 2 — Define spike-only dense entries
 
