@@ -24,4 +24,61 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "empty dense input yields empty dict",
+      fn() {
+        empty: Vector<Int> = []
+        d := Dict.build_dense_test(empty, empty, empty)
+        try assert.equal(d.len(), 0)
+        try assert.equal(d.keys().len(), 0)
+        try assert.equal(d.get_by_hash(0, 0), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "singleton dense input yields a one-entry dict",
+      fn() {
+        d := Dict.build_dense_test([42], [7], [700])
+        try assert.equal(d.len(), 1)
+        try assert.equal(d.get_by_hash(42, 7), .Some(700))
+        try assert.equal(d.get_by_hash(42, 8), .None)
+        ks := d.keys()
+        try assert.equal(ks.len(), 1)
+        try assert.equal(ks[0], 7)
+        .Ok({})
+      },
+    )
+    .test(
+      "deep shared hash prefix builds a nested node chain",
+      fn() {
+        // low 50 bits equal (fragments 0..9 shared); differ at bit 50 (fragment 10)
+        shared_lo := 5
+        h_a := shared_lo
+        h_b := shared_lo + (1 << 50)
+        d := Dict.build_dense_test([h_a, h_b], [111, 222], [1, 2])
+        try assert.equal(d.len(), 2)
+        try assert.equal(d.get_by_hash(h_a, 111), .Some(1))
+        try assert.equal(d.get_by_hash(h_b, 222), .Some(2))
+
+        // wrong hash must miss even with a real key
+        try assert.equal(d.get_by_hash(h_a, 222), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "equal full hash with distinct keys forms a retrievable collision",
+      fn() {
+        h := 1 << 40 // any shared 64-bit hash
+        d := Dict.build_dense_test([h, h], [11, 22], [1, 2])
+        try assert.equal(d.len(), 2)
+        try assert.equal(d.get_by_hash(h, 11), .Some(1))
+        try assert.equal(d.get_by_hash(h, 22), .Some(2))
+        try assert.equal(d.get_by_hash(h, 33), .None)
+        ks := d.keys()
+        try assert.equal(ks.len(), 2)
+        try assert.equal(ks[0], 11) // insertion order preserved through collision
+        try assert.equal(ks[1], 22)
+        .Ok({})
+      },
+    )
 }
