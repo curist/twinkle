@@ -5,9 +5,14 @@
 self-host fixed point + full boot/rust suites green. The accepted caller region
 + upgraded owned clone now move to flat `mutvec_*` ops across the call boundary
 (`s4_phase.apply_s4_rewrite` + `mutvec_repr.apply_s4_abi_upgrades`); no-escape
-scratch → zero in-loop freezes, escape → one boundary freeze. Remaining S4
-slices (below): param-sourced `nbody` `advance`, HP-5 sibling clones for mixed
-callers, non-Int family fixture (Test B).
+scratch → zero in-loop freezes, escape → one boundary freeze. HP-5 sibling
+clones for mixed callers also landed (a `${clone_name}$mv` sibling carries the
+MutVec ABI while non-S4 sites keep the persistent clone), and producer discovery
+is narrowed to only the boxed-`collect`/`make` seeds the reused caller-region
+lowering can actually rewrite (array-literal/typed-freeze seeds fall back to
+persistent — reject-by-default). Remaining S4 slices (below): param-sourced
+`nbody` `advance` (thaw a `PVec` parameter at entry), non-Int family fixture
+(Test B), and a compiled-and-run checksum guard in the boot suite.
 **Track:** Sound uniqueness & mutable lowering → **storage S4** (owned-specialized
 mutable ABI across calls). The S4 *design* already exists — see
 [sound-uniqueness/storage/README.md → S4](sound-uniqueness/storage/README.md#s4--owned-specialized-mutable-abi-across-calls)
