@@ -203,6 +203,28 @@ change touches codegen.
   nodes is a real per-node tax; iterate the unbounded spine, recurse the bounded
   nesting.*
 
+**Interprocedural MutVec (S4)**
+
+- **`run_s4` discovery scope — gate to route-caller functions** (`run_s4`
+  ~1.95s → ~0.17s, ~11×). The interprocedural-MutVec phase ran
+  `detect_call_thread_regions` over **all ~4100 functions** on every compile,
+  and `detect` rebuilt the whole `route_site_targets` table + a builtin lookup
+  per call. On `boot/main.tw` (which claims zero regions) that was ~1.95s — ~9%
+  of wall — of pure overhead. Two output-identical fixes: **(a)** hoist the
+  spec-invariant inputs (route table + `vector$len` id) out of the ~4100-call
+  loop (`detect_call_thread_regions_with`); **(b)** only a function that *calls a
+  routed clone* can host a region, so gate the scan to the route-caller subset,
+  recovering each `route_site`'s caller func-id by unpairing the Szudzik
+  `vid.site_key` (self-contained integer `isqrt` — importing `@std.math` would
+  drag `math.tw` into the compiler's bootstrap graph, which fails on `Float.abs`
+  at the self-host stage). Sound for over-cap routes (`clone_func = -1`) too,
+  since it keys on the site's caller, not on whether a clone exists. Byte-
+  identical (self-host fixed point holds); a `site_key_func` round-trip test
+  across both pairing branches guards the inverse. *Lesson (same as the
+  `prepare_backend` typed-vector filter): a whole-program scan should be gated to
+  the functions it can actually classify — here, decode the classifiable set
+  straight out of the phase's own route table instead of walking every body.*
+
 **Sound-uniqueness codegen** (roughly halved the two dominant late phases)
 
 - **Summary-reuse.** The mutable-decision producer seeds its scoped summary from
@@ -296,22 +318,6 @@ broad rewrites unless instrumentation proves the structural cost is real.
   `optimize`'s cleanest identified lever is a `count_uses`/`collect_assigned_locals`
   fusion in `dead_let` (~25ms, modest, COW-correctness-sensitive). `verify` is
   dominated by per-node type checks, not the pre-walk.
-- **S4 (`run_s4`) discovery scope — regressed the compiler self-build ~1.95s for
-  zero self-build benefit.** The interprocedural-MutVec phase (`s4_phase.run_s4`,
-  landed 2026-08-28) runs `detect_call_thread_regions` over **all ~4100
-  functions** on every compile. On `boot/main.tw` it claims **zero** regions
-  (byte-identical output), yet costs **~1.95s** (isolated `[time] run_s4` line) —
-  ~9% of the ~22s wall — because the scan is unconditional. Two output-identical
-  levers, both matching existing lessons here: **(a)** `detect_call_thread_regions`
-  rebuilds `route_site_targets(spec)` on every one of the ~4100 calls though it
-  only depends on `spec` — hoist it into `run_s4` and pass it in (the "hoist a
-  per-item recompute that only depends on the enclosing scope" lesson). **(b)**
-  Only a function that *calls a routed owned clone* can host a thread region, so
-  gate the whole scan to the route-caller subset (decode caller func-ids from
-  `spec.routes[*].route_sites` once), skipping `collect_defs` + the def walk on the
-  rest — the same "scope a whole-program analysis to the classifiable subset"
-  shape as the `prepare_backend` typed-vector filter above. Measure-gate on
-  byte-identity + `make stage2`; expect most of the 1.95s back.
 - **Sound-uniqueness floor.** 8G's whole-program summary fixpoint is inherent (it
   decides clones). Seed-validation reruns are largely exhausted (remaining
   headroom means a soundness-critical batched/dependency-ordered seed-retraction
