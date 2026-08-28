@@ -197,11 +197,67 @@ pub type S4Region = .{
 // `detect_call_thread_regions` call; a plain reconstruction of the same table
 // `variant_specialize.tw`'s own `rewrite_op` builds and looks up call-target
 // rewrites against (see the module-header note above).
-fn route_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
+pub fn route_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
   out: Dict<Int, Int> = Dict.new()
   for r in spec.routes {
     for sk in r.route_sites {
       out[sk] = r.clone_func
+    }
+  }
+  out
+}
+
+// Recover the caller `func_id` component of a `vid.site_key(func_id, local_id)`
+// value — the injective inverse of the Szudzik pairing in `variant_id.tw`. Both
+// components are dense non-negative ints, so `Math.isqrt` (exact integer square
+// root) recovers the layer without float rounding: `q = isqrt(z)` is the pair's
+// larger component, and the remainder places `func_id` on whichever side the
+// pairing chose (`func_id >= local_id` vs `<`).
+pub fn site_key_func(z: Int) Int {
+  q := isqrt(z)
+  rem := z - q * q
+  if rem < q {
+    rem
+  } else {
+    q
+  }
+}
+
+// Largest `r` with `r*r <= n`, by binary search (self-contained so this module
+// takes no `@std.math` dependency — importing it would pull `math.tw` into the
+// compiler's own bootstrap graph). `n` here is a `site_key`, always >= 0.
+fn isqrt(n: Int) Int {
+  if n < 2 {
+    return n
+  }
+  lo := 1
+  hi := n
+  ans := 1
+  for lo <= hi {
+    mid := lo + (hi - lo) / 2
+    if mid <= n / mid {
+      ans = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  ans
+}
+
+// The set of caller `func_id`s that appear in ANY route site. A function whose
+// id is absent here has no call site the routing table maps to a clone, so it
+// can never host a call-thread region — `detect_call_thread_regions` would walk
+// its whole body only to find no threadable call. Gating the per-module scan on
+// this set (built once from `spec.routes`) skips that walk for the ~99% of
+// functions the specializer never routed a call in — sound for every case,
+// including over-cap routes (clone_func = -1), because it keys on the site's
+// caller, not on whether a clone exists. Built once per `run_s4`.
+pub fn route_caller_funcs(spec: variant_specialize.SpecializeResult) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for r in spec.routes {
+    for sk in r.route_sites {
+      out[site_key_func(sk)] = true
     }
   }
   out
@@ -475,9 +531,25 @@ pub fn detect_call_thread_regions(
   spec: variant_specialize.SpecializeResult,
   b: BuiltinRegistry,
 ) Vector<S4Region> {
+  detect_call_thread_regions_with(
+    func,
+    route_site_targets(spec),
+    builtins.id(b, "vector$len").id,
+    b,
+  )
+}
+
+// Hoisted core: `site_to_clone` (the route table) and `len_id` depend only on
+// `spec`/`builtins`, not on `func`, so `run_s4` builds them ONCE and threads
+// them across the per-module scan instead of paying `route_site_targets`'s
+// whole-routes rebuild + a builtin lookup on every one of the ~4100 functions.
+pub fn detect_call_thread_regions_with(
+  func: AnfFunctionDef,
+  site_to_clone: Dict<Int, Int>,
+  len_id: Int,
+  b: BuiltinRegistry,
+) Vector<S4Region> {
   defs := collect_defs(func.body, Dict.new())
-  site_to_clone := route_site_targets(spec)
-  len_id := builtins.id(b, "vector$len").id
   regions: Vector<S4Region> = []
   for id, _op in defs {
     handle := LocalId.{ id }

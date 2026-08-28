@@ -48,6 +48,7 @@ use compiler.mono_type.{MonoType}
 use compiler.opt.semantics as semantics
 use compiler.pipeline
 use compiler.resolver
+use compiler.variant_id as vid
 use lib.module.loader
 
 fn fixtures_dir() String {
@@ -838,6 +839,34 @@ pub fn suite() runner.Suite {
         dec := s4_phase.run_s4(st.spec, st.builtins)
         try assert.equal(dec.abi_upgrades.len(), 0)
         try assert.equal(dec.accepted.len(), 0)
+        .Ok({})
+      },
+    )
+    // Scan-gate soundness: `route_caller_funcs` gates the per-module discovery
+    // scan on the caller side of each `route_site`, recovered by unpairing the
+    // Szudzik `vid.site_key`. If that inverse is wrong, `run_s4` would skip a
+    // function that really does host a routed call (dropping a real region → an
+    // output change), so pin the round-trip across both pairing branches
+    // (func>=local and func<local) and the zero/equal edges.
+    .test(
+      "site_key_func inverts vid.site_key across both branches",
+      fn() Result<Void, String> {
+        pairs := [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [5, 5],
+          [7, 3],
+          [3, 7],
+          [4123, 0],
+          [12, 4123],
+          [4123, 4123],
+        ]
+        for p in pairs {
+          f := p[0]
+          l := p[1]
+          try assert.equal(s4_region.site_key_func(vid.site_key(f, l)), f)
+        }
         .Ok({})
       },
     )

@@ -44,7 +44,8 @@ use compiler.builder_region_detect.{atom_is_local}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutvec_region.{MutVecRegion, collect_defs, rewrite_regions_in_func}
-use compiler.codegen.s4_region.{S4Exit, S4Region, detect_call_thread_regions}
+use compiler.codegen.s4_region
+use compiler.codegen.s4_region.{S4Exit, S4Region}
 use compiler.codegen.s4_verify.{clone_site_targets, func_def_of, sole_receiver_index, verify_region}
 use compiler.codegen.variant_specialize
 use compiler.codegen.variant_specialize.{SpecializeResult}
@@ -99,8 +100,20 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
   // without re-running discovery. Program order preserved (append per func).
   accepted_by_func: Dict<Int, Vector<S4Region>> = Dict.new()
 
+  // Spec-invariant discovery inputs, built once and threaded through the scan.
+  // `route_callers` gates the scan to the functions that actually call a routed
+  // clone (the only ones that can host a thread region); `route_targets`/`len_id`
+  // are the per-function-invariant tables `detect_call_thread_regions` otherwise
+  // rebuilds ~4100 times.
+  route_callers := s4_region.route_caller_funcs(spec)
+  route_targets := s4_region.route_site_targets(spec)
+  len_id := builtins.id(b, "vector$len").id
+
   for func in spec.anf.functions {
-    regions := detect_call_thread_regions(func, spec, b)
+    if !route_callers.has(func.func_id.id) {
+      continue
+    }
+    regions := s4_region.detect_call_thread_regions_with(func, route_targets, len_id, b)
     if regions.len() > 0 {
       defs := collect_defs(func.body, Dict.new())
       site_to_clone := clone_site_targets(spec)
