@@ -76,7 +76,7 @@ pub fn suite() runner.Suite {
         try assert.equal(d.get_by_hash(h, 33), .None)
         ks := d.keys()
         try assert.equal(ks.len(), 2)
-        try assert.equal(ks[0], 11) // insertion order preserved through collision
+        try assert.equal(ks[0], 11) // bulk order construction preserves dense insertion order
         try assert.equal(ks[1], 22)
         .Ok({})
       },

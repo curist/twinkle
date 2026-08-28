@@ -370,15 +370,33 @@ pub fn suite() runner.Suite {
           try assert.equal(d.get(k), .Some(j * 20))
         }
 
-        // A further removal after compaction must tombstone the correct slot:
-        // remove key 0 (order position 0); everything else stays intact.
-        d = .remove(0)
-        try assert.equal(d.len(), n - 1)
-        try assert.equal(d.get(0), .None)
-        try assert.equal(d.get(2), .Some(20))
-        ks2 := d.keys()
-        try assert.equal(ks2.len(), n - 1)
-        try assert.equal(ks2[0], 2)
+        // A further removal after compaction must tombstone the rewritten slot.
+        // Key 2 moved from original position 2 to dense position 1.
+        published := d
+        derived := published.remove(2)
+        try assert.equal(derived.len(), n - 1)
+        try assert.equal(derived.get(2), .None)
+        try assert.equal(derived.get(4), .Some(40))
+        derived_keys := derived.keys()
+        try assert.equal(derived_keys.len(), n - 1)
+        for k, j in derived_keys {
+          expected_key := if j == 0 {
+            0
+          } else {
+            (j + 1) * 2
+          }
+          try assert.equal(k, expected_key)
+          try assert.equal(derived.get(k), .Some(expected_key * 10))
+        }
+
+        // The persistent removal must not mutate the published version.
+        try assert.equal(published.len(), n)
+        try assert.equal(published.get(2), .Some(20))
+        published_keys := published.keys()
+        try assert.equal(published_keys.len(), n)
+        try assert.equal(published_keys[0], 0)
+        try assert.equal(published_keys[1], 2)
+        try assert.equal(published_keys[2], 4)
         .Ok({})
       },
     )
