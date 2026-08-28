@@ -1,0 +1,27 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+// Temporary suite: drives node_build_bottom_up via the engineered-hash seam
+// (Dict.build_dense_test / d.get_by_hash). Removed with the seam once real
+// MutDict tests exist. hash_i64 is a non-invertible wyhash mix, so engineered
+// hashes are the only way to reach the collision / deep-prefix builder paths.
+pub fn suite() runner.Suite {
+  runner
+    .suite("dict_builder_shapes")
+    .test(
+      "seam builds and looks up distinct entries in order",
+      fn() {
+        d := Dict.build_dense_test([10, 20, 30], [1, 2, 3], [100, 200, 300])
+        try assert.equal(d.len(), 3)
+        try assert.equal(d.get_by_hash(10, 1), .Some(100))
+        try assert.equal(d.get_by_hash(20, 2), .Some(200))
+        try assert.equal(d.get_by_hash(30, 3), .Some(300))
+        ks := d.keys()
+        try assert.equal(ks.len(), 3)
+        try assert.equal(ks[0], 1)
+        try assert.equal(ks[1], 2)
+        try assert.equal(ks[2], 3)
+        .Ok({})
+      },
+    )
+}

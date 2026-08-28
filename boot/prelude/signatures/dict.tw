@@ -39,8 +39,7 @@ pub fn remove<K, V>(d: Dict<K, V>, k: K) Dict<K, V> {
 }
 
 /// Spike-only: select the next experimental builder execution order.
-pub fn bench_builder_rotation(rotation: Int) Void {
-}
+pub fn bench_builder_rotation(rotation: Int) Void {}
 
 /// Spike-only: build one dense entry stream with each experimental HAMT builder.
 pub fn bench_builders<K, V>(d: Dict<K, V>) Vector<Dict<K, V>> {
@@ -50,4 +49,14 @@ pub fn bench_builders<K, V>(d: Dict<K, V>) Vector<Dict<K, V>> {
 /// Spike-only: return the latest dense-prep, builder, and order phase timings.
 pub fn bench_timings() Vector<Float> {
   []
+}
+
+/// Test-only: build a Dict from engineered (hash, key, value) triples, bypassing hash_key.
+pub fn build_dense_test(hashes: Vector<Int>, keys: Vector<Int>, vals: Vector<Int>) Dict<Int, Int> {
+  Dict.new()
+}
+
+/// Test-only: look up a key using an explicitly supplied hash (for engineered shapes).
+pub fn get_by_hash(d: Dict<Int, Int>, hash: Int, key: Int) Option<Int> {
+  .None
 }

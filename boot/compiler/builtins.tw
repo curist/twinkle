@@ -346,6 +346,13 @@ fn builtin_abi(name: String) AbiContract {
     "dict$bench_builder_rotation" => abi([.I32], []),
     "dict$bench_builders" => abi([dict_n()], [pvec_()]),
     "dict$bench_timings" => abi([], [pvec_()]),
+    "dict$build_dense_test" => abi([pvec_n(), pvec_n(), pvec_n()], [dict_()]),
+    // Result declared as .Anyref (not variant_()) so the generic runtime-call
+    // coercion (emit_coerce_stack's Anyref branch -> emit_unbox_from_anyref)
+    // rebuilds the caller's monomorphized Option<Int> from the raw Variant via
+    // the Sum-layout bridge helper, instead of an unsafe raw ref.cast between
+    // the generic Variant and the typed-unboxed Option representation.
+    "dict$get_by_hash" => abi([dict_n(), .I64, .I64], [.Anyref]),
     "host_read_file" => abi([str_n()], [variant_null()]),
     "host_read_file_string" => abi([str_n()], [variant_null()]),
     "host_write_file" => abi([str_n(), str_n()], []),
@@ -809,9 +816,20 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     .concat(mutvec_rt_defs("_byte"))
     // Spike-only harness APIs come after every generated family so all
     // established builtin FuncIds remain unchanged.
-    .append(rt("dict$bench_builder_rotation", "rt.dict", "bench_builder_rotation", .Some("Dict.bench_builder_rotation")))
+    .append(
+      rt(
+        "dict$bench_builder_rotation",
+        "rt.dict",
+        "bench_builder_rotation",
+        .Some("Dict.bench_builder_rotation"),
+      ),
+    )
     .append(rt("dict$bench_builders", "rt.dict", "bench_builders", .Some("Dict.bench_builders")))
     .append(rt("dict$bench_timings", "rt.dict", "bench_timings", .Some("Dict.bench_timings")))
+    .append(
+      rt("dict$build_dense_test", "rt.dict", "build_dense_test", .Some("Dict.build_dense_test")),
+    )
+    .append(rt("dict$get_by_hash", "rt.dict", "get_by_hash", .Some("Dict.get_by_hash")))
 }
 
 // ── Full registry ──

@@ -75,6 +75,8 @@ pub fn module() WasmModule {
     bench_builder_rotation_fn(),
     bench_builders_fn(),
     bench_timings_fn(),
+    build_dense_test_fn(),
+    get_by_hash_fn(),
     make_fn(),
     len_fn(),
     keys_fn(),
@@ -2603,6 +2605,127 @@ fn freeze_dense_fn() FuncDef {
       .RefAsNonNull,
       .I32Const(0),
       .StructNew(t_PDICT),
+    ],
+  }
+}
+
+// ── build_dense_test(hashes, keys, vals) -> ref PDict ─── TEST-ONLY (temporary) ─
+// Build a PDict directly from parallel engineered (hash, key, value) vectors,
+// bypassing hash_key so tests can force deep-prefix and full-hash-collision
+// shapes. Keys/vals are stored as their already-boxed anyref elements; only the
+// hash is unboxed to i64 (mirroring hash_key's i31 / BoxedInt idiom).
+fn build_dense_test_fn() FuncDef {
+  // p0=hashes, p1=keys, p2=vals; L3=n, L4=dense, L5=i, L6=hbox, L7=h
+  .{
+    name: "build_dense_test",
+    params: [pvec_NULL, pvec_NULL, pvec_NULL],
+    results: [pdict_REF],
+    locals: [.I32, arr_NULL, .I32, .Anyref, .I64],
+    body: [
+      .LocalGet(0),
+      .Call("arr_len"),
+      .LocalSet(3),
+      .RefNull(.Any),
+      .LocalGet(3),
+      .ArrayNew(t_ARRAY),
+      .LocalSet(4),
+      .I32Const(0),
+      .LocalSet(5),
+      .Block(
+        "dexit",
+        .None,
+        [
+          .Loop(
+            "dloop",
+            .None,
+            [
+              .LocalGet(5),
+              .LocalGet(3),
+              .I32GeS,
+              .BrIf("dexit"),
+              // hbox = hashes[i]; h = unbox(hbox)
+              .LocalGet(0),
+              .LocalGet(5),
+              .Call("arr_get"),
+              .LocalSet(6),
+              .LocalGet(6),
+              .RefTest(false, .I31),
+              .If(
+                .Some(.I64),
+                [.LocalGet(6), .RefCast(false, .I31), .I31GetU, .I64ExtendI32U],
+                [.LocalGet(6), .RefCast(false, .Named(t_BOXED_INT)), .StructGet(t_BOXED_INT, 0)],
+              ),
+              .LocalSet(7),
+              // dense[i] = HamtEntry{ h, keys[i], vals[i], order_index: i }
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(7),
+              .LocalGet(1),
+              .LocalGet(5),
+              .Call("arr_get"),
+              .LocalGet(2),
+              .LocalGet(5),
+              .Call("arr_get"),
+              .LocalGet(5),
+              .StructNew(t_HAMT_ENTRY),
+              .ArraySet(t_ARRAY),
+              .LocalGet(5),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(5),
+              .Br("dloop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(4),
+      .RefAsNonNull,
+      .LocalGet(3),
+      .Call("freeze_dense"),
+    ],
+  }
+}
+
+// ── get_by_hash(dict, hash, key) -> variant Option ─── TEST-ONLY (temporary) ────
+// Look up using an explicitly supplied hash (not hash_key), so engineered
+// collision/deep-prefix entries — whose stored hash is decoupled from the key —
+// are reachable. key arrives as i64; box it as BoxedInt to match how a plain
+// Int key gets boxed to anyref for generic Vector/Dict storage everywhere else
+// (emit_box_to_anyref: WI64 -> BoxedInt; i31 boxing is only used for Bool/Byte
+// scalar keys, not Int). Option wrapping mirrors get_option.
+fn get_by_hash_fn() FuncDef {
+  // p0=dict, p1=hash(i64), p2=key(i64); L3=keybox, L4=val
+  .{
+    name: "get_by_hash",
+    params: [pdict_NULL, .I64, .I64],
+    results: [variant_REF],
+    locals: [.Anyref, .Anyref],
+    body: [
+      .LocalGet(2),
+      .StructNew(t_BOXED_INT),
+      .LocalSet(3),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_PDICT, pd_ROOT),
+      .LocalGet(1),
+      .I32Const(0),
+      .LocalGet(3),
+      .Call("node_get"),
+      .LocalSet(4),
+      .LocalGet(4),
+      .RefIsNull,
+      .If(
+        .Some(variant_REF),
+        [.I32Const(0), .I32Const(0), .RefNull(.Named(t_ARRAY)), .StructNew(t_VARIANT)],
+        [
+          .I32Const(0),
+          .I32Const(1),
+          .LocalGet(4),
+          .ArrayNewFixed(t_ARRAY, 1),
+          .StructNew(t_VARIANT),
+        ],
+      ),
     ],
   }
 }
