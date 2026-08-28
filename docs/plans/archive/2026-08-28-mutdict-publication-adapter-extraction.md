@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Completed and archived. The adapter extraction, engineered-hash seam, adversarial builder fixtures, and mutation-proven compaction publication regression are landed.
+
 **Goal:** Extract the bottom-up HAMT builder into a reusable compiler-private `freeze_dense` publication adapter, route `Dict.compact()` through it, and cover the previously-untested deep-prefix and collision builder paths with an engineered-hash test seam.
 
 **Architecture:** The runtime dict (`boot/compiler/codegen/runtime/dict.tw`) is instruction-emitting code — each `*_fn()` returns a Wasm `FuncDef`. This slice pulls `compact()`'s inline tail (`node_build_bottom_up` + bulk order) into two new emitted functions, `freeze_dense(dense, len)` and `build_order_bulk(dense, len)`, matching the design in [mutdict-bottom-up-publication-adapter.md](mutdict-bottom-up-publication-adapter.md) §2. A temporary source-callable test seam (`Dict.build_dense_test` / `Dict.get_by_hash`) lets boot tests drive the builder with engineered hashes, which is the only way to reach the full-hash-collision path (the real `hash_i64` is a non-invertible wyhash mix).
@@ -648,14 +650,3 @@ git commit -m "test(dict): cover compaction order-index rewrite and post-compact
 **Placeholder scan:** No TBD/TODO. Every emit function has a full instruction body; every test has full Twinkle. The one judgment call left to the reviewer (local-index removal vs. leave-declared in Task 1 Step 4) is stated explicitly with the recommended low-risk option.
 
 **Type consistency:** `freeze_dense(dense: ref Array, len: i32) -> ref PDict` and `build_order_bulk(dense: ref Array, len: i32) -> ref PVec` are used consistently in Task 1 (compact call), Task 2 (`build_dense_test` calls `freeze_dense`). Seam source types `Dict.build_dense_test(Vector<Int>×3) Dict<Int,Int>` and `d.get_by_hash(Int, Int) Option<Int>` match their ABI (`[pvec_n×3]→[dict_]`, `[dict_n,.I64,.I64]→[variant_]`) and their test call sites.
-
----
-
-## Execution Handoff
-
-Plan complete. Two execution options:
-
-1. **Subagent-Driven (recommended)** — a fresh subagent per task with two-stage review between tasks. Good here because each task ends in a `target/twk test`-green, committed state and the runtime edits benefit from a fresh reviewer.
-2. **Inline Execution** — batch the tasks in this session with checkpoints.
-
-Which approach?

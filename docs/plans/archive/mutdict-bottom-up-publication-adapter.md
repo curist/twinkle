@@ -7,10 +7,12 @@
 > under "Migration and cleanup" must survive until their replacement lands, then
 > be removed as a unit.
 
-**Status:** Design proposed. The bottom-up builder core, dense entry type, and a
-first customer (`Dict.compact()`) already exist from the spike; this document
-settles the compiler-private *interface* that turns that core into the MutDict
-publication adapter and the eventual `Dict.compact()` implementation.
+**Status:** Archived after the now-implementable adapter slice landed. The
+compiler-private `freeze_dense` / `build_order_bulk` interface, `Dict.compact()`
+customer, engineered-hash fixtures, and permanent publication regression are
+implemented. The forward S5 MutDict lifecycle, arena-consumption, profiling, and
+cleanup contract remains historical input for a future active implementation
+plan rather than active work in this document.
 
 **Goal:** Specify a compiler-private adapter that materializes a dense,
 cached-hash, insertion-ordered stream of live entries into an ordinary immutable
@@ -28,10 +30,10 @@ MutDict dense storage
 ```
 
 **Primary context:**
-- [dict-bottom-up-hamt-builder.md](dict-bottom-up-hamt-builder.md) — spike result and crossover calibration
-- [mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md) — the dense freeze input / layout-C recommendation
-- [sound-uniqueness/storage/spike-tier0-dict.md](sound-uniqueness/storage/spike-tier0-dict.md)
-- [sound-uniqueness/storage/README.md](sound-uniqueness/storage/README.md) — S5 track and lifecycle contract
+- [dict-bottom-up-hamt-builder.md](../dict-bottom-up-hamt-builder.md) — spike result and crossover calibration
+- [mutdict-dense-freeze-input.md](../mutdict-dense-freeze-input.md) — the dense freeze input / layout-C recommendation
+- [sound-uniqueness/storage/spike-tier0-dict.md](../sound-uniqueness/storage/spike-tier0-dict.md)
+- [sound-uniqueness/storage/README.md](../sound-uniqueness/storage/README.md) — S5 track and lifecycle contract
 - `boot/compiler/codegen/runtime/dict.tw`, `boot/compiler/codegen/runtime/types.tw`
 
 ---
@@ -44,7 +46,7 @@ follows from them.
 1. **Dense element = reuse `HamtEntry`.** The dense freeze contract element is the
    existing `HamtEntry { hash: i64, key: anyref, val: anyref, order_index: i32 }`.
    It is structurally the `DenseFreezeEntry` of
-   [mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md) *and* is exactly
+   [mutdict-dense-freeze-input.md](../mutdict-dense-freeze-input.md) *and* is exactly
    what HAMT leaves store, so a singleton bucket emits its entry as a leaf with
    zero conversion. Note that the *builder input* is `array<HamtEntry>`; the MutDict
    arena element is not literally `HamtEntry` (it needs a mutable `val` and a `live`
@@ -98,7 +100,7 @@ HamtEntry { hash: i64, key: anyref, val: anyref, order_index: i32 }
 ```
 
 Invariants the producer must guarantee (unchanged from
-[mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md)):
+[mutdict-dense-freeze-input.md](../mutdict-dense-freeze-input.md)):
 
 - owns every live *unique* key and value (ownership of the backing, not of the
   reference-typed keys/values, which may stay shared);
@@ -115,7 +117,7 @@ with zero conversion, so the builder never reshapes. Parallel typed arrays would
 save the per-entry struct allocation but require a leaf-materialization pass at
 every singleton and index-permutation partitioning — trading a paid-once allocation
 for pervasive extra work on the hot construction path. This consciously supersedes
-[mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md)'s "parallel typed GC
+[mutdict-dense-freeze-input.md](../mutdict-dense-freeze-input.md)'s "parallel typed GC
 arrays … likely preferable" lean: that lean was about the *arena/storage* layout,
 whereas the deciding factor here is the *builder input*, where matching the leaf
 type wins.
@@ -358,7 +360,7 @@ These are the correctness oracle for §8.
    `freeze_dense`, and consumes the handle (§4).
 
 Reconciling the seam with layout-C in
-[mutdict-dense-freeze-input.md](mutdict-dense-freeze-input.md) (stable dense entry
+[mutdict-dense-freeze-input.md](../mutdict-dense-freeze-input.md) (stable dense entry
 arena + open-addressing index):
 
 - **Arena element is not structurally `HamtEntry`.** Layout-C's element is

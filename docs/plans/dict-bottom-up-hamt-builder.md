@@ -2,7 +2,7 @@
 
 > **For agentic workers:** The correctness/performance spike is complete. Keep its benchmark-only machinery isolated while completing the production-adapter and cleanup work recorded below.
 
-**Status:** Successful spike. Direct bottom-up construction is correct on the measured random-hash workload and materially faster than both incremental builders. Size-aligned crossover calibration now supports a real-dense publication crossover near `k/n = 0.12–0.15` at 1M live entries. Production interface design is **settled** in [mutdict-bottom-up-publication-adapter.md](mutdict-bottom-up-publication-adapter.md); adversarial hash-shape coverage and spike-surface cleanup remain open (the cleanup is now sequenced by the adapter doc's §9).
+**Status:** Successful spike. Direct bottom-up construction is correct on the measured random-hash workload and materially faster than both incremental builders. Size-aligned crossover calibration now supports a real-dense publication crossover near `k/n = 0.12–0.15` at 1M live entries. The production interface design is archived in [mutdict-bottom-up-publication-adapter.md](archive/mutdict-bottom-up-publication-adapter.md) after the adapter and adversarial hash-shape coverage landed; spike-surface cleanup remains gated on real MutDict evidence and is sequenced by the archived design's §9.
 
 **Goal:** Determine whether building the persistent HAMT directly from a dense stream of cached-hash entries materially lowers MutDict publication cost and shifts the flat→persistent crossover. **Answer: yes; productionization is justified, and the random-hash workload now has a decision-grade size-aligned calibration, but no universal compiler threshold is encoded yet.**
 
@@ -196,7 +196,7 @@ and adversarial hash shapes remain separate work.
 ### Task 5 — Production direction and spike cleanup
 
 - [x] Decide that direct bottom-up construction survives as the intended MutDict publication adapter and as the current `Dict.compact()` rebuild strategy.
-- [x] Design a compiler-private dense input and workspace interface. The input owns live unique keys, values, cached full hashes, and insertion-order indices; the builder performs no lookup or rehash. **Settled in [mutdict-bottom-up-publication-adapter.md](mutdict-bottom-up-publication-adapter.md)** (dense seam = immutable `array<HamtEntry>`; naive scratch behind a stable `freeze_dense` entry point; ping-pong is a profiling-gated follow-up).
+- [x] Design a compiler-private dense input and workspace interface. The input owns live unique keys, values, cached full hashes, and insertion-order indices; the builder performs no lookup or rehash. **Settled in the archived [mutdict-bottom-up-publication-adapter.md](archive/mutdict-bottom-up-publication-adapter.md)** (dense seam = immutable `array<HamtEntry>`; naive scratch behind a stable `freeze_dense` entry point; ping-pong is a profiling-gated follow-up).
 - [ ] Make publication consume or invalidate the mutable handle and return an ordinary immutable `PDict` with no builder-owned mutable state reachable afterward. *(Design settled — §4/§5 of the adapter doc; execution is implementation-plan work.)*
 - [ ] Retain the naive partitioner behind the workspace interface first; add ping-pong only if allocation/GC profiling justifies it. *(Design settled — §3 of the adapter doc.)*
 - [ ] Remove spike-only public surfaces after the evidence is recorded: `Dict.bench_builders`, `Dict.bench_timings`, their builtin registrations/signatures, the timing global, and the `twinkle_runtime.now` import in `rt.dict`.
