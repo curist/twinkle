@@ -169,7 +169,7 @@ the read and fork angles too.
 transfer maps, is the *worst* case for flat — it forks per block with **few
 updates per block** (sparse `d`) at **small width** (32–60, where HAMT reads are
 near-constant and flat's read edge shrinks; see
-[fixpoint-map-intmap.md](../../fixpoint-map-intmap.md)'s round-2 rejection). So
+[fixpoint-map-intmap.md](../../archive/fixpoint-map-intmap.md)'s round-2 rejection). So
 persistent wins there on both fork and read. A good *first* flat customer is the
 opposite shape: a **large, owned, build-and-query dict that never fork-shares and
 never escapes** (flat build ≈ persistent build, then reads win 4–12× with no
@@ -222,6 +222,27 @@ transient builder cannot help at all, but it does not remove the flat→persiste
 crossover or the HAMT's sparse-fork advantage. Benchmark a direct bottom-up
 builder only together with the real GC-array `MutDict`, where its actual dense
 entry/hash arrays and order sidecar exist as inputs.
+
+## Real Wasm-GC arena follow-up (2026-08-29)
+
+The quick follow-up replaced the linear-memory proxy with the two candidate live
+arenas feeding the landed bottom-up `freeze_dense` adapter. Across the combined
+rotated 1M samples, Candidate M's unboxed in-place overwrite was about 20–24×
+faster, while Candidate H's immutable-entry shallow clone was roughly 20–30×
+cheaper and its dense seam was truly zero. With one full overwrite and one clone,
+H won pre-publication (median 31.98 ms versus M's 73.82 ms); with four overwrites
+per entry, M won (62.10 ms versus H's 107.13 ms). In the delete/reinsert workload,
+M's pre-clone lead was erased or reversed by its deep clone within overlapping
+ranges.
+
+The result fortifies rather than resolves the representation gate: the winner
+changes with update density and flat-clone frequency, and GC-sensitive ranges do
+not justify turning the measured 1x–4x crossover into a threshold. Correctness
+and emitted-shape guards passed, but construction and an end-to-end persistent
+control were not timed, and String keys remain unmeasured. The reviewed verdict is
+therefore **STOP WITHOUT SELECTION**. Candidate M and Candidate H remain open; the
+full table, caveats, and reopening requirements are in
+[the active arena gate](../../mutdict-dense-freeze-input.md#quick-spike-result-2026-08-29).
 
 ## Conclusions for S5 (revises the earlier decision)
 

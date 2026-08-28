@@ -12,12 +12,15 @@ done, ~2× lever, deferred pending a workload) and Float/Byte **param-sourced**
 `set_in_place` write-routing; and the later packages **S4** (owned-specialized mutable
 ABI / param-sourced thaw-from-`PVec`), **S5** (`MutDict`), and **S6** (Buffer-retirement
 perf gate) have no retained runtime implementation. S5's flat-index direction and
-dense publication adapter are settled, but its live arena element is now behind the
-measurement gate in [mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md):
-unboxed mutable records plus one conversion pass versus a boxed canonical
-`HamtEntry` control with external liveness. Representation decisions for S2/S3 and
-vector append settled 2026-08-01 (see [Settled decisions](#settled-decisions)); S5
-must record that arena result before its runtime starts.
+dense publication adapter are settled, but its live arena element remains behind
+the measurement gate in
+[mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md): unboxed
+mutable records plus one conversion pass versus a boxed canonical `HamtEntry`
+control with external liveness. The 2026-08-29 real Wasm-GC quick spike found a
+workload-dependent crossover and stopped without selecting either candidate.
+Representation decisions for S2/S3 and vector append settled 2026-08-01 (see
+[Settled decisions](#settled-decisions)); S5 runtime work remains blocked on the
+missing evidence and workload census.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:
@@ -155,7 +158,11 @@ build, producing a **real crossover near k/n ≈ 1** with sequential insertion.
 The existing in-place helper still path-copies internal nodes, so it was not a
 transient-HAMT proxy. A true owned/editable builder improves rebuilding by about
 1.3×: useful as a freeze helper, but not competitive with flat storage as the
-region representation. `MutDict` remains a *conditional* win.
+region representation. The 2026-08-29 real Wasm-GC arena follow-up fortified the
+next crossover: Candidate H wins with one full overwrite plus one clone, while
+Candidate M wins at four overwrites per entry. Construction and the persistent
+control remain missing, so `MutDict` remains conditional and neither arena is
+selected.
 
 ## Track invariants
 
@@ -411,12 +418,16 @@ measures two layout-C arena elements:
   replacement on overwrite, direct handoff while hole-free, and compaction after
   deletion.
 
-The unboxed arena is the provisional retained baseline. The canonical arena is a
+The real Wasm-GC quick spike left both candidates open. Candidate M's unboxed
+in-place overwrite was about 20–24× faster, but Candidate H's immutable-entry
+clone was roughly 20–30× cheaper and its dense seam was zero. H won the measured
+one-overwrite-plus-clone row, while M won at four overwrites per entry; churn plus
+clone had overlapping ranges. This workload-dependent result triggered the
+reviewed **STOP WITHOUT SELECTION** verdict. The canonical arena remains a
 zero-copy/cheap-clone control, not permission to silently weaken the unboxed
-throughput target; a measured win must explicitly reopen this section. If results
-are workload-dependent or neither complete publication path beats persistent Dict
-on update-dense rows, S5 stops before the full runtime rather than implementing
-both layouts.
+throughput target. S5 stays blocked until timed construction and persistent
+control evidence plus a workload census or more decision-specific measurements
+justify reopening the gate.
 
 A true owned/editable HAMT builder improves rebuilding by about 1.3× but retains
 per-entry HAMT traversal and is not the throughput target. The bottom-up adapter
