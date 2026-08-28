@@ -171,16 +171,22 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
     }
   }
 
-  // S4 (interprocedural MutVec, HP-2): discover + verify call-thread regions
-  // over the post-specialize module. INERT here — `decision.module` is
-  // `spec.anf` unchanged; no rewrite happens until a later task lands ABI
-  // support for an accepted region.
-  decision := s4_phase.run_s4(spec, builtins)
-  anf_spec := decision.module
   tvs := date.now()
 
   if timed {
     log_time("variant_specialize", tvs - tbr2)
+  }
+
+  // S4 (interprocedural MutVec): discover + verify producer-rooted call-thread
+  // regions over the post-specialize module and rewrite any accepted region's
+  // caller + upgraded clone body to flat `mutvec_*` ops. Byte-identical when no
+  // region is claimed (boot claims none), so self-host stays at the fixed point.
+  decision := s4_phase.run_s4(spec, builtins)
+  anf_spec := decision.module
+  ts4 := date.now()
+
+  if timed {
+    log_time("run_s4", ts4 - tvs)
   }
 
   // Final closure conversion.
