@@ -10,8 +10,10 @@
 **Status:** S5 representation gate stopped without selection after the 2026-08-29
 quick spike. The immutable publication adapter is landed, but the real Wasm-GC
 `MutDict` runtime and its retained storage layout have not started. Candidate M
-and Candidate H both remain open; construction, persistent-control, and workload
-evidence are required before the gate can be reopened.
+and Candidate H both remain open. Reopening requires timed construction, the
+missing k/n=1/8 row, churned-physical-state clone cost, separate HAMT/order/
+publication/total phase splits, the same-session persistent control, and workload
+evidence.
 
 **Goal:** Measure the smallest real Wasm-GC storage slice that distinguishes an
 unboxed mutable arena followed by one conversion pass from a canonical immutable
@@ -344,8 +346,12 @@ measurement is a later follow-up, not part of the arena choice.
 The quick spike exercised the two real Wasm-GC arena layouts at 65K and 1M, with
 rotated candidate order and post-warmup sampling. The decision evidence below
 combines the two rotated runs at 1M. Each cell is the median followed by the full
-observed range in milliseconds. Pre-publication includes the required flat clone;
-it excludes `freeze_dense`, which is common work after the representation seam.
+observed range in milliseconds. Every `clone` timing below is a
+**pre-churn-base clone**: the benchmark clones the original dense `n`-entry arena,
+then applies overwrite and churn to that clone. It does not measure cloning the
+resulting 1.25n-entry churned physical arena. Pre-publication includes that dense
+base clone; it excludes `freeze_dense`, which is common work after the
+representation seam.
 
 | workload / phase | Candidate M | Candidate H |
 |---|---:|---:|
@@ -357,9 +363,9 @@ it excludes `freeze_dense`, which is common work after the representation seam.
 | dense 4x overwrite | 5.00 (4.82–6.39) | 106.06 (95.23–177.70) |
 | dense 4x seam | 28.34 (27.23–38.86) | 0 direct |
 | dense 4x pre-publication incl. clone | 62.10 (54.36–69.61) | 107.13 (96.34–178.70) |
-| churn 1x clone | 28.90 (13.63–35.68) | 1.29 (1.12–1.33) |
+| churn 1x pre-churn-base clone | 28.90 (13.63–35.68) | 1.29 (1.12–1.33) |
 | churn 1x overwrite + churn + seam, no clone | 38.08 (30.41–76.66) | 57.09 (49.26–116.77) |
-| churn 1x pre-publication incl. clone | 64.17 (44.05–112.34) | 58.38 (50.58–117.99) |
+| churn 1x pre-publication incl. pre-churn-base clone | 64.17 (44.05–112.34) | 58.38 (50.58–117.99) |
 
 Candidate M's in-place overwrite is about 20–24× faster at the stable medians in
 these real GC layouts. Candidate H's clone is roughly 20–30× cheaper because it
@@ -369,9 +375,10 @@ clearly with one full overwrite and one flat clone, while M wins clearly at four
 overwrites per entry. The crossover lies inside the measured 1x–4x interval, but
 the GC-sensitive samples do not support a precise threshold.
 
-The delete/reinsert workload makes both candidates compact. M leads before the
-clone, but its required deep clone erases or reverses that advantage within the
-overlapping end-to-end ranges. `freeze_dense` then performs semantically common
+The delete/reinsert workload makes both candidates compact. The measured dense
+base clone erases or reverses M's pre-clone lead within the overlapping ranges,
+but this is not the required clone of the 1.25n churned physical state; that cost
+remains missing. `freeze_dense` then performs semantically common
 bottom-up HAMT and bulk-order work. Its combined medians are only a sanity check,
 not a representation advantage: dense 1x M 92.56 ms versus H 95.05 ms; dense 4x
 M 93.44 ms versus H 93.30 ms; churn M 93.74 ms versus H 96.13 ms. Candidate order
@@ -380,17 +387,22 @@ outliers were removed.
 
 All measured rows passed exhaustive value and equally sized absence checks,
 exact insertion-order checks, clone isolation, and post-publication persistent
-version guards. Emitted-WAT review confirmed that Candidate M overwrite uses
+version guards. After churn publication, persistent removal also checks the
+shortened length and exact remaining key order for both candidates, using the
+first reinserted key so a stale pre-compaction `order_index` cannot pass.
+Emitted-WAT review confirmed that Candidate M overwrite uses
 `struct.set`, Candidate H overwrite replaces an exact immutable `HamtEntry`, seam
 conversion does not hash or probe, and both paths call `freeze_dense`.
 
 **Reviewed verdict: STOP WITHOUT SELECTION.** This quick spike materially
-fortifies the tradeoff, but it intentionally did not time construction or
-implement the same-session persistent-control workload. String keys also remain
-unmeasured. Candidate M and Candidate H therefore remain open, and Task 4 stays
-hard-gated. Reopening requires the missing construction and persistent-control
-evidence plus a real-program census of overwrite density, removals, publication
-boundaries, and flat-preserving forks, or more decision-specific measurements.
+fortifies the tradeoff but is not decision-complete. The missing-evidence
+inventory is explicit: timed construction; k/n=1/8 at both scales; clone cost for
+the 1.25n churned physical state; separate HAMT-build, order-build, publication,
+and complete-workload totals; and the same-session persistent control. String
+keys also remain unmeasured. Candidate M and Candidate H therefore remain open,
+and Task 4 stays hard-gated. Reopening requires that evidence plus a real-program
+census of overwrite density, removals, publication boundaries, and flat-preserving
+forks, or more decision-specific measurements.
 
 ## Scope
 
@@ -448,21 +460,23 @@ It does not cover:
 
 ### Task 3 — Measure and record the representation decision
 
-- [x] Run dense overwrite, churn, clone, seam, and common `freeze_dense` builder
-  and order work in the same process.
-- [ ] Add timed construction and a same-session persistent-control workload.
-- [x] Keep exhaustive content, absence, insertion-order, clone-isolation, and
-  persistent-version guards.
-- [x] Record combined raw ranges, medians, phase splits, the bounded crossover,
-  and GC/timer caveats.
+- [x] Run dense overwrite, churn, pre-churn-base clone, seam, and combined
+  `freeze_dense` work in the same process.
+- [ ] Add timed construction, k/n=1/8 rows, a churned-physical-state clone, and a
+  same-session persistent-control workload.
+- [ ] Split `freeze_dense` into HAMT-build and order-build timings and report
+  publication and complete-workload totals separately.
+- [x] Keep exhaustive content, absence, insertion-order, clone-isolation,
+  persistent-remove-order, and persistent-version guards.
+- [x] Record combined raw ranges, medians, the bounded crossover, and GC/timer
+  caveats.
 - [x] Stop without selection according to the gate above.
 - [x] Add the result and rationale to this document and update the storage README.
 
 **Hard gate:** a stop verdict keeps Task 4 closed. Do not begin Task 4 until the
-representation gate is explicitly reopened, the missing construction and
-same-session persistent-control evidence is recorded together with the workload
-evidence required by the verdict, and an explicit reviewed verdict selects one
-retained layout.
+representation gate is explicitly reopened, every missing-evidence item above is
+recorded together with the workload evidence required by the verdict, and an
+explicit reviewed verdict selects one retained layout.
 
 ### Task 4 — Build the minimal retained open-addressing MutDict runtime
 

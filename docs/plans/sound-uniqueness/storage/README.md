@@ -105,9 +105,10 @@ freeze *constant* and the size of the win from going flat:
   region representation. Flat→HAMT freeze remains an O(n) full build, creating a
   real crossover near k/n ≈ 1 with the current sequential builder. `MutDict` is
   therefore **conditional**: gated on a proven update-dense / wide region (the S4
-  stay-low-across-a-chain case), with persistent fallback otherwise. It keeps an
-  insertion-order sidecar, and old-version observability stays gated on the
-  ownership proof.
+  stay-low-across-a-chain case), with persistent fallback otherwise. The
+  insertion-order sidecar was a Tier-0 proxy result, not the current live layout:
+  layout C uses stable arena identity and compacts that arena for ordered
+  publication. Old-version observability stays gated on the ownership proof.
 
 ### Size-dependence and where the decision lives
 
@@ -159,10 +160,11 @@ The existing in-place helper still path-copies internal nodes, so it was not a
 transient-HAMT proxy. A true owned/editable builder improves rebuilding by about
 1.3×: useful as a freeze helper, but not competitive with flat storage as the
 region representation. The 2026-08-29 real Wasm-GC arena follow-up fortified the
-next crossover: Candidate H wins with one full overwrite plus one clone, while
-Candidate M wins at four overwrites per entry. Construction and the persistent
-control remain missing, so `MutDict` remains conditional and neither arena is
-selected.
+next crossover: Candidate H wins with one full overwrite plus one
+pre-churn-base clone, while Candidate M wins at four overwrites per entry. The
+k/n=1/8 row, construction, churned-state clone, separate HAMT/order/publication/
+total phase splits, and persistent control remain missing, so `MutDict` remains
+conditional and neither arena is selected.
 
 ## Track invariants
 
@@ -420,14 +422,16 @@ measures two layout-C arena elements:
 
 The real Wasm-GC quick spike left both candidates open. Candidate M's unboxed
 in-place overwrite was about 20–24× faster, but Candidate H's immutable-entry
-clone was roughly 20–30× cheaper and its dense seam was zero. H won the measured
-one-overwrite-plus-clone row, while M won at four overwrites per entry; churn plus
-clone had overlapping ranges. This workload-dependent result triggered the
-reviewed **STOP WITHOUT SELECTION** verdict. The canonical arena remains a
+pre-churn-base clone was roughly 20–30× cheaper and its dense seam was zero. H won
+the measured one-overwrite-plus-base-clone row, while M won at four overwrites per
+entry; churn plus the pre-churn-base clone had overlapping ranges. A clone of the
+1.25n churned physical state was not measured. This workload-dependent result
+triggered the reviewed **STOP WITHOUT SELECTION** verdict. The canonical arena remains a
 zero-copy/cheap-clone control, not permission to silently weaken the unboxed
-throughput target. S5 stays blocked until timed construction and persistent
-control evidence plus a workload census or more decision-specific measurements
-justify reopening the gate.
+throughput target. S5 stays blocked until the active gate's complete missing-
+evidence inventory—k/n=1/8, construction, churned-state clone, separate HAMT/
+order/publication/total phase splits, and persistent control—plus a workload
+census or more decision-specific measurements justifies reopening.
 
 A true owned/editable HAMT builder improves rebuilding by about 1.3× but retains
 per-entry HAMT traversal and is not the throughput target. The bottom-up adapter
@@ -440,14 +444,16 @@ persistent path for build-once / lookup-heavy dicts. The final target lets such
 owned dict update chains remain mutable internally and materialize to ordinary
 `Dict<K, V>` only when publication requires it.
 
-Publication is three-tier, not binary (see
-[spike-tier0-dict.md](spike-tier0-dict.md) boundary result): old-version-dead →
-in-place; old version observed but consumers stay in the private flat
-representation → **clone the flat backing** (a bulk `array.copy`, measured 14–40×
-cheaper than freeze); old version escapes the persistent `Dict` ABI → freeze to
-HAMT (deferred to the true edge). Cheap clone-on-fork can keep `MutDict` low
-across update-dense forks, so the S5 selector keys on ops-per-fork and whether
-the snapshot stays flat — not k/n alone. It does **not** make `run_fixpoint` a
+Publication is three-tier, not binary (see the historical Tier-0 proxy in
+[spike-tier0-dict.md](spike-tier0-dict.md)): old-version-dead → in-place; old
+version observed but consumers stay in the private flat representation → clone
+the flat backing; old version escapes the persistent `Dict` ABI → freeze to HAMT
+(deferred to the true edge). The proxy's 14–40× result and bulk-`array.copy`
+projection are not layout-C measurements. Current layout C uses stable arena
+identity, and clone cost is layout-dependent: Candidate M deep-copies mutable
+records; Candidate H bulk-copies immutable entry references and external
+liveness. Flat-preserving forks remain a gate input, not a claim of uniformly
+cheap cloning. It does **not** make `run_fixpoint` a
 candidate: those maps are small and fork with sparse divergence, where the HAMT
 wins on both reads and structural sharing.
 

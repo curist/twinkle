@@ -82,18 +82,21 @@ not the O(n) itself — so a flat clone is far cheaper:
 | 65 536 | 19.9 | 1.4 | **14×** |
 | 1 048 576 | 608 | 15 | **40×** |
 
-The clone here is a naïve per-element i64 loop over the ~5n backing slots — an
-*upper bound*; a real GC-array `MutDict` clones with one bulk `array.copy` and is
-faster still. `gf==gc` confirms the clone is a correct snapshot.
+The clone here is a naïve per-element i64 loop over the Tier-0 proxy's ~5n
+backing slots. The earlier projection that a real `MutDict` would use one bulk
+`array.copy` is historical and layout-dependent, not a current layout-C result.
+Layout C uses stable arena identity: Candidate M must deep-copy mutable records,
+while Candidate H may bulk-copy immutable entry references and external liveness.
+`gf==gc` confirms only that this proxy clone is a correct snapshot.
 
 This adds a middle tier to dict publication and reframes when `MutDict` wins:
 
 1. **Old version provably dead → in-place, no copy** (the current set_in_place
    case).
 2. **Old version observed but consumers stay in the private flat representation →
-   clone** (14–40× cheaper than freeze). This is the key new option: internal
-   forks (`next = m; next[k] = v` where both stay in owned-flat code) cost a cheap
-   bulk copy, not a HAMT rebuild.
+   clone.** The Tier-0 proxy measured 14–40× versus freeze; it did not establish a
+   universal bulk-copy cost for layout C. Candidate M deep-copies mutable records,
+   while Candidate H bulk-copies immutable references and liveness.
 3. **Old version escapes to the persistent `Dict` ABI → freeze to HAMT**
    (expensive, unavoidable — but deferrable to the *true* edge, paid once).
 
@@ -230,20 +233,21 @@ entry/hash arrays and order sidecar exist as inputs.
 The quick follow-up replaced the linear-memory proxy with the two candidate live
 arenas feeding the landed bottom-up `freeze_dense` adapter. Across the combined
 rotated 1M samples, Candidate M's unboxed in-place overwrite was about 20–24×
-faster, while Candidate H's immutable-entry shallow clone was roughly 20–30×
-cheaper and its dense seam was truly zero. With one full overwrite and one clone,
-H won pre-publication (median 31.98 ms versus M's 73.82 ms); with four overwrites
-per entry, M won (62.10 ms versus H's 107.13 ms). In the delete/reinsert workload,
-M's pre-clone lead was erased or reversed by its deep clone within overlapping
-ranges.
+faster, while Candidate H's immutable-entry pre-churn-base clone was roughly
+20–30× cheaper and its dense seam was truly zero. With one full overwrite and one
+base clone, H won pre-publication (median 31.98 ms versus M's 73.82 ms); with four
+overwrites per entry, M won (62.10 ms versus H's 107.13 ms). In the
+delete/reinsert workload, the measured clone was still the original dense base,
+not the resulting 1.25n churned physical state; its ranges overlapped.
 
 The result fortifies rather than resolves the representation gate: the winner
 changes with update density and flat-clone frequency, and GC-sensitive ranges do
 not justify turning the measured 1x–4x crossover into a threshold. Correctness
-and emitted-shape guards passed, but construction and an end-to-end persistent
-control were not timed, and String keys remain unmeasured. The reviewed verdict is
-therefore **STOP WITHOUT SELECTION**. Candidate M and Candidate H remain open; the
-full table, caveats, and reopening requirements are in
+and emitted-shape guards passed, but k/n=1/8, construction, churned-state clone,
+separate HAMT/order/publication/total phase splits, and an end-to-end persistent
+control were not measured; String keys also remain unmeasured. The reviewed
+verdict is therefore **STOP WITHOUT SELECTION**. Candidate M and Candidate H
+remain open; the full table, caveats, and reopening requirements are in
 [the active arena gate](../../mutdict-dense-freeze-input.md#quick-spike-result-2026-08-29).
 
 ## Conclusions for S5 (revises the earlier decision)

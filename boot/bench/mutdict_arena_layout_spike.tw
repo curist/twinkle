@@ -60,6 +60,34 @@ fn verify_result(m: Dict<Int, Int>, n: Int, k: Int, churn_stride: Int) Bool {
   ok and out == n
 }
 
+fn verify_removed_keys(m: Dict<Int, Int>, n: Int, churn_stride: Int, remove_id: Int) Bool {
+  ks := m.keys()
+  ok := m.len() == n - 1 and ks.len() == n - 1
+  out := 0
+  if churn_stride > 0 {
+    for i in 0..n {
+      if i % churn_stride != 0 and i != remove_id {
+        ok = ok and ks[out] == key_of(i)
+        out = out + 1
+      }
+    }
+    for i in 0..n {
+      if i % churn_stride == 0 and i != remove_id {
+        ok = ok and ks[out] == key_of(i)
+        out = out + 1
+      }
+    }
+  } else {
+    for i in 0..n {
+      if i != remove_id {
+        ok = ok and ks[out] == key_of(i)
+        out = out + 1
+      }
+    }
+  }
+  ok and out == n - 1
+}
+
 fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
   results := Dict.bench_arena_layouts(n, k, churn_stride)
   timings := Dict.bench_arena_timings()
@@ -74,9 +102,14 @@ fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
       changed[key_of(0)] = 0 - 7
       parity = parity and dget(changed, key_of(0)) == 0 - 7
       parity = parity and verify_result(published, n, k, churn_stride)
-      removed := changed.remove(key_of(0))
-      parity = parity and dget(removed, key_of(0)) == 0 - 1
-      parity = parity and dget(changed, key_of(0)) == 0 - 7
+
+      // Churn key 0 is the first key in the compacted reinserted suffix. Its
+      // physical/stale order index differs from its published compacted slot.
+      remove_id := 0
+      removed := changed.remove(key_of(remove_id))
+      parity = parity and dget(removed, key_of(remove_id)) == 0 - 1
+      parity = parity and verify_removed_keys(removed, n, churn_stride, remove_id)
+      parity = parity and dget(changed, key_of(remove_id)) == 0 - 7
       i = i + 1
     }
   }
