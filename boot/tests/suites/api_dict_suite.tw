@@ -342,4 +342,44 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "compaction after heavy removal preserves order and later removal",
+      fn() {
+        // Build 2N keys, then remove the odd-indexed half one at a time. The
+        // removals drive dead >= live, triggering internal compact(); compact
+        // rebuilds order and must rewrite each surviving entry's order_index.
+        d: Dict<Int, Int> = Dict.new()
+        n := 64
+        i := 0
+        for i < 2 * n {
+          d[i] = i * 10
+          i = i + 1
+        }
+        i = 1
+        for i < 2 * n {
+          d = .remove(i)
+          i = i + 2
+        }
+
+        // Survivors are the even keys 0,2,4,...,2n-2 in insertion order.
+        try assert.equal(d.len(), n)
+        ks := d.keys()
+        try assert.equal(ks.len(), n)
+        for k, j in ks {
+          try assert.equal(k, j * 2)
+          try assert.equal(d.get(k), .Some(j * 20))
+        }
+
+        // A further removal after compaction must tombstone the correct slot:
+        // remove key 0 (order position 0); everything else stays intact.
+        d = .remove(0)
+        try assert.equal(d.len(), n - 1)
+        try assert.equal(d.get(0), .None)
+        try assert.equal(d.get(2), .Some(20))
+        ks2 := d.keys()
+        try assert.equal(ks2.len(), n - 1)
+        try assert.equal(ks2[0], 2)
+        .Ok({})
+      },
+    )
 }
