@@ -119,6 +119,7 @@ use .suites.return_field_ownership_suite
 use .suites.rewrite_suite
 use .suites.route_typed_vec_suite
 use .suites.runtime_suite
+use .suites.s4_mutvec_suite
 use .suites.scripting_string_suite
 use .suites.scripting_vector_suite
 use .suites.semantic_closure_rebinding_suite
@@ -316,6 +317,7 @@ runner.run_all([
   builder_region_suite.suite(),
   mutvec_region_suite.suite(),
   variant_specialize_suite.suite(),
+  s4_mutvec_suite.suite(),
   field_backed_collection_suite.suite(),
   return_field_ownership_suite.suite(),
 ])

@@ -14,14 +14,41 @@
 //! and types it explicitly to the PVecI64 wasm type (and sets phys_return + types
 //! caller result slots). Marking it here with `TypedVec(I64)` would duplicate and
 //! conflict with that ownership, so this pass leaves frozen slots to route.
+//!
+//! ── HP-4 (interprocedural S4) ABI-upgrade consumption (Task 7) ──
+//!
+//! `s4_phase.run_s4` computes `S4Decision.abi_upgrades: Vector<S4AbiUpgrade>` —
+//! for every owned clone whose EVERY routed call site is an accepted
+//! interprocedural region, a record naming the clone's receiver param(s) +
+//! return as safe to type `MutVec<fam>` instead of the persistent PVec ABI —
+//! AND rewrites the ANF so the upgraded clone body and its accepted caller
+//! regions use `mutvec_*` ops (see `s4_phase`'s header). Only after that ANF
+//! rewrite is consuming `abi_upgrades` sound: typing the receiver SLOT
+//! `MutVec(fam)` while the body still called the boxed PVec ops would fall
+//! through `emit_coerce_stack`'s fully-generic `.RefCast` fallback (it bridges
+//! only a family's boxed PVec <-> that family's typed PVec via
+//! `fam.box_call`/`fam.unbox_call`; MutVec has no boxed counterpart, only the
+//! one-way `mutvec_freeze`), a `ref.cast` between unrelated GC structs that
+//! fails validation / traps.
+//!
+//! Post-rewrite, `assign_mutvec_reprs` (above) already types the local handle
+//! slots that flow through those `mutvec_*` ops — including the clone's receiver
+//! PARAM (arg0 of `mutvec_set`/`get`/`len`) via the seed. The two remaining
+//! function-ABI facts no slot flow implies — the clone's MutVec `phys_return`
+//! and each routed caller's call-RESULT slot — are supplied by
+//! `apply_s4_abi_upgrades` (below), the consumer wired at `codegen.prepare_codegen`
+//! after `prepare_backend`. `route_typed_vec` still owns the escape-path
+//! `mutvec_freeze` RESULT slot (a materialized PVec), so the two never collide.
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
 use compiler.backend.repr_assign.{wasm_type_of_repr}
-use compiler.backend.repr_policy.{candidate_typed_vec_family}
+use compiler.backend.repr_policy.{ElemRepr, candidate_typed_vec_family}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.s4_phase.{S4AbiUpgrade}
+use compiler.codegen.wasm_layout.{mutvec_wasm_type}
 use compiler.elem_family.{mutvec_families}
 use compiler.resolver.{ResolvedEnv}
 
@@ -264,5 +291,145 @@ pub fn assign_mutvec_reprs(funcs: Vector<PreparedFunc>, env: ResolvedEnv, builti
   ids := resolve_ids(builtins)
   collect pf in funcs {
     assign_in_func(pf, ids, env)
+  }
+}
+
+// ── HP-4: interprocedural S4 ABI-upgrade consumption ──────────────────────
+//
+// `s4_phase.run_s4` already rewrote the ANF so an upgraded clone body writes/reads
+// its receiver via `mutvec_*` ops and the accepted caller region flattened its
+// producer chain (see `s4_phase.apply_s4_rewrite`). After that rewrite,
+// `assign_mutvec_reprs` (above) has already typed the *local* handle slots that
+// flow through those `mutvec_*` ops — including the clone's receiver PARAM (arg0
+// of `mutvec_set`/`get`/`len`) via the seed. What the seed cannot type are the
+// two FUNCTION-ABI facts, because they are not tied to any `mutvec_*` op result
+// or arg0 in the reader's own body:
+//   - the upgraded clone's MutVec RETURN ABI (`phys_return`) — it returns its
+//     receiver, but `phys_return` is a function-level fact no slot flow implies;
+//   - each routed caller's call-RESULT slot (`flags = clone(flags, i, v)`), whose
+//     defining op is the clone call, not a `mutvec_*` op, so the seed leaves it
+//     boxed — a boxed-PVec slot fed a MutVec-returning callee traps at emit.
+// This pass supplies exactly those two (plus, defensively, the receiver param
+// slot itself, so a degenerate clone that never reads/writes its receiver still
+// gets a MutVec param that agrees with its callers). `route_typed_vec` owns the
+// escape-path `mutvec_freeze` RESULT slot (a materialized PVec) as before, so the
+// two never collide. Empty `upgrades` (boot's own source — no qualifying S4
+// shape) returns `funcs` byte-identical, so self-host stays at the fixed point.
+pub fn apply_s4_abi_upgrades(
+  funcs: Vector<PreparedFunc>,
+  upgrades: Vector<S4AbiUpgrade>,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) Vector<PreparedFunc> {
+  if upgrades.len() == 0 {
+    return funcs
+  }
+  collect pf in funcs {
+    upgrade_func(pf, upgrades, env)
+  }
+}
+
+fn find_clone_upgrade(upgrades: Vector<S4AbiUpgrade>, fid: Int) S4AbiUpgrade? {
+  for u in upgrades {
+    if u.clone_func == fid {
+      return .Some(u)
+    }
+  }
+  .None
+}
+
+fn recv_local_of(u: S4AbiUpgrade, local_id: Int) Bool {
+  for l in u.param_slots {
+    if l == local_id {
+      return true
+    }
+  }
+  false
+}
+
+fn upgrade_func(pf: PreparedFunc, upgrades: Vector<S4AbiUpgrade>, env: ResolvedEnv) PreparedFunc {
+  // (a) An upgraded clone: type its receiver param slot(s) MutVec(fam) and expose
+  //     the MutVec return ABI. The receiver param's SlotInfo.source_local is the
+  //     ANF receiver local `param_slots` records.
+  cur := case find_clone_upgrade(upgrades, pf.func_id.id) {
+    .Some(u) => {
+      wt := mutvec_wasm_type(u.fam)
+      new_slots: Dict<Int, SlotInfo> = pf.slots
+      for sid, info in pf.slots {
+        if recv_local_of(u, info.source_local.id) {
+          new_slots[sid] = override_slot(info, .MutVec(u.fam), env)
+        }
+      }
+      pf.slots = new_slots
+      pf.phys_return = .Some(wt)
+      pf
+    },
+    .None => pf,
+  }
+
+  // (b) Every routed caller call-result slot: `flags = <upgraded-clone call>` —
+  //     type it MutVec(fam) so the boundary is MutVec→MutVec (no coercion).
+  targets := collect_call_result_fams(cur.body, upgrades, Dict.new())
+  if targets.keys().len() == 0 {
+    cur
+  } else {
+    new_slots: Dict<Int, SlotInfo> = cur.slots
+    for sid, info in cur.slots {
+      case targets.get(info.slot.id) {
+        .Some(fam) => new_slots[sid] = override_slot(info, .MutVec(fam), env),
+        .None => {},
+      }
+    }
+    cur.slots = new_slots
+    cur
+  }
+}
+
+// Map each call-result slot id whose op is a call to an upgraded clone to that
+// clone's element family. Walks control flow so a threaded call nested in a loop
+// or branch is covered.
+fn collect_call_result_fams(
+  e: PreparedExpr,
+  upgrades: Vector<S4AbiUpgrade>,
+  acc: Dict<Int, ElemRepr>,
+) Dict<Int, ElemRepr> {
+  case e {
+    .Let(slot, op, body) => collect_call_result_fams(
+      body,
+      upgrades,
+      call_result_fams_op(slot.id, op, upgrades, acc),
+    ),
+    _ => acc,
+  }
+}
+
+fn call_result_fams_op(
+  rid: Int,
+  op: PreparedOp,
+  upgrades: Vector<S4AbiUpgrade>,
+  acc: Dict<Int, ElemRepr>,
+) Dict<Int, ElemRepr> {
+  case op {
+    .ACall(.AGlobalFunc(f), _) => case find_clone_upgrade(upgrades, f.id) {
+      .Some(u) => {
+        acc[rid] = u.fam
+        acc
+      },
+      .None => acc,
+    },
+    .AIf(_, t, e) => collect_call_result_fams(
+      e,
+      upgrades,
+      collect_call_result_fams(t, upgrades, acc),
+    ),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        acc = collect_call_result_fams(arm.body, upgrades, acc)
+      }
+      acc
+    },
+    .ALoop(inner) => collect_call_result_fams(inner, upgrades, acc),
+    .ADefer(inner) => collect_call_result_fams(inner, upgrades, acc),
+    _ => acc,
   }
 }

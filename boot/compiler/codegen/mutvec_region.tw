@@ -85,7 +85,10 @@ fn resolve_ids(b: BuiltinRegistry) OpIds {
 }
 
 // ── Definition map (local id -> its defining op), for producer classification ──
-fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+// `pub` so `s4_region.tw` (the post-builder_region producer recognizer) can
+// reuse this generic AST walker instead of duplicating it — it has no
+// family/suffix dependency, unlike the rest of this module's detector state.
+pub fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   case e {
     .Let(local, op, body) => {
       defs[local.id] = op
@@ -95,7 +98,7 @@ fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   }
 }
 
-fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+pub fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   case op {
     .AIf(_, t, e) => collect_defs(e, collect_defs(t, defs)),
     .AMatch(_, arms) => {
@@ -751,6 +754,22 @@ fn regions_for(all: Vector<MutVecRegion>, func_id: FuncId) Vector<MutVecRegion> 
     }
   }
   out
+}
+
+// Reusable single-function region rewrite for S4's caller-born producer chains.
+// The S4 interprocedural phase (s4_phase) discovers producer-rooted regions
+// whose only mutation is a routed owned-clone call (no in-function
+// `vector$set_unsafe`), so those regions never satisfy this module's own
+// set-base detector — but the LOWERING is identical to a CollectSeed/MakeSeed
+// region: the producer chain flattens to mutvec ops, index reads become
+// mutvec_get, `len` becomes mutvec_len, and the boundary freeze fires only on an
+// escaping exit. The threaded owned-clone call (not a set/append/len op) and its
+// `assign handle = <call result>` rebind pass through `rewrite_op` unchanged. Exposed
+// so `s4_phase` reuses the builder-chain lowering verbatim rather than
+// duplicating it; `regions` must already be verified by the S4 continuation
+// verifier and gated on the clone's ABI upgrade.
+pub fn rewrite_regions_in_func(f: AnfFunctionDef, regions: Vector<MutVecRegion>, b: BuiltinRegistry) AnfFunctionDef {
+  rewrite_func(f, regions, resolve_ids(b), b)
 }
 
 // Rewrite every claimed MutVec region in the module to its flat mutable form.

@@ -1,0 +1,24 @@
+// Positive A: the "run_wrap" shape (2026-08-27 spike) — a locally-born vector
+// threaded through a routed `set_at` wrapper call inside a loop, reduced to a
+// scalar and never returned as a vector. No escape.
+pub fn run(size: Int) Int {
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  count := 0
+  i := 2
+  for i <= size {
+    if flags[i] {
+      count = count + 1
+      k := i + i
+      for k <= size {
+        flags = .set_at(k, false)
+        k = k + i
+      }
+    }
+    i = i + 1
+  }
+  count
+}
+
+println(run(30).to_string())

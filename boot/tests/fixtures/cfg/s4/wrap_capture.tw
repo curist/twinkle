@@ -1,0 +1,23 @@
+// Negative: the wrapper stores the threaded handle into a Cell before
+// returning — a surviving alias of the pre-return value, so the region must
+// not be claimed (HP-3 continuation-identity condition).
+pub fn run(size: Int) Vector<Bool> {
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  i := 2
+  for i <= size {
+    if flags[i] {
+      k := i + i
+      for k <= size {
+        flags = .set_at(k, false)
+        k = k + i
+      }
+    }
+    i = i + 1
+  }
+  sink: Cell<Vector<Bool>> = Cell.new(flags)
+  sink.get()
+}
+
+println(run(30).len().to_string())

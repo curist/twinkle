@@ -1,0 +1,34 @@
+// Negative guard (final-review fix): the sieve-shape owned single-update loop,
+// but `flags` is seeded by an ARRAY LITERAL instead of a `collect`. Every other
+// aspect matches the accepted `sieve_scratch` shape — the owned handle is
+// threaded through the routed `set_at` clone and reduced to a scalar (never
+// returned as a vector) — so this region WOULD be discovered and ABI-upgraded
+// if producer discovery still claimed the array-literal seed. It must not:
+// the reused `mutvec_region` lowering no-ops an ArrayLit seed, so an upgrade
+// would leave a persistent PVec reaching a MutVec-typed clone param and trap in
+// `emit_coerce_stack`. Discovery therefore narrows the ArrayLit producer to
+// undiscoverable → persistent fallback → zero ABI upgrades (asserted in the
+// suite).
+pub fn run() Int {
+  flags: Vector<Bool> = [true, true, true, true, true, true, true, true]
+  count := 0
+  i := 2
+
+  for i < 8 {
+    if flags[i] {
+      count = count + 1
+      k := i + i
+
+      for k < 8 {
+        flags = .set_at(k, false)
+        k = k + i
+      }
+    }
+
+    i = i + 1
+  }
+
+  count
+}
+
+println(run().to_string())

@@ -1,0 +1,25 @@
+pub warmup := 10
+pub iters := 40
+pub size := 5000
+pub expected := 669
+
+pub fn run(size: Int) Int {
+  // flags[0..=size]; indices 0 and 1 are unused for counting.
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
+  count := 0
+  i := 2
+  for i <= size {
+    if flags[i] {
+      count = count + 1
+      k := i + i
+      for k <= size {
+        flags[k] = false
+        k = k + i
+      }
+    }
+    i = i + 1
+  }
+  count
+}

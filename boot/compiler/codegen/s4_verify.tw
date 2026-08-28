@@ -1,0 +1,480 @@
+//! S4 (interprocedural MutVec) — HP-3 continuation verifier.
+//!
+//! Decides whether a call-thread region discovered by
+//! `s4_region.detect_call_thread_regions` may safely keep its owned vector
+//! FLAT (mutable, non-persistent) across the routed owned-clone call boundary.
+//! This is the risk-bearing gate: a false ACCEPT later produces a runtime
+//! `illegal cast` trap or silent state corruption when the flat backing is
+//! mutated behind a surviving persistent alias. **Reject is always safe** — the
+//! site simply falls back to today's correct persistent path (merely slower).
+//! So every condition is checked sound-by-rejection: anything not provably safe
+//! rejects.
+//!
+//! The five HP-3 conditions (all must hold to Accept):
+//!   1. Continuation identity — each thread call's returned value IS the
+//!      continuation token for the arg handle: the callee (routed owned clone)
+//!      returns the same backing it received, and the caller rebinds the region
+//!      handle to exactly that result. The caller-rebind half is already
+//!      enforced by discovery (`is_routed_thread_source` +
+//!      `AAssign(handle, <routed result>)`); the callee-return half is checked
+//!      here against the clone body (`verify_clone_continuation`).
+//!   2. No surviving pre-call alias — no alias/copy of the handle survives past
+//!      the routed calls (`caller_alias_survives`). Discovery already rejects
+//!      the `AInit` alias shape; this is a defensive re-check.
+//!   3. Callee does not republish — the clone body does not
+//!      freeze/publish/store-into-record-or-global/capture/fork the handle
+//!      (`verify_clone_continuation`, reject-by-default leaf scan).
+//!   4. Materializable exits — every handle-carrying caller exit is a single
+//!      top-level terminal, not branch-/loop-carried. Discovery discharges this
+//!      via its single-exit rule (multi-exit → zero regions); a defensive
+//!      `MultiExit` guard (`caller_exit_count`) backs it here.
+//!   5. Repr agreement — caller and callee agree on element family + physical
+//!      repr (`repr_agrees`). See the condition-5 note below: a mismatch is
+//!      structurally unreachable in slice-1 (8G clones are per-monotype), but
+//!      the guard is kept as cheap insurance against a future non-monotype
+//!      clone path, because HP-4's backstop for a mismatch is a runtime TRAP.
+//!
+//! Condition 5 — why a repr mismatch is structurally unreachable in slice-1
+//! (citation-backed justification, path (b) of the task brief):
+//!   The pipeline MONOMORPHIZES before ANF (`docs`/MEMORY: `lower (Core IR) ->
+//!   monomorphize -> lower (ANF) -> optimize`). By the time `variant_specialize`
+//!   runs, every function is already monomorphic — `set_at<Bool>` and
+//!   `set_at<Int>` are distinct `AnfFunctionDef`s with distinct `FuncId`s. A
+//!   `VariantId` (`variant_id.tw:118`) is `{ func: Int, unique: UniqueKey }`: it
+//!   keys a clone purely by which params/paths must be Unique — it carries NO
+//!   element type. So a clone's `generic_func` is an ALREADY-monomorphic
+//!   function, and the clone shares that exact monotype (confirmed empirically:
+//!   `set_at__Bool$v348` has `params=[Vector<Bool>, ...]`, identical to its
+//!   generic `set_at__Bool`). A routed owned caller of element family X therefore
+//!   necessarily routes to a clone whose receiver param is family X — the two
+//!   cannot disagree. The `ReprDisagree` guard below is thus defensive only for
+//!   today's clone path; it earns its keep only if a future pass introduces a
+//!   non-monotype (element-generic) clone, where a mismatch WOULD become
+//!   constructible and WOULD trap without it.
+//!
+//! Verifier-vs-discovery split: discovery (Task 2) already validates the CALLER
+//! side (producer-rooted handle, loop-carried rebind, single exit, no caller
+//! alias/capture). Every negative caller fixture (`wrap_capture`,
+//! `wrap_diff_return`, `caller_alias`, `wrap_multi_exit`) is rejected at
+//! discovery (zero regions), which is an accepted "rejected" outcome. This
+//! verifier's genuinely NEW soundness contribution is inspecting the CALLEE
+//! clone body — the one thing discovery never looks at — for conditions 1 and 3.
+//! The caller-side conditions 2 and 4 are re-checked defensively so the verifier
+//! stands on its own once wired in.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp, Atom}
+use compiler.builder_region_detect.{atom_is_local, op_references_deep}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_region.{collect_defs}
+use compiler.codegen.s4_region.{S4Region}
+use compiler.codegen.variant_specialize
+use compiler.core_ir.{LocalId}
+use compiler.elem_family.{elem_family_of}
+use compiler.mono_type.{MonoType}
+use compiler.variant_id as vid
+
+pub type S4RejectReason = {
+  NonContinuationReturn,
+  AliasSurvives,
+  CalleeRepublishes,
+  MultiExit,
+  ReprDisagree,
+}
+
+pub type S4Verdict = { Accept, Reject(S4RejectReason) }
+
+// Builtin ids the callee scan whitelists as SAFE receiver uses. Deliberately
+// narrow: the only in-place-capable write a slice-1 owned clone performs is
+// `vector$set_unsafe` (the lowering of `xs[i] = v` / `Vector.set_at`), plus the
+// pure reads `vector$len` / `vector$get`. Any other call carrying the receiver
+// rejects — reject-by-default keeps the whitelist honest.
+type VerifyIds = .{ set_unsafe: Int, len: Int, get: Int }
+
+fn resolve_verify_ids(b: BuiltinRegistry) VerifyIds {
+  .{
+    set_unsafe: builtins.id(b, "vector$set_unsafe").id,
+    len: builtins.id(b, "vector$len").id,
+    get: builtins.id(b, "vector$get").id,
+  }
+}
+
+// ── Clone (callee) lookup ─────────────────────────────────────────────────
+// Flatten every routed call-site key -> clone `func_id` out of `spec.routes`
+// (a local reconstruction of `s4_region`'s private `route_site_targets`, kept
+// here to avoid widening that module's surface). `pub` so `s4_phase`'s HP-4
+// ABI-upgrade decision can reuse the exact same clone lookup this verifier
+// already proved correct, instead of re-deriving a third copy.
+pub fn clone_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for r in spec.routes {
+    for sk in r.route_sites {
+      out[sk] = r.clone_func
+    }
+  }
+  out
+}
+
+pub fn func_def_of(spec: variant_specialize.SpecializeResult, func_id: Int) AnfFunctionDef? {
+  spec.anf.functions.find(fn(f) { f.func_id.id == func_id })
+}
+
+// The single argument index at which `handle` is passed to `call_op`, or `.None`
+// when it is absent or passed more than once (an ambiguous shape the verifier
+// cannot soundly attribute a single receiver param to — reject). `pub` so
+// `s4_phase`'s ABI-upgrade decision can locate the same receiver param index
+// this verifier already validated for a thread call.
+pub fn sole_receiver_index(call_op: AnfOp, handle: LocalId) Int? {
+  case call_op {
+    .ACall(_, args) => {
+      found: Int? = .None
+      for a, i in args {
+        if atom_is_local(a, handle) {
+          found = case found {
+            .Some(_) => return .None, // handle appears twice — ambiguous
+            .None => .Some(i),
+          }
+        }
+      }
+      found
+    },
+    _ => .None,
+  }
+}
+
+// ── Condition 5: element-family / physical-repr agreement ─────────────────
+// True iff the caller's handle element type and the clone receiver param's
+// element type resolve to the SAME registered element family. A `.None` on
+// either side (non-vector, or a family with no registered repr) is treated as
+// disagreement — the verifier cannot prove agreement, so it rejects.
+pub fn repr_agrees(caller_ty: MonoType, callee_ty: MonoType) Bool {
+  case elem_family_of(caller_ty) {
+    .Some(cf) => case elem_family_of(callee_ty) {
+      .Some(ef) => cf.mono_key == ef.mono_key,
+      .None => false,
+    },
+    .None => false,
+  }
+}
+
+// ── Conditions 1 + 3: callee continuation scan ────────────────────────────
+// Threaded scan state. `pending` holds write-result locals produced by an
+// in-place `set_unsafe(recv, ...)` that have NOT yet been reclaimed onto `recv`
+// (`assign recv = <result>`); they alias the receiver's backing, so any use of
+// one other than the reclaiming assign is a backing leak. `reason` latches the
+// first rejection; `returned` records that a single tail return of `recv` was
+// seen.
+type CScan = .{ reason: S4RejectReason?, pending: Dict<Int, Bool>, returned: Bool }
+
+fn cscan_start() CScan {
+  .{ reason: .None, pending: Dict.new(), returned: false }
+}
+
+fn cscan_reject(s: CScan, r: S4RejectReason) CScan {
+  case s.reason {
+    .Some(_) => s, // keep the first reason
+    .None => .{ reason: .Some(r), pending: s.pending, returned: s.returned },
+  }
+}
+
+fn references_any_pending(op: AnfOp, pending: Dict<Int, Bool>) Bool {
+  for k, _v in pending {
+    if op_references_deep(op, LocalId.{ id: k }) {
+      return true
+    }
+  }
+  false
+}
+
+// Threaded receiver-scan context (rides unchanged through the walk).
+type CCtx = .{ recv: LocalId, ids: VerifyIds }
+
+// Verify a routed owned clone returns its receiver param `recv` as the
+// continuation token and never republishes it. Sound-by-rejection: the body
+// must be a straight-line let-chain whose only uses of `recv` are an in-place
+// `set_unsafe(recv, i, v)` (result immediately reclaimed onto `recv`), reads
+// (`vector$len` / `vector$get` / `AIndex`), the reclaiming `assign recv = ...`,
+// and exactly one tail return of `recv`. Anything else — a branch/loop carrying
+// `recv`, a store into a record/variant/array/global, a closure capture, an
+// alias into another surviving local, a call whose result isn't reclaimed, or a
+// tail returning a different value — rejects.
+pub fn verify_clone_continuation(clone: AnfFunctionDef, recv: LocalId, b: BuiltinRegistry) S4Verdict {
+  ctx := CCtx.{ recv, ids: resolve_verify_ids(b) }
+  s := ctx.scan_clone(clone.body, cscan_start())
+  case s.reason {
+    .Some(r) => .Reject(r),
+    .None => if s.returned {
+      .Accept
+    } else {
+      // Fell off the end without a single tail return of `recv`.
+      .Reject(.NonContinuationReturn)
+    },
+  }
+}
+
+fn scan_clone(ctx: CCtx, e: AnfExpr, s: CScan) CScan {
+  case s.reason {
+    .Some(_) => s,
+    .None => ctx.scan_clone_live(e, s),
+  }
+}
+
+fn scan_clone_live(ctx: CCtx, e: AnfExpr, s: CScan) CScan {
+  case e {
+    .Let(local, op, body) => ctx.scan_clone(body, ctx.scan_clone_op(op, local, s)),
+    .Atom(a) => ctx.scan_tail(a, s),
+    .Return(.Some(a)) => ctx.scan_tail(a, s),
+    // A clone that returns void cannot be a vector-continuation.
+    .Return(.None) => s.cscan_reject(.NonContinuationReturn),
+    // `break`/`continue` at clone scope is an unexpected non-return shape.
+    .Break(_) => s.cscan_reject(.CalleeRepublishes),
+    .Continue => s.cscan_reject(.CalleeRepublishes),
+  }
+}
+
+// A tail terminal carrying an atom: exactly one return of `recv` is the accept
+// shape; a second exit or a return of anything else rejects.
+fn scan_tail(ctx: CCtx, a: Atom, s: CScan) CScan {
+  if atom_is_local(a, ctx.recv) {
+    if s.returned {
+      s.cscan_reject(.MultiExit)
+    } else if s.pending.len() > 0 {
+      // A set_unsafe result was never reclaimed onto recv — the returned
+      // backing identity is unproven.
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      .{ reason: s.reason, pending: s.pending, returned: true }
+    }
+  } else {
+    s.cscan_reject(.NonContinuationReturn)
+  }
+}
+
+fn scan_clone_op(ctx: CCtx, op: AnfOp, local: LocalId, s: CScan) CScan {
+  case op {
+    // In-place write `set_unsafe(recv, i, v)` — the result aliases recv's
+    // backing and must be reclaimed by the next `assign recv = result`.
+    .ACall(.AGlobalFunc(g), args) => if g.id == ctx.ids.set_unsafe
+      and args.len() == 3 and atom_is_local(args[0], ctx.recv) and !atom_is_local(args[1], ctx.recv)
+      and !atom_is_local(args[2], ctx.recv) {
+      s.pending[local.id] = true
+      s
+    } else if g.id == ctx.ids.len and args.len() == 1 and atom_is_local(args[0], ctx.recv) {
+      s // pure read
+    } else if g.id == ctx.ids.get
+      and args.len() == 2 and atom_is_local(args[0], ctx.recv) and !atom_is_local(args[1], ctx.recv) {
+      s // pure read
+    } else if op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) {
+      // recv (or an unreclaimed backing alias) handed to any other call — leak.
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      s
+    },
+    // In-region read `recv[idx]` with idx != recv.
+    .AIndex(base, idx, .Array, _) => if atom_is_local(base, ctx.recv) {
+      if atom_is_local(idx, ctx.recv) {
+        s.cscan_reject(.CalleeRepublishes)
+      } else {
+        s
+      }
+    } else if references_any_pending(op, s.pending) {
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      s
+    },
+    // Rebind. `assign recv = <pending write result>` reclaims the backing;
+    // anything else touching recv is a republish/alias.
+    .AAssign(target, atom) => if target.id == ctx.recv.id {
+      case atom {
+        .ALocal(src) => case s.pending.get(src.id) {
+          .Some(_) => {
+            s.pending = .remove(src.id)
+            s
+          },
+          .None => s.cscan_reject(.CalleeRepublishes),
+        },
+        _ => s.cscan_reject(.CalleeRepublishes),
+      }
+    } else if op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) {
+      // recv (or a backing alias) flowing into a different local — alias escape.
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      s
+    },
+    // `L = init recv` copies the receiver into another live local — republish.
+    .AInit(atom) => if atom_is_local(atom, ctx.recv) or references_any_pending(op, s.pending) {
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      s
+    },
+    // Control flow carrying recv (or a backing alias) is a branch-/loop-carried
+    // continuation this straight-line-only verifier will not certify.
+    .AIf(_, _, _) => ctx.reject_if_touches(op, s),
+    .AMatch(_, _) => ctx.reject_if_touches(op, s),
+    .ALoop(_) => ctx.reject_if_touches(op, s),
+    .ADefer(_) => ctx.reject_if_touches(op, s),
+    // Any remaining op form (record/variant/array build, global set, closure
+    // capture, wrap/unwrap, binop/unop) that mentions recv or a backing alias
+    // is a publish/capture — reject.
+    _ => if op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) {
+      s.cscan_reject(.CalleeRepublishes)
+    } else {
+      s
+    },
+  }
+}
+
+fn reject_if_touches(ctx: CCtx, op: AnfOp, s: CScan) CScan {
+  if op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) {
+    s.cscan_reject(.CalleeRepublishes)
+  } else {
+    s
+  }
+}
+
+// ── Conditions 2 + 4: defensive caller-side guards ────────────────────────
+// Count top-level terminals that carry `handle` (a return or a tail atom). More
+// than one is a multi-materialization shape discovery should already have
+// rejected; this backs it up.
+fn caller_exit_count(e: AnfExpr, handle: LocalId) Int {
+  case e {
+    .Let(_, op, body) => caller_exit_count_op(op, handle) + caller_exit_count(body, handle),
+    .Atom(a) => bool_int(atom_is_local(a, handle)),
+    .Return(.Some(a)) => bool_int(atom_is_local(a, handle)),
+    .Return(.None) => 0,
+    .Break(_) => 0,
+    .Continue => 0,
+  }
+}
+
+fn caller_exit_count_op(op: AnfOp, handle: LocalId) Int {
+  case op {
+    .AIf(_, t, e) => caller_exit_count(t, handle) + caller_exit_count(e, handle),
+    .AMatch(_, arms) => {
+      n := 0
+      for arm in arms {
+        n = n + caller_exit_count(arm.body, handle)
+      }
+      n
+    },
+    .ALoop(b) => caller_exit_count(b, handle),
+    .ADefer(b) => caller_exit_count(b, handle),
+    _ => 0,
+  }
+}
+
+fn bool_int(b: Bool) Int {
+  if b {
+    1
+  } else {
+    0
+  }
+}
+
+// True iff a copy of `handle` survives via an alias: `L = init handle`, or
+// `assign other = handle` into a DIFFERENT local. The loop-carried rebind
+// `assign handle = <call result>` is NOT an alias (target is handle, source is a
+// call result), so the accepted shape is unaffected.
+fn caller_alias_survives(e: AnfExpr, handle: LocalId) Bool {
+  case e {
+    .Let(_, op, body) => caller_alias_op(op, handle) or caller_alias_survives(body, handle),
+    _ => false,
+  }
+}
+
+fn caller_alias_op(op: AnfOp, handle: LocalId) Bool {
+  case op {
+    .AInit(a) => atom_is_local(a, handle),
+    .AAssign(target, a) => target.id != handle.id and atom_is_local(a, handle),
+    .AIf(_, t, e) => caller_alias_survives(t, handle) or caller_alias_survives(e, handle),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if caller_alias_survives(arm.body, handle) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(b) => caller_alias_survives(b, handle),
+    .ADefer(b) => caller_alias_survives(b, handle),
+    _ => false,
+  }
+}
+
+// ── Top-level verifier ─────────────────────────────────────────────────────
+// Verify a discovered call-thread region is safe to keep flat across its routed
+// owned-clone call(s). `func` is the caller: production (`s4_phase.run_s4`)
+// passes the POST-`variant_specialize` copy from `spec.anf` (the same module
+// `spec` itself supplies, alongside routes); some tests instead pass the
+// pre-clone `prime` copy. Both are valid inputs — every routing lookup here
+// and in `s4_region.detect_call_thread_regions` keys purely on
+// `vid.site_key(func_id, call_result_local_id)` against a table built from
+// `spec.routes`, never on a call op's target `FuncId`, and `variant_specialize`'s
+// in-place call-target retargeting changes neither a caller's `func_id` nor its
+// locals' ids — so the two copies of `func` are equivalent for this verifier's
+// purposes. `b` resolves per-compilation builtin ids. Reject-by-default: the
+// first failing condition names the reason.
+//
+// NOTE: the brief's illustrative signature is `verify_region(region, func,
+// spec)`; a `BuiltinRegistry` is threaded as a fourth argument (needed to
+// resolve `vector$set_unsafe`/`len`/`get`, whose ids are assigned per
+// compilation), matching the same deviation Tasks 1 and 2 already made.
+pub fn verify_region(
+  region: S4Region,
+  func: AnfFunctionDef,
+  spec: variant_specialize.SpecializeResult,
+  b: BuiltinRegistry,
+) S4Verdict {
+  // Condition 4 (defensive): at most one handle-carrying caller exit.
+  if caller_exit_count(func.body, region.handle) > 1 {
+    return .Reject(.MultiExit)
+  }
+
+  // Condition 2 (defensive): no surviving pre-call alias of the handle.
+  if caller_alias_survives(func.body, region.handle) {
+    return .Reject(.AliasSurvives)
+  }
+
+  defs := collect_defs(func.body, Dict.new())
+  site_to_clone := clone_site_targets(spec)
+  caller_elem := case func.op_result_mono.get(region.handle.id) {
+    .Some(ty) => ty,
+    .None => return .Reject(.ReprDisagree), // cannot prove repr agreement
+  }
+
+  for cr in region.thread_calls {
+    call_op := case defs.get(cr) {
+      .Some(op) => op,
+      .None => return .Reject(.CalleeRepublishes), // stale thread-call id
+    }
+    recv_idx := case sole_receiver_index(call_op, region.handle) {
+      .Some(i) => i,
+      .None => return .Reject(.CalleeRepublishes),
+    }
+    clone_id := case site_to_clone.get(vid.site_key(func.func_id.id, cr)) {
+      .Some(id) => id,
+      .None => return .Reject(.CalleeRepublishes), // not a routed owned clone
+    }
+    clone := case func_def_of(spec, clone_id) {
+      .Some(f) => f,
+      .None => return .Reject(.CalleeRepublishes),
+    }
+    if recv_idx >= clone.params.len() {
+      return .Reject(.CalleeRepublishes)
+    }
+    recv_param := clone.params[recv_idx]
+
+    // Condition 5: caller/callee element-family + physical-repr agreement.
+    if !repr_agrees(caller_elem, recv_param.ty) {
+      return .Reject(.ReprDisagree)
+    }
+
+    // Conditions 1 + 3: the clone returns its receiver and never republishes it.
+    case verify_clone_continuation(clone, recv_param.local, b) {
+      .Accept => {},
+      .Reject(r) => return .Reject(r),
+    }
+  }
+
+  .Accept
+}
