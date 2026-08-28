@@ -343,6 +343,7 @@ fn builtin_abi(name: String) AbiContract {
     "dict$has" => abi([dict_n(), .Anyref], [.I32]),
     "dict$remove" => abi([dict_n(), .Anyref], [dict_()]),
     "dict$remove_in_place" => abi([dict_n(), .Anyref], [dict_()]),
+    "dict$bench_builder_rotation" => abi([.I32], []),
     "dict$bench_builders" => abi([dict_n()], [pvec_()]),
     "dict$bench_timings" => abi([], [pvec_()]),
     "host_read_file" => abi([str_n()], [variant_null()]),
@@ -808,6 +809,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     .concat(mutvec_rt_defs("_byte"))
     // Spike-only harness APIs come after every generated family so all
     // established builtin FuncIds remain unchanged.
+    .append(rt("dict$bench_builder_rotation", "rt.dict", "bench_builder_rotation", .Some("Dict.bench_builder_rotation")))
     .append(rt("dict$bench_builders", "rt.dict", "bench_builders", .Some("Dict.bench_builders")))
     .append(rt("dict$bench_timings", "rt.dict", "bench_timings", .Some("Dict.bench_timings")))
 }

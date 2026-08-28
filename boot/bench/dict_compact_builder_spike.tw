@@ -1,9 +1,13 @@
-//! S5 throwaway spike: compare three HAMT builders from one dense freeze stream.
+//! S5 throwaway spike: size-aligned Dict mutation/publication crossover.
 //!
-//! The runtime benchmark seam materializes cached-hash entries once, then times
-//! sequential persistent insertion, owned/editable insertion, direct bottom-up
-//! construction, and bulk order construction independently. Every returned
-//! dictionary must pass the same complete key-order/value parity oracle.
+//! Each sample starts with n live entries, applies the same n writes to a flat
+//! table and a deliberately persistent Dict, then publishes the latter through
+//! each HAMT builder. Dense preparation is the synthetic old-HAMT seam; real
+//! MutDict publication is only bottom-up construction plus bulk order.
+
+use @std.buffer
+use @std.buffer.{I64View}
+use @std.date
 
 kmult: Int = 0 - 7046029254386353131
 
@@ -18,10 +22,73 @@ fn dget(m: Dict<Int, Int>, k: Int) Int {
   }
 }
 
+fn next_cap(n: Int) Int {
+  c := 1
+  for c < n * 2 {
+    c = c * 2
+  }
+  c
+}
+
+fn ht_hash(k: Int, cap: Int) Int {
+  h := k * kmult & 0x7fffffffffffffff
+  h = h ^ h >> 32
+  h = h ^ h >> 16
+  h & cap - 1
+}
+
+fn ht_set(keys: I64View, vals: I64View, order: I64View, ol: Int, cap: Int, k: Int, v: Int) Int {
+  slot := ht_hash(k, cap)
+  out := ol
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == 0 => {
+        keys.set(slot, k)
+        vals.set(slot, v)
+        order.set(out, k)
+        out = out + 1
+        done = true
+      },
+      cur == k => {
+        vals.set(slot, v)
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  out
+}
+
+fn ht_get(keys: I64View, vals: I64View, cap: Int, k: Int) Int {
+  slot := ht_hash(k, cap)
+  res := 0
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == k => {
+        res = vals.at(slot)
+        done = true
+      },
+      cur == 0 => {
+        res = 0 - 1
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  res
+}
+
 fn make_dense_source(n: Int) Dict<Int, Int> {
   m: Dict<Int, Int> = Dict.new()
-  first_live := n / 2
-  i := first_live
+  i := 0
   for i < n {
     m[key_of(i)] = i
     i = i + 1
@@ -29,30 +96,100 @@ fn make_dense_source(n: Int) Dict<Int, Int> {
   m
 }
 
+// Every publication result must retain insertion order, every final live value,
+// and one equally large disjoint absent key range.
 fn verify_result(m: Dict<Int, Int>, n: Int) Bool {
-  first_live := n / 2
-  expect_live := n - first_live
   ks := m.keys()
-  ok := m.len() == expect_live and ks.len() == expect_live
+  ok := m.len() == n and ks.len() == n
   j := 0
-  for j < ks.len() {
-    want_i := first_live + j
-    ok = ok and ks[j] == key_of(want_i) and dget(m, key_of(want_i)) == want_i
+  for j < n {
+    ok = ok and ks[j] == key_of(j) and dget(m, key_of(j)) == n + j
     j = j + 1
   }
-  r := 0
-  for r < first_live {
-    ok = ok and dget(m, key_of(r)) == 0 - 1
-    r = r + 1
+  j = 0
+  for j < n {
+    ok = ok and dget(m, key_of(n + j)) == 0 - 1
+    j = j + 1
   }
   ok
 }
 
-fn run_sample(source: Dict<Int, Int>, n: Int, label: String) Void {
-  results := source.bench_builders()
-  timings := Dict.bench_timings()
-  parity := results.len() == 3 and timings.len() == 5
+// The flat proxy receives the same n writes as the persistent Dict and is
+// checked against the same final values, insertion order, and absent range.
+fn verify_flat(keys: I64View, vals: I64View, order: I64View, ol: Int, cap: Int, n: Int) Bool {
+  ok := ol == n
+  j := 0
+  for j < n {
+    ok = ok and order.at(j) == key_of(j) and ht_get(keys, vals, cap, key_of(j)) == n + j
+    j = j + 1
+  }
+  j = 0
+  for j < n {
+    ok = ok and ht_get(keys, vals, cap, key_of(n + j)) == 0 - 1
+    j = j + 1
+  }
+  ok
+}
+
+fn builder_order_label(rotation: Int) String {
+  case rotation {
+    0 => "sequential,editable,bottom_up",
+    1 => "editable,bottom_up,sequential",
+    _ => "bottom_up,sequential,editable",
+  }
+}
+
+fn run_sample(source: Dict<Int, Int>, n: Int, label: String, rotation: Int) Void {
+  // Flat setup is deliberately outside the mutation timer. The mutation stream
+  // overwrites every pre-existing key in the same deterministic key/value order.
+  cap := next_cap(n)
+  kbuf := buffer.new(cap * 8)
+  vbuf := buffer.new(cap * 8)
+  obuf := buffer.new(n * 8)
+  keys := kbuf.view_i64(0, cap)
+  vals := vbuf.view_i64(0, cap)
+  order := obuf.view_i64(0, n)
+  slot := 0
+  for slot < cap {
+    keys.set(slot, 0)
+    slot = slot + 1
+  }
+  ol := 0
   i := 0
+  for i < n {
+    ol = ht_set(keys, vals, order, ol, cap, key_of(i), i)
+    i = i + 1
+  }
+  t0 := date.now()
+  i = 0
+  for i < n {
+    ol = ht_set(keys, vals, order, ol, cap, key_of(i), n + i)
+    i = i + 1
+  }
+  flat_mutation := date.now() - t0
+  flat_parity := verify_flat(keys, vals, order, ol, cap, n)
+
+  // `keep` stays observable after each write, forcing the persistent path while
+  // also proving each retained version still has the previous live value.
+  t0 = date.now()
+  m := source
+  stale_sum := 0
+  i = 0
+  for i < n {
+    keep := m
+    m[key_of(i)] = n + i
+    stale_sum = stale_sum + dget(keep, key_of(i))
+    i = i + 1
+  }
+  persistent_mutation := date.now() - t0
+  expected_stale_sum := n * (n - 1) / 2
+  persistent_parity := stale_sum == expected_stale_sum and verify_result(m, n)
+
+  Dict.bench_builder_rotation(rotation)
+  results := m.bench_builders()
+  timings := Dict.bench_timings()
+  parity := flat_parity and persistent_parity and results.len() == 3 and timings.len() == 5
+  i = 0
   for i < results.len() {
     parity = parity and verify_result(results[i], n)
     i = i + 1
@@ -62,19 +199,29 @@ fn run_sample(source: Dict<Int, Int>, n: Int, label: String) Void {
   } else {
     "FAIL"
   }
+  real_dense_publication := timings[3] + timings[4]
+  synthetic_prep_inclusive_publication := timings[0] + real_dense_publication
+  mutation_delta := persistent_mutation - flat_mutation
+  real_k_per_n := real_dense_publication / mutation_delta
+  synthetic_k_per_n := synthetic_prep_inclusive_publication / mutation_delta
   println(
-    "${label} n=${n} live=${source.len()} prep=${timings[0]}ms sequential=${timings[1]}ms editable=${timings[2]}ms bottom_up=${timings[3]}ms order=${timings[4]}ms parity=${status}",
+    "${label} n=${n} live=${m.len()} builder_order=${builder_order_label(rotation)} flat_mutation=${flat_mutation}ms persistent_mutation=${persistent_mutation}ms dense_prep=${timings[0]}ms sequential=${timings[1]}ms editable=${timings[2]}ms bottom_up=${timings[3]}ms order=${timings[4]}ms real_dense_publication=${real_dense_publication}ms synthetic_prep_inclusive_publication=${synthetic_prep_inclusive_publication}ms real_k_per_n=${real_k_per_n} synthetic_k_per_n=${synthetic_k_per_n} parity=${status}",
   )
+
+  kbuf.free()
+  vbuf.free()
+  obuf.free()
 }
 
 fn bench_builders(n: Int) Void {
   source := make_dense_source(n)
 
-  // Warm every builder and the timer/import paths before reporting samples.
-  run_sample(source, n, "warmup")
-  run_sample(source, n, "sample1")
-  run_sample(source, n, "sample2")
-  run_sample(source, n, "sample3")
+  // Warm timer/import paths once, then rotate construction order to prevent a
+  // fixed builder position from inheriting a consistent GC advantage.
+  run_sample(source, n, "warmup", 0)
+  run_sample(source, n, "sample1", 0)
+  run_sample(source, n, "sample2", 1)
+  run_sample(source, n, "sample3", 2)
 }
 
 bench_builders(65536)

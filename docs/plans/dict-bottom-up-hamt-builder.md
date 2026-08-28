@@ -2,9 +2,9 @@
 
 > **For agentic workers:** The correctness/performance spike is complete. Keep its benchmark-only machinery isolated while completing the production-adapter and cleanup work recorded below.
 
-**Status:** Successful spike. Direct bottom-up construction is correct on the measured random-hash workload and materially faster than both incremental builders. Size-aligned crossover calibration, adversarial hash-shape coverage, production interface design, and spike-surface cleanup remain open.
+**Status:** Successful spike. Direct bottom-up construction is correct on the measured random-hash workload and materially faster than both incremental builders. Size-aligned crossover calibration now supports a real-dense publication crossover near `k/n = 0.12–0.15` at 1M live entries; adversarial hash-shape coverage, production interface design, and spike-surface cleanup remain open.
 
-**Goal:** Determine whether building the persistent HAMT directly from a dense stream of cached-hash entries materially lowers MutDict publication cost and shifts the flat→persistent crossover. **Answer: yes; productionization is justified, but the final crossover threshold is not yet decision-grade.**
+**Goal:** Determine whether building the persistent HAMT directly from a dense stream of cached-hash entries materially lowers MutDict publication cost and shifts the flat→persistent crossover. **Answer: yes; productionization is justified, and the random-hash workload now has a decision-grade size-aligned calibration, but no universal compiler threshold is encoded yet.**
 
 **Architecture:** The implemented spike synthesizes the future MutDict freeze input inside the existing `Dict.compact()` seam and a benchmark-only runtime entry point. It counting-partitions entries by successive 5-bit hash fragments, allocates each final HAMT node and compressed slot array at exact size, and bulk-builds insertion order. The three-way harness prepares one dense stream, then times sequential persistent insertion, owned/editable insertion, direct bottom-up construction, and order construction independently.
 
@@ -148,17 +148,50 @@ It does not cover:
 - [x] Report dense-entry preparation, each builder, and order construction separately.
 - [ ] Add clustered-prefix and deliberate full-hash-collision workloads; the current key stream covers sparse pseudo-random hashes.
 - [x] Inspect WAT to confirm the bottom-up path does not call `node_set`, `node_set_owned`, or repeated `arr_push` inside construction.
-- [ ] Produce a decision-grade crossover from size-aligned, same-session mutation and publication measurements.
+- [x] Produce a decision-grade crossover from size-aligned, same-session mutation and publication measurements.
 
-The provisional translation uses
-`k/n = publication_cost / (persistent_cost_at_k=n - flat_cost_at_k=n)`.
-The old 1M mutation data gives 853.73 ms persistent versus 14.98 ms flat at
-`k=n`. The new harness's “1M” label contains 524K live entries, so linear
-translation—not direct substitution—is required. Extrapolating build plus order
-to 1M live entries suggests `k/n` around 0.11–0.16 for a real cached-hash dense
-MutDict input. Including the synthetic old-HAMT preparation suggests roughly
-0.23–0.28. Record this as directional evidence only; rerun with identical live
-sizes and builder-order rotation before choosing a compiler threshold.
+#### Size-aligned crossover calibration
+
+The calibration starts every flat, persistent, and publication measurement with
+exactly `n` live entries and applies `k=n` deterministic overwrites to both
+mutation strategies. Each sample verifies insertion order, every final live
+value, and an equally large disjoint absent-key range for the flat table, the
+persistent mutation result, and all three builder dictionaries. The persistent
+loop also retains every pre-write version and checks its value, preventing an
+in-place path from replacing the intended persistent baseline.
+
+The benchmark has one warmup followed by three samples in one process. Builder
+execution rotates sequential/editable/bottom-up, editable/bottom-up/sequential,
+and bottom-up/sequential/editable; phase labels always name the same builder.
+The `dense_prep` phase is synthetic PDict preparation (`hash_key` plus
+`node_get`) and is never included in real-dense publication. Real dense-input
+publication is `bottom_up + order`; the preparation-inclusive column is reported
+separately for the current PDict-synthesis seam.
+
+| live n | sample (builder order) | flat mutation | persistent mutation | dense prep | bottom-up + order | prep-inclusive publication | real `k/n` | prep-inclusive `k/n` |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 65 536 | sample1 (S,E,B) | 0.731 ms | 22.401 ms | 2.221 ms | 6.818 ms | 9.039 ms | 0.315 | 0.417 |
+| 65 536 | sample2 (E,B,S) | 0.730 ms | 22.577 ms | 2.859 ms | 6.748 ms | 9.607 ms | 0.309 | 0.440 |
+| 65 536 | sample3 (B,S,E) | 0.739 ms | 23.652 ms | 2.700 ms | 5.535 ms | 8.235 ms | 0.242 | 0.359 |
+| 1 048 576 | sample1 (S,E,B) | 15.179 ms | 833.218 ms | 158.858 ms | 109.886 ms | 268.744 ms | 0.134 | 0.329 |
+| 1 048 576 | sample2 (E,B,S) | 14.603 ms | 862.918 ms | 192.079 ms | 105.685 ms | 297.764 ms | 0.125 | 0.351 |
+| 1 048 576 | sample3 (B,S,E) | 14.654 ms | 845.541 ms | 155.880 ms | 120.274 ms | 276.155 ms | 0.145 | 0.332 |
+
+Each crossover is derived per sample as
+`publication_cost / (persistent_mutation_at_k=n - flat_mutation_at_k=n)`.
+At 1M live entries, the real-dense crossover is consistently `0.125–0.145`,
+while the synthetic-PDict-seam-inclusive crossover is `0.329–0.351`. The 65K
+rows are broader (`0.242–0.315` real and `0.359–0.440` inclusive), including
+order/build variation across rotated positions; retain the ranges rather than
+collapsing them into a single average.
+
+**Decision:** direct bottom-up publication materially moves the 1M dense
+flat-to-persistent boundary to roughly 12–15% as long as the future MutDict
+supplies cached hashes and values directly. The synthetic PDict seam would move
+that boundary to roughly 32–34%, so it must not be silently charged to real
+publication. This calibrates the production-adapter case but does not select or
+encode a compiler threshold: size dispatch, adapter design, ping-pong scratch,
+and adversarial hash shapes remain separate work.
 
 ### Task 5 — Production direction and spike cleanup
 
@@ -223,7 +256,7 @@ Do not run tree-sitter tests; this plan does not touch the grammar.
 
 1. **Construction:** At 524K live entries, bottom-up construction is typically about 30–35 ms versus 72–75 ms editable and 168–173 ms sequential.
 2. **Phase split:** Synthetic dense preparation is about 50–52 ms and bulk order about 12–13 ms at that scale. Real MutDict publication should not pay the old-HAMT `node_get` preparation seam.
-3. **Crossover:** Directional translation moves the likely flat-publication crossover from near `k/n = 1` toward roughly `0.1–0.25`; size-aligned same-session measurement remains mandatory before encoding a threshold.
+3. **Crossover:** Size-aligned, same-session measurements put real dense publication at `k/n = 0.125–0.145` and synthetic-PDict-seam-inclusive publication at `0.329–0.351` for 1M live entries. The smaller 65K rows are broader; do not encode a threshold before size-dispatch and adversarial-shape work.
 4. **Required inputs:** Cached hashes, direct key/value access, and bulk order construction are part of the intended production input contract. Without them, old-HAMT lookup and incremental order costs obscure the builder result.
 5. **Verdict:** Preserve bottom-up construction as the intended MutDict freeze adapter and as a useful `Dict.compact()` implementation. Do not preserve the benchmark APIs as public surface.
 6. **Ping-pong:** The naive builder already proves the lever. Treat shared ping-pong scratch as optional, profiling-driven optimization rather than a production gate.
