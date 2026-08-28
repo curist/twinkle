@@ -93,13 +93,31 @@ fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
   }
 }
 
-// Warm timer/import paths and all runtime branches before reported rows.
-run_sample("warmup-dense", 4096, 4096, 0)
-run_sample("warmup-churn", 4096, 4096, 4)
+fn run_reported_row(label: String, n: Int, k: Int, churn_stride: Int, mutable_first: Bool) Void {
+  first := if mutable_first {
+    "mutable-first"
+  } else {
+    "canonical-first"
+  }
+  second := if mutable_first {
+    "canonical-first"
+  } else {
+    "mutable-first"
+  }
+  run_sample("${label}-sample1-${first}", n, k, churn_stride)
+  run_sample("${label}-sample2-${second}", n, k, churn_stride)
+  run_sample("${label}-sample3-${first}", n, k, churn_stride)
+}
 
-run_sample("dense-65k-1x", 65536, 65536, 0)
-run_sample("dense-65k-4x", 65536, 4 * 65536, 0)
-run_sample("churn-65k-1x", 65536, 65536, 4)
-run_sample("dense-1m-1x", 1048576, 1048576, 0)
-run_sample("dense-1m-4x", 1048576, 4 * 1048576, 0)
-run_sample("churn-1m-1x", 1048576, 1048576, 4)
+// Warm timer/import paths and both candidate-order branches before reported rows.
+run_sample("warmup-dense-mutable-first", 4096, 4096, 0)
+run_sample("warmup-churn-canonical-first", 4096, 4096, 4)
+
+// Three raw samples per row. Three is odd, so the starting order alternates
+// between rows as well as within each row.
+run_reported_row("dense-65k-1x", 65536, 65536, 0, true)
+run_reported_row("dense-65k-4x", 65536, 4 * 65536, 0, false)
+run_reported_row("churn-65k-1x", 65536, 65536, 4, true)
+run_reported_row("dense-1m-1x", 1048576, 1048576, 0, false)
+run_reported_row("dense-1m-4x", 1048576, 4 * 1048576, 0, true)
+run_reported_row("churn-1m-1x", 1048576, 1048576, 4, false)
