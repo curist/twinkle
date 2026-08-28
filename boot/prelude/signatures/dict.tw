@@ -51,6 +51,16 @@ pub fn bench_timings() Vector<Float> {
   []
 }
 
+/// Spike-only: compare mutable and canonical stable-ID arena layouts.
+pub fn bench_arena_layouts(n: Int, k: Int, churn_stride: Int) Vector<Dict<Int, Int>> {
+  []
+}
+
+/// Spike-only: return clone, update, churn, seam, and freeze phase timings.
+pub fn bench_arena_timings() Vector<Float> {
+  []
+}
+
 /// Test-only: build a Dict from engineered (hash, key, value) triples, bypassing hash_key.
 pub fn build_dense_test(hashes: Vector<Int>, keys: Vector<Int>, vals: Vector<Int>) Dict<Int, Int> {
   Dict.new()

@@ -346,6 +346,8 @@ fn builtin_abi(name: String) AbiContract {
     "dict$bench_builder_rotation" => abi([.I32], []),
     "dict$bench_builders" => abi([dict_n()], [pvec_()]),
     "dict$bench_timings" => abi([], [pvec_()]),
+    "dict$bench_arena_layouts" => abi([.I32, .I32, .I32], [pvec_()]),
+    "dict$bench_arena_timings" => abi([], [pvec_()]),
     "dict$build_dense_test" => abi([pvec_n(), pvec_n(), pvec_n()], [dict_()]),
     // Result declared as .Anyref (not variant_()) so the generic runtime-call
     // coercion (emit_coerce_stack's Anyref branch -> emit_unbox_from_anyref)
@@ -826,6 +828,22 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     )
     .append(rt("dict$bench_builders", "rt.dict", "bench_builders", .Some("Dict.bench_builders")))
     .append(rt("dict$bench_timings", "rt.dict", "bench_timings", .Some("Dict.bench_timings")))
+    .append(
+      rt(
+        "dict$bench_arena_layouts",
+        "rt.dict",
+        "bench_arena_layouts",
+        .Some("Dict.bench_arena_layouts"),
+      ),
+    )
+    .append(
+      rt(
+        "dict$bench_arena_timings",
+        "rt.dict",
+        "bench_arena_timings",
+        .Some("Dict.bench_arena_timings"),
+      ),
+    )
     .append(
       rt("dict$build_dense_test", "rt.dict", "build_dense_test", .Some("Dict.build_dense_test")),
     )

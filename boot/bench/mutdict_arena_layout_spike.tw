@@ -1,0 +1,105 @@
+//! Throwaway S5 representation spike: mutable unboxed arena versus canonical
+//! immutable HamtEntry arena with external liveness.
+//!
+//! The runtime target uses stable entry IDs rather than a hashmap index so this
+//! benchmark isolates clone, overwrite, remove/reinsert, dense-seam, and
+//! publication costs. Remove with churn_stride=0 means the dense handoff case.
+
+kmult: Int = 0 - 7046029254386353131
+
+fn key_of(i: Int) Int {
+  i * kmult + 1
+}
+
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn overwritten_value(n: Int, k: Int, id: Int) Int {
+  if id >= k {
+    id
+  } else {
+    last_write := id + (k - 1 - id) / n * n
+    n + last_write
+  }
+}
+
+fn verify_result(m: Dict<Int, Int>, n: Int, k: Int, churn_stride: Int) Bool {
+  ks := m.keys()
+  ok := m.len() == n and ks.len() == n
+  out := 0
+  i := 0
+  if churn_stride > 0 {
+    for i in 0..n {
+      if i % churn_stride != 0 {
+        ok = ok and ks[out] == key_of(i)
+        ok = ok and dget(m, key_of(i)) == overwritten_value(n, k, i)
+        out = out + 1
+      }
+    }
+    for i in 0..n {
+      if i % churn_stride == 0 {
+        ok = ok and ks[out] == key_of(i)
+        ok = ok and dget(m, key_of(i)) == 2 * n + i
+        out = out + 1
+      }
+    }
+  } else {
+    for i in 0..n {
+      ok = ok and ks[i] == key_of(i)
+      ok = ok and dget(m, key_of(i)) == overwritten_value(n, k, i)
+    }
+    out = n
+  }
+  for i in 0..n {
+    ok = ok and dget(m, key_of(n + i)) == 0 - 1
+  }
+  ok and out == n
+}
+
+fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
+  results := Dict.bench_arena_layouts(n, k, churn_stride)
+  timings := Dict.bench_arena_timings()
+  parity := results.len() == 2 and timings.len() == 10
+  if parity {
+    parity = verify_result(results[0], n, k, churn_stride)
+    parity = parity and verify_result(results[1], n, k, churn_stride)
+    i := 0
+    for i < results.len() {
+      published := results[i]
+      changed := published
+      changed[key_of(0)] = 0 - 7
+      parity = parity and dget(changed, key_of(0)) == 0 - 7
+      parity = parity and verify_result(published, n, k, churn_stride)
+      removed := changed.remove(key_of(0))
+      parity = parity and dget(removed, key_of(0)) == 0 - 1
+      parity = parity and dget(changed, key_of(0)) == 0 - 7
+      i = i + 1
+    }
+  }
+  status := if parity {
+    "PASS"
+  } else {
+    "FAIL"
+  }
+  println(
+    "${label} n=${n} k=${k} churn_stride=${churn_stride} mutable_clone=${timings[0]}ms canonical_clone=${timings[1]}ms mutable_update=${timings[2]}ms canonical_update=${timings[3]}ms mutable_churn=${timings[4]}ms canonical_churn=${timings[5]}ms mutable_seam=${timings[6]}ms canonical_seam=${timings[7]}ms mutable_freeze=${timings[8]}ms canonical_freeze=${timings[9]}ms parity=${status}",
+  )
+  if !parity {
+    error("MutDict arena layout parity failed")
+  }
+}
+
+// Warm timer/import paths and all runtime branches before reported rows.
+run_sample("warmup-dense", 4096, 4096, 0)
+run_sample("warmup-churn", 4096, 4096, 4)
+
+run_sample("dense-65k-1x", 65536, 65536, 0)
+run_sample("dense-65k-4x", 65536, 4 * 65536, 0)
+run_sample("churn-65k-1x", 65536, 65536, 4)
+run_sample("dense-1m-1x", 1048576, 1048576, 0)
+run_sample("dense-1m-4x", 1048576, 4 * 1048576, 0)
+run_sample("churn-1m-1x", 1048576, 1048576, 4)

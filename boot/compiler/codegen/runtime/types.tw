@@ -142,6 +142,19 @@ pub fn module() WasmModule {
         .None,
         true,
       ),
+      // Spike-only S5 layout candidate: unboxed mutable Int arena entry.
+      // Removed with the MutDict arena benchmark after the representation gate.
+      .Struct(
+        "MutDictArenaEntryI64",
+        [
+          .{ name: .Some("hash"), mutable: false, ty: .I64 },
+          .{ name: .Some("key"), mutable: false, ty: .I64 },
+          .{ name: .Some("val"), mutable: true, ty: .I64 },
+          .{ name: .Some("live"), mutable: true, ty: .I32 },
+        ],
+        .None,
+        true,
+      ),
       .Struct(
         "HamtEntry",
         [

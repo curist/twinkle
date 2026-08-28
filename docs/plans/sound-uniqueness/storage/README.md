@@ -11,9 +11,13 @@ for the family-fold mechanism. Remaining storage work: the boxed/record element 
 done, ~2× lever, deferred pending a workload) and Float/Byte **param-sourced**
 `set_in_place` write-routing; and the later packages **S4** (owned-specialized mutable
 ABI / param-sourced thaw-from-`PVec`), **S5** (`MutDict`), and **S6** (Buffer-retirement
-perf gate) are not started. Representation decisions for S2/S3/S5 and vector append
-settled 2026-08-01 (see [Settled decisions](#settled-decisions)); crossover thresholds
-inside them are spike-gated.
+perf gate) have no retained runtime implementation. S5's flat-index direction and
+dense publication adapter are settled, but its live arena element is now behind the
+measurement gate in [mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md):
+unboxed mutable records plus one conversion pass versus a boxed canonical
+`HamtEntry` control with external liveness. Representation decisions for S2/S3 and
+vector append settled 2026-08-01 (see [Settled decisions](#settled-decisions)); S5
+must record that arena result before its runtime starts.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:
@@ -39,9 +43,11 @@ form.
 
 ## Settled decisions
 
-These resolve the previously-open S2/S3/S5 representation questions. They are
-design commitments, not yet-implemented code; the crossover thresholds inside them
-are spike-gated (see [Spike-first methodology](#spike-first-methodology)).
+These resolve the previously-open S2/S3 representation questions and S5's
+flat-index versus transient-HAMT direction. They are design commitments; S5's
+physical live arena remains measurement-gated because its unboxed mutable baseline
+trades a conversion/deep-clone cost against a boxed canonical-entry control's hot
+allocation cost (see [Spike-first methodology](#spike-first-methodology)).
 
 ### Backing representation: Wasm GC, not linear memory
 
@@ -393,18 +399,35 @@ Requirements:
 
 Introduce dict scoped regions and extend dict lowering beyond helper-call
 selection. The Tier-0 dict spike ([spike-tier0-dict.md](spike-tier0-dict.md))
-settled the region representation: the target is a **flat unboxed mutable hashmap
-(`MutDict`)** with an insertion-order sidecar, not a transient HAMT. A true
-owned/editable HAMT builder improves rebuilding by about 1.3× and remains a
-candidate freeze helper, but it retains per-entry HAMT traversal and is not the
-throughput target. `MutDict` mutate is 40–70× faster, but its O(n) flat→HAMT
-freeze *is* a full dict build, so it only pays off when **k/n ≳ 1** (updates
-exceed distinct keys). `MutDict` is therefore **conditional**: emit it only for a
-proven update-dense / wide region where the freeze amortizes across many ops
-(the S4 stay-low-across-a-chain shape, but not `run_fixpoint`'s sparse transfer
-maps), and fall back to the persistent path for build-once / lookup-heavy dicts.
-The final target lets such owned dict update chains remain mutable internally and
-materialize to ordinary `Dict<K, V>` only when publication requires it.
+settled the region direction: the target is a **flat mutable hashmap (`MutDict`)**
+with stable insertion identity, not a transient HAMT. The landed bottom-up
+`freeze_dense` adapter is the persistent publication tail. Before implementing the
+flat index, [the active representation gate](../../mutdict-dense-freeze-input.md)
+measures two layout-C arena elements:
+
+- an unboxed mutable Int arena whose hot writes are in place and whose publication
+  performs one boxing/conversion pass; and
+- the exact immutable boxed `HamtEntry` arena with external liveness, whole-record
+  replacement on overwrite, direct handoff while hole-free, and compaction after
+  deletion.
+
+The unboxed arena is the provisional retained baseline. The canonical arena is a
+zero-copy/cheap-clone control, not permission to silently weaken the unboxed
+throughput target; a measured win must explicitly reopen this section. If results
+are workload-dependent or neither complete publication path beats persistent Dict
+on update-dense rows, S5 stops before the full runtime rather than implementing
+both layouts.
+
+A true owned/editable HAMT builder improves rebuilding by about 1.3× but retains
+per-entry HAMT traversal and is not the throughput target. The bottom-up adapter
+moves the measured large dense-publication crossover substantially below the old
+sequential-builder estimate, but materialization remains O(n). `MutDict` is
+therefore **conditional**: emit it only for a proven update-dense / wide region
+where publication amortizes across many operations (the S4 stay-low-across-a-chain
+shape, but not `run_fixpoint`'s sparse transfer maps), and fall back to the
+persistent path for build-once / lookup-heavy dicts. The final target lets such
+owned dict update chains remain mutable internally and materialize to ordinary
+`Dict<K, V>` only when publication requires it.
 
 Publication is three-tier, not binary (see
 [spike-tier0-dict.md](spike-tier0-dict.md) boundary result): old-version-dead →
