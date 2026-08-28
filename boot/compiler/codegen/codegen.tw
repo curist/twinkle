@@ -31,6 +31,7 @@ use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.linker_dce.{eliminate_dead_wasm}
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
+use compiler.codegen.mutvec_call_phase
 use compiler.codegen.mutvec_region
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.buf as rt_buf
@@ -38,7 +39,6 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
-use compiler.codegen.s4_phase
 use compiler.codegen.variant_route
 use compiler.codegen.variant_specialize
 use compiler.codegen.wasm.{emit_linked_wasm, emit_linked_wasm_buffer}
@@ -112,13 +112,13 @@ pub type PreparedCodegen = .{
   optimizer_semantics: OptimizerSemantics,
   builder_anf: AnfModule,
   specialization: variant_specialize.SpecializeResult,
-  // The HP-2/HP-4 interprocedural-MutVec decision (`s4_phase.run_s4`), carried
+  // The HP-2/HP-4 interprocedural-MutVec decision (`mutvec_call_phase.run_mutvec_call`), carried
   // forward past its computation point so a later pass (e.g. Task 7's
-  // clone-body + caller-region rewrite) can reach `s4_decision.abi_upgrades`
+  // clone-body + caller-region rewrite) can reach `mutvec_call_decision.abi_upgrades`
   // without re-running discovery/verify. Not yet consumed by anything in
   // `prepared` below — see `mutvec_repr.tw`'s header for why acting on
   // `abi_upgrades` needs that later rewrite first.
-  s4_decision: s4_phase.S4Decision,
+  mutvec_call_decision: mutvec_call_phase.MutVecCallDecision,
   closure_conversion: ClosureConversion,
   produced_decisions: mutable_produce.ProducedDecisions,
   prepared: PreparedModule,
@@ -181,12 +181,12 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
   // regions over the post-specialize module and rewrite any accepted region's
   // caller + upgraded clone body to flat `mutvec_*` ops. Byte-identical when no
   // region is claimed (boot claims none), so self-host stays at the fixed point.
-  decision := s4_phase.run_s4(spec, builtins)
+  decision := mutvec_call_phase.run_mutvec_call(spec, builtins)
   anf_spec := decision.module
-  ts4 := date.now()
+  t_mvc := date.now()
 
   if timed {
-    log_time("run_s4", ts4 - tvs)
+    log_time("run_mutvec_call", t_mvc - tvs)
   }
 
   // Final closure conversion.
@@ -240,14 +240,14 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
     mutable_select.enabled_emit_policy(),
   )
 
-  // HP-4: consume the S4 ABI-upgrade decision. `run_s4` already rewrote the ANF
+  // HP-4: consume the S4 ABI-upgrade decision. `run_mutvec_call` already rewrote the ANF
   // (upgraded clone bodies + accepted caller regions now use `mutvec_*` ops);
   // `assign_mutvec_reprs` inside prepare typed the local handle slots. This
   // supplies the two function-ABI facts the slot seed cannot: each upgraded
   // clone's MutVec `phys_return` + receiver param, and every routed caller's
   // call-result slot. Empty upgrades (boot's own source) → byte-identical.
   prepared := prepared0
-  prepared.funcs = mutvec_repr.apply_s4_abi_upgrades(
+  prepared.funcs = mutvec_repr.apply_mutvec_call_abi_upgrades(
     prepared0.funcs,
     decision.abi_upgrades,
     env,
@@ -263,7 +263,7 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
     optimizer_semantics: sem_env,
     builder_anf: anf_prime,
     specialization: spec,
-    s4_decision: decision,
+    mutvec_call_decision: decision,
     closure_conversion,
     produced_decisions,
     prepared,

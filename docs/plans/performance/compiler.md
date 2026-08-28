@@ -203,10 +203,10 @@ change touches codegen.
   nodes is a real per-node tax; iterate the unbounded spine, recurse the bounded
   nesting.*
 
-**Interprocedural MutVec (S4)**
+**Interprocedural MutVec** (`mutvec_call_*` — storage-tier "S4")
 
-- **`run_s4` discovery scope — gate to route-caller functions** (`run_s4`
-  ~1.95s → ~0.17s, ~11×). The interprocedural-MutVec phase ran
+- **`run_mutvec_call` discovery scope — gate to route-caller functions**
+  (`run_mutvec_call` ~1.95s → ~0.17s, ~11×). The interprocedural-MutVec phase ran
   `detect_call_thread_regions` over **all ~4100 functions** on every compile,
   and `detect` rebuilt the whole `route_site_targets` table + a builtin lookup
   per call. On `boot/main.tw` (which claims zero regions) that was ~1.95s — ~9%

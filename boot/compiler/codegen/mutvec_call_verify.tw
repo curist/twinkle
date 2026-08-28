@@ -1,7 +1,7 @@
 //! S4 (interprocedural MutVec) — HP-3 continuation verifier.
 //!
 //! Decides whether a call-thread region discovered by
-//! `s4_region.detect_call_thread_regions` may safely keep its owned vector
+//! `mutvec_call_region.detect_call_thread_regions` may safely keep its owned vector
 //! FLAT (mutable, non-persistent) across the routed owned-clone call boundary.
 //! This is the risk-bearing gate: a false ACCEPT later produces a runtime
 //! `illegal cast` trap or silent state corruption when the flat backing is
@@ -66,15 +66,15 @@ use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp, Atom}
 use compiler.builder_region_detect.{atom_is_local, op_references_deep}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_call_region.{MutVecCallRegion}
 use compiler.codegen.mutvec_region.{collect_defs}
-use compiler.codegen.s4_region.{S4Region}
 use compiler.codegen.variant_specialize
 use compiler.core_ir.{LocalId}
 use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 use compiler.variant_id as vid
 
-pub type S4RejectReason = {
+pub type MutVecCallRejectReason = {
   NonContinuationReturn,
   AliasSurvives,
   CalleeRepublishes,
@@ -82,7 +82,7 @@ pub type S4RejectReason = {
   ReprDisagree,
 }
 
-pub type S4Verdict = { Accept, Reject(S4RejectReason) }
+pub type MutVecCallVerdict = { Accept, Reject(MutVecCallRejectReason) }
 
 // Builtin ids the callee scan whitelists as SAFE receiver uses. Deliberately
 // narrow: the only in-place-capable write a slice-1 owned clone performs is
@@ -101,8 +101,8 @@ fn resolve_verify_ids(b: BuiltinRegistry) VerifyIds {
 
 // ── Clone (callee) lookup ─────────────────────────────────────────────────
 // Flatten every routed call-site key -> clone `func_id` out of `spec.routes`
-// (a local reconstruction of `s4_region`'s private `route_site_targets`, kept
-// here to avoid widening that module's surface). `pub` so `s4_phase`'s HP-4
+// (a local reconstruction of `mutvec_call_region`'s private `route_site_targets`, kept
+// here to avoid widening that module's surface). `pub` so `mutvec_call_phase`'s HP-4
 // ABI-upgrade decision can reuse the exact same clone lookup this verifier
 // already proved correct, instead of re-deriving a third copy.
 pub fn clone_site_targets(spec: variant_specialize.SpecializeResult) Dict<Int, Int> {
@@ -122,7 +122,7 @@ pub fn func_def_of(spec: variant_specialize.SpecializeResult, func_id: Int) AnfF
 // The single argument index at which `handle` is passed to `call_op`, or `.None`
 // when it is absent or passed more than once (an ambiguous shape the verifier
 // cannot soundly attribute a single receiver param to — reject). `pub` so
-// `s4_phase`'s ABI-upgrade decision can locate the same receiver param index
+// `mutvec_call_phase`'s ABI-upgrade decision can locate the same receiver param index
 // this verifier already validated for a thread call.
 pub fn sole_receiver_index(call_op: AnfOp, handle: LocalId) Int? {
   case call_op {
@@ -164,13 +164,13 @@ pub fn repr_agrees(caller_ty: MonoType, callee_ty: MonoType) Bool {
 // one other than the reclaiming assign is a backing leak. `reason` latches the
 // first rejection; `returned` records that a single tail return of `recv` was
 // seen.
-type CScan = .{ reason: S4RejectReason?, pending: Dict<Int, Bool>, returned: Bool }
+type CScan = .{ reason: MutVecCallRejectReason?, pending: Dict<Int, Bool>, returned: Bool }
 
 fn cscan_start() CScan {
   .{ reason: .None, pending: Dict.new(), returned: false }
 }
 
-fn cscan_reject(s: CScan, r: S4RejectReason) CScan {
+fn cscan_reject(s: CScan, r: MutVecCallRejectReason) CScan {
   case s.reason {
     .Some(_) => s, // keep the first reason
     .None => .{ reason: .Some(r), pending: s.pending, returned: s.returned },
@@ -198,7 +198,7 @@ type CCtx = .{ recv: LocalId, ids: VerifyIds }
 // `recv`, a store into a record/variant/array/global, a closure capture, an
 // alias into another surviving local, a call whose result isn't reclaimed, or a
 // tail returning a different value — rejects.
-pub fn verify_clone_continuation(clone: AnfFunctionDef, recv: LocalId, b: BuiltinRegistry) S4Verdict {
+pub fn verify_clone_continuation(clone: AnfFunctionDef, recv: LocalId, b: BuiltinRegistry) MutVecCallVerdict {
   ctx := CCtx.{ recv, ids: resolve_verify_ids(b) }
   s := ctx.scan_clone(clone.body, cscan_start())
   case s.reason {
@@ -403,11 +403,11 @@ fn caller_alias_op(op: AnfOp, handle: LocalId) Bool {
 
 // ── Top-level verifier ─────────────────────────────────────────────────────
 // Verify a discovered call-thread region is safe to keep flat across its routed
-// owned-clone call(s). `func` is the caller: production (`s4_phase.run_s4`)
+// owned-clone call(s). `func` is the caller: production (`mutvec_call_phase.run_mutvec_call`)
 // passes the POST-`variant_specialize` copy from `spec.anf` (the same module
 // `spec` itself supplies, alongside routes); some tests instead pass the
 // pre-clone `prime` copy. Both are valid inputs — every routing lookup here
-// and in `s4_region.detect_call_thread_regions` keys purely on
+// and in `mutvec_call_region.detect_call_thread_regions` keys purely on
 // `vid.site_key(func_id, call_result_local_id)` against a table built from
 // `spec.routes`, never on a call op's target `FuncId`, and `variant_specialize`'s
 // in-place call-target retargeting changes neither a caller's `func_id` nor its
@@ -420,11 +420,11 @@ fn caller_alias_op(op: AnfOp, handle: LocalId) Bool {
 // resolve `vector$set_unsafe`/`len`/`get`, whose ids are assigned per
 // compilation), matching the same deviation Tasks 1 and 2 already made.
 pub fn verify_region(
-  region: S4Region,
+  region: MutVecCallRegion,
   func: AnfFunctionDef,
   spec: variant_specialize.SpecializeResult,
   b: BuiltinRegistry,
-) S4Verdict {
+) MutVecCallVerdict {
   // Condition 4 (defensive): at most one handle-carrying caller exit.
   if caller_exit_count(func.body, region.handle) > 1 {
     return .Reject(.MultiExit)

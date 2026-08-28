@@ -2,7 +2,7 @@
 //
 // Scaffolding only — this suite makes no compiler behavior change. It builds
 // the inspection seam every later S4 task (docs/plans/2026-08-27-interprocedural-mutvec-slice1.md)
-// tests against: `s4_stage` reproduces `link_program`'s pass order up to and
+// tests against: `mutvec_call_stage` reproduces `link_program`'s pass order up to and
 // including `variant_specialize` (codegen.tw:135-152) using already-public
 // entrypoints, so post-builder_region + post-specialize ANF and routes are
 // inspectable before the S4 phase itself exists.
@@ -37,11 +37,11 @@ use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutable_produce
+use compiler.codegen.mutvec_call_phase
+use compiler.codegen.mutvec_call_region
+use compiler.codegen.mutvec_call_verify
 use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
-use compiler.codegen.s4_phase
-use compiler.codegen.s4_region
-use compiler.codegen.s4_verify
 use compiler.codegen.variant_specialize
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType}
@@ -52,11 +52,11 @@ use compiler.variant_id as vid
 use lib.module.loader
 
 fn fixtures_dir() String {
-  "${loader.find_project_root("boot")}/tests/fixtures/cfg/s4"
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/mutvec_call"
 }
 
-// Path to a named fixture under fixtures/cfg/s4/, for direct use with
-// `s4_stage` (which — like the pipeline entrypoints it wraps — takes a path).
+// Path to a named fixture under fixtures/cfg/mutvec_call/, for direct use with
+// `mutvec_call_stage` (which — like the pipeline entrypoints it wraps — takes a path).
 pub fn fixture_path(name: String) String {
   "${fixtures_dir()}/${name}.tw"
 }
@@ -138,7 +138,7 @@ pub fn count_op_calls(wat: String, marker: String, op_name: String) Int {
 // the post-builder_region ANF (what `link_program` calls `anf_prime`), `spec`
 // is the full specialize result (routes + the post-clone module), `builtins`
 // is threaded through for later tasks that need it alongside `spec`/`prime`.
-pub type S4Stage = .{
+pub type MutVecCallStage = .{
   prime: AnfModule,
   spec: variant_specialize.SpecializeResult,
   builtins: BuiltinRegistry,
@@ -151,7 +151,7 @@ pub type S4Stage = .{
 // `error`) on a compile failure — same convention as mutvec_region_suite's
 // `region_ids` — since every caller here is a test harness over a known-good
 // fixture, not a user-facing API.
-pub fn s4_stage(path: String) S4Stage {
+pub fn mutvec_call_stage(path: String) MutVecCallStage {
   art := case pipeline.compile_entry_path(path) {
     .Ok(a) => a,
     .Err(e) => error("compile failed: ${format_compile_error(e)}"),
@@ -169,7 +169,7 @@ pub fn s4_stage(path: String) S4Stage {
 }
 
 // A stable string hash of an ANF module, for the S4 inertness proof (Task
-// 4): `run_s4` must leave the module byte-identical, and comparing two
+// 4): `run_mutvec_call` must leave the module byte-identical, and comparing two
 // `anf_fingerprint` values is cheaper and more robust than a structural
 // deep-equal. Reuses `ownership_verdicts.artifact_key_for_anf`, which already
 // hashes every `Atom`/`AnfExpr`/`AnfOp`/`CorePattern` variant exhaustively
@@ -242,7 +242,7 @@ fn producer_name(p: mutvec_region.MutVecProducer) String {
   }
 }
 
-fn exit_is_scratch(k: s4_region.S4Exit) Bool {
+fn exit_is_scratch(k: mutvec_call_region.MutVecCallExit) Bool {
   case k {
     .Scratch => true,
     .EscapeReturn => false,
@@ -309,21 +309,21 @@ fn synth_call_result_func() AnfFunctionDef {
   }
 }
 
-fn verdict_is_accept(v: s4_verify.S4Verdict) Bool {
+fn verdict_is_accept(v: mutvec_call_verify.MutVecCallVerdict) Bool {
   case v {
     .Accept => true,
     .Reject(_) => false,
   }
 }
 
-fn reject_reason_is(v: s4_verify.S4Verdict, name: String) Bool {
+fn reject_reason_is(v: mutvec_call_verify.MutVecCallVerdict, name: String) Bool {
   case v {
     .Accept => false,
     .Reject(r) => reject_reason_name(r) == name,
   }
 }
 
-fn reject_reason_name(r: s4_verify.S4RejectReason) String {
+fn reject_reason_name(r: mutvec_call_verify.MutVecCallRejectReason) String {
   case r {
     .NonContinuationReturn => "NonContinuationReturn",
     .AliasSurvives => "AliasSurvives",
@@ -432,7 +432,7 @@ fn synth_caller_def(body: AnfExpr) AnfFunctionDef {
   }
 }
 
-fn synth_region_for(handle: LocalId) s4_region.S4Region {
+fn synth_region_for(handle: LocalId) mutvec_call_region.MutVecCallRegion {
   .{ handle, producer: .CollectSeed, thread_calls: [], exit_kind: .Scratch }
 }
 
@@ -458,10 +458,10 @@ pub fn suite() runner.Suite {
     .test(
       "classify_producer_prime recognizes a post-builder_region collect",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         run_fn := find_func(st.prime, "run")
         handle := flags_handle(run_fn)
-        prod := s4_region.classify_producer_prime(run_fn, handle, st.builtins)
+        prod := mutvec_call_region.classify_producer_prime(run_fn, handle, st.builtins)
         try assert.equal(producer_name(prod.unwrap_or(.MakeSeed)), "collect")
         .Ok({})
       },
@@ -469,9 +469,9 @@ pub fn suite() runner.Suite {
     .test(
       "classify_producer_prime rejects a function-parameter handle",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         f := synth_param_func()
-        prod := s4_region.classify_producer_prime(f, f.params[0].local, st.builtins)
+        prod := mutvec_call_region.classify_producer_prime(f, f.params[0].local, st.builtins)
         try assert.ok(prod.is_none(), "expected .None for a parameter-sourced handle")
         .Ok({})
       },
@@ -479,18 +479,18 @@ pub fn suite() runner.Suite {
     .test(
       "classify_producer_prime rejects a handle bound to an unrelated call result",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         f := synth_call_result_func()
         handle := LocalId.{ id: 2 }
-        prod := s4_region.classify_producer_prime(f, handle, st.builtins)
+        prod := mutvec_call_region.classify_producer_prime(f, handle, st.builtins)
         try assert.ok(prod.is_none(), "expected .None for an unrelated call-result handle")
         .Ok({})
       },
     )
     .test(
-      "s4_stage compiles sieve_scratch and routes its set_at wrapper",
+      "mutvec_call_stage compiles sieve_scratch and routes its set_at wrapper",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         try assert.ok(st.spec.routes.len() >= 1, "expected at least one variant route")
         .Ok({})
       },
@@ -503,7 +503,7 @@ pub fn suite() runner.Suite {
         // in-progress closure-devirtualizer) sit near this pipeline slot and
         // could later eat that call shape, silently turning S4 into a no-op
         // with no test failure of its own. This test is independent of
-        // `s4_stage` / S4 itself, and asserts on the REAL compiler pipeline's
+        // `mutvec_call_stage` / S4 itself, and asserts on the REAL compiler pipeline's
         // WAT output (via `compile_fixture_wat`, i.e. `pipeline.emit_wat`),
         // so a future optimizer change that breaks the premise fails here
         // loudly instead of silently regressing a benchmark nobody watches.
@@ -528,9 +528,9 @@ pub fn suite() runner.Suite {
     .test(
       "detect_call_thread_regions finds the sieve set_at thread",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         run_fn := find_func(st.prime, "run")
-        regions := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        regions := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
         try assert.equal(regions.len(), 1)
         r := regions[0]
         try assert.equal(producer_name(r.producer), "collect")
@@ -542,9 +542,9 @@ pub fn suite() runner.Suite {
     .test(
       "detect_call_thread_regions finds the sieve_escape set_at thread as an escaping exit",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_escape"))
+        st := mutvec_call_stage(fixture_path("sieve_escape"))
         run_fn := find_func(st.prime, "run")
-        regions := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        regions := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
         try assert.equal(regions.len(), 1)
         r := regions[0]
         try assert.equal(r.thread_calls.len(), 1)
@@ -555,11 +555,11 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region accepts the sieve scratch region",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         run_fn := find_func(st.prime, "run")
-        r := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
+        r := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
         try assert.is_true(
-          verdict_is_accept(s4_verify.verify_region(r, run_fn, st.spec, st.builtins)),
+          verdict_is_accept(mutvec_call_verify.verify_region(r, run_fn, st.spec, st.builtins)),
         )
         .Ok({})
       },
@@ -567,11 +567,11 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region accepts the sieve_escape (single escaping exit) region",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_escape"))
+        st := mutvec_call_stage(fixture_path("sieve_escape"))
         run_fn := find_func(st.prime, "run")
-        r := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
+        r := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)[0]
         try assert.is_true(
-          verdict_is_accept(s4_verify.verify_region(r, run_fn, st.spec, st.builtins)),
+          verdict_is_accept(mutvec_call_verify.verify_region(r, run_fn, st.spec, st.builtins)),
         )
         .Ok({})
       },
@@ -580,15 +580,15 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region rejects a wrapper that captures the handle",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("wrap_capture"))
+        st := mutvec_call_stage(fixture_path("wrap_capture"))
         run_fn := find_func(st.prime, "run")
-        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        rs := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
 
         // Either discovery rejects it outright, or the verifier does — both are
         // correct (sound rejection).
         ok := rs.len() == 0
           or reject_reason_is(
-            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            mutvec_call_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
             "CalleeRepublishes",
           )
         try assert.is_true(ok)
@@ -599,12 +599,12 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region rejects a wrapper that returns a different vector",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("wrap_diff_return"))
+        st := mutvec_call_stage(fixture_path("wrap_diff_return"))
         run_fn := find_func(st.prime, "run")
-        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        rs := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
         ok := rs.len() == 0
           or reject_reason_is(
-            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            mutvec_call_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
             "NonContinuationReturn",
           )
         try assert.is_true(ok)
@@ -615,12 +615,12 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region rejects a caller that keeps a live alias of the handle",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("caller_alias"))
+        st := mutvec_call_stage(fixture_path("caller_alias"))
         run_fn := find_func(st.prime, "run")
-        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        rs := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
         ok := rs.len() == 0
           or reject_reason_is(
-            s4_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
+            mutvec_call_verify.verify_region(rs[0], run_fn, st.spec, st.builtins),
             "AliasSurvives",
           )
         try assert.is_true(ok)
@@ -632,9 +632,9 @@ pub fn suite() runner.Suite {
     .test(
       "detect_call_thread_regions yields zero regions for a multi-exit wrapper",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("wrap_multi_exit"))
+        st := mutvec_call_stage(fixture_path("wrap_multi_exit"))
         run_fn := find_func(st.prime, "run")
-        rs := s4_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
+        rs := mutvec_call_region.detect_call_thread_regions(run_fn, st.spec, st.builtins)
         try assert.equal(rs.len(), 0)
         .Ok({})
       },
@@ -645,9 +645,9 @@ pub fn suite() runner.Suite {
     .test(
       "verify_clone_continuation accepts an in-place-mutate-and-return-receiver clone",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         clone := synth_passthrough_clone(st.builtins)
-        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        v := mutvec_call_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
         try assert.is_true(verdict_is_accept(v))
         .Ok({})
       },
@@ -655,9 +655,9 @@ pub fn suite() runner.Suite {
     .test(
       "verify_clone_continuation rejects a clone that returns a different vector",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         clone := synth_diff_return_clone(st.builtins)
-        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        v := mutvec_call_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
         try assert.is_true(reject_reason_is(v, "NonContinuationReturn"))
         .Ok({})
       },
@@ -665,9 +665,9 @@ pub fn suite() runner.Suite {
     .test(
       "verify_clone_continuation rejects a clone that republishes the receiver",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         clone := synth_republish_clone(st.builtins)
-        v := s4_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
+        v := mutvec_call_verify.verify_clone_continuation(clone, clone.params[0].local, st.builtins)
         try assert.is_true(reject_reason_is(v, "CalleeRepublishes"))
         .Ok({})
       },
@@ -679,10 +679,10 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region rejects a caller with a surviving handle alias (AliasSurvives guard)",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         caller := synth_caller_alias()
         region := synth_region_for(LocalId.{ id: 5 })
-        v := s4_verify.verify_region(region, caller, st.spec, st.builtins)
+        v := mutvec_call_verify.verify_region(region, caller, st.spec, st.builtins)
         try assert.is_true(reject_reason_is(v, "AliasSurvives"))
         .Ok({})
       },
@@ -692,45 +692,53 @@ pub fn suite() runner.Suite {
     .test(
       "verify_region rejects a caller with two handle-carrying exits (MultiExit guard)",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
         caller := synth_caller_multi_exit()
         region := synth_region_for(LocalId.{ id: 5 })
-        v := s4_verify.verify_region(region, caller, st.spec, st.builtins)
+        v := mutvec_call_verify.verify_region(region, caller, st.spec, st.builtins)
         try assert.is_true(reject_reason_is(v, "MultiExit"))
         .Ok({})
       },
     )
     // Condition 5 — repr agreement. A caller/callee element-family mismatch is
     // structurally unreachable in slice-1 (8G clones are per-monotype; see
-    // s4_verify.tw's header), so it is discharged by justification, but the
+    // mutvec_call_verify.tw's header), so it is discharged by justification, but the
     // defensive ReprDisagree guard is exercised directly here.
     .test(
       "repr_agrees is true for a matching element family and false for a mismatch",
       fn() Result<Void, String> {
         try assert.is_true(
-          s4_verify.repr_agrees(MonoType.Vector(MonoType.Bool), MonoType.Vector(MonoType.Bool)),
+          mutvec_call_verify.repr_agrees(
+            MonoType.Vector(MonoType.Bool),
+            MonoType.Vector(MonoType.Bool),
+          ),
         )
         try assert.is_true(
-          !s4_verify.repr_agrees(MonoType.Vector(MonoType.Bool), MonoType.Vector(MonoType.Int)),
+          !mutvec_call_verify.repr_agrees(
+            MonoType.Vector(MonoType.Bool),
+            MonoType.Vector(MonoType.Int),
+          ),
         )
-        try assert.is_true(!s4_verify.repr_agrees(MonoType.Int, MonoType.Vector(MonoType.Bool)))
+        try assert.is_true(
+          !mutvec_call_verify.repr_agrees(MonoType.Int, MonoType.Vector(MonoType.Bool)),
+        )
         .Ok({})
       },
     )
-    // Task 7: `run_s4` now REWRITES an accepted, all-sites-upgraded region — the
+    // Task 7: `run_mutvec_call` now REWRITES an accepted, all-sites-upgraded region — the
     // sieve_scratch module is no longer byte-identical (its clone body + caller
     // producer chain moved to `mutvec_*`). The WAT-level tests below assert the
     // concrete op-level result; this locks the module-changed fact.
     .test(
-      "run_s4 rewrites the sieve_scratch module for an upgraded region",
+      "run_mutvec_call rewrites the sieve_scratch module for an upgraded region",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.is_true(dec.accepted.len() >= 1)
         try assert.is_true(dec.abi_upgrades.len() >= 1)
         try assert.ok(
           anf_fingerprint(dec.module) != anf_fingerprint(st.spec.anf),
-          "expected run_s4 to rewrite the module for an all-sites-upgraded region",
+          "expected run_mutvec_call to rewrite the module for an all-sites-upgraded region",
         )
         .Ok({})
       },
@@ -740,10 +748,10 @@ pub fn suite() runner.Suite {
     // the persistent fallback, and the guard that keeps self-host at its fixed
     // point when no S4 shape qualifies.
     .test(
-      "run_s4 leaves a non-upgraded (mixed-caller) module byte-identical",
+      "run_mutvec_call leaves a non-upgraded (mixed-caller) module byte-identical",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("split_callers"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("split_callers"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.abi_upgrades.len(), 0)
         try assert.equal(anf_fingerprint(dec.module), anf_fingerprint(st.spec.anf))
         .Ok({})
@@ -752,8 +760,8 @@ pub fn suite() runner.Suite {
     // Post-rewrite-scan equivalence: Task 2's own test
     // ("detect_call_thread_regions finds the sieve set_at thread", above)
     // asserts this exact region shape by scanning the PRE-rewrite `prime`
-    // copy of `run`. `run_s4` (production) scans the POST-rewrite `spec.anf`
-    // copy instead (see the design note in s4_phase.tw / the Task 4 report:
+    // copy of `run`. `run_mutvec_call` (production) scans the POST-rewrite `spec.anf`
+    // copy instead (see the design note in mutvec_call_phase.tw / the Task 4 report:
     // routing is resolved purely by `vid.site_key(func_id, call_result_id)`
     // lookups into a table built from `spec.routes`, which is invariant to
     // the call-target retargeting `variant_specialize` performs in place).
@@ -762,10 +770,10 @@ pub fn suite() runner.Suite {
     // post-rewrite path — while leaving the prime-based test green — fails
     // loudly here.
     .test(
-      "run_s4 finds the same sieve_scratch region shape via the post-rewrite path",
+      "run_mutvec_call finds the same sieve_scratch region shape via the post-rewrite path",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.accepted.len(), 1)
         r := dec.accepted[0]
         try assert.equal(producer_name(r.producer), "collect")
@@ -777,12 +785,12 @@ pub fn suite() runner.Suite {
     // Escape counterpart: sieve_escape returns the mutated vector itself, so
     // the accepted region's exit is the escaping (materializing) kind, not
     // Scratch — same distinction Task 2's prime-based escape test checks,
-    // sourced here from the post-rewrite `run_s4` path.
+    // sourced here from the post-rewrite `run_mutvec_call` path.
     .test(
-      "run_s4 finds the sieve_escape region as an escaping exit via the post-rewrite path",
+      "run_mutvec_call finds the sieve_escape region as an escaping exit via the post-rewrite path",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_escape"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_escape"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.accepted.len(), 1)
         r := dec.accepted[0]
         try assert.equal(producer_name(r.producer), "collect")
@@ -795,10 +803,10 @@ pub fn suite() runner.Suite {
     // thread call, so the completeness guard is trivially satisfied and the
     // clone gets exactly one ABI-upgrade record, typed to the Bool family.
     .test(
-      "run_s4 computes an ABI upgrade for the sieve_scratch clone's sole routed site",
+      "run_mutvec_call computes an ABI upgrade for the sieve_scratch clone's sole routed site",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.abi_upgrades.len(), 1)
         u := dec.abi_upgrades[0]
         try assert.is_true(u.return_mutvec)
@@ -812,10 +820,10 @@ pub fn suite() runner.Suite {
     // Same shape for the escaping variant — the upgrade decision does not
     // depend on exit_kind (Task 7 handles the freeze-boundary distinction).
     .test(
-      "run_s4 computes an ABI upgrade for the sieve_escape clone's sole routed site",
+      "run_mutvec_call computes an ABI upgrade for the sieve_escape clone's sole routed site",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_escape"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_escape"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.abi_upgrades.len(), 1)
         u := dec.abi_upgrades[0]
         try assert.is_true(u.return_mutvec)
@@ -833,10 +841,10 @@ pub fn suite() runner.Suite {
     // Discovery narrows the ArrayLit producer to undiscoverable → persistent
     // fallback → zero ABI upgrades.
     .test(
-      "run_s4 makes no ABI upgrade for an array-literal-seeded owned region",
+      "run_mutvec_call makes no ABI upgrade for an array-literal-seeded owned region",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("arraylit_seed"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("arraylit_seed"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.abi_upgrades.len(), 0)
         try assert.equal(dec.accepted.len(), 0)
         .Ok({})
@@ -844,7 +852,7 @@ pub fn suite() runner.Suite {
     )
     // Scan-gate soundness: `route_caller_funcs` gates the per-module discovery
     // scan on the caller side of each `route_site`, recovered by unpairing the
-    // Szudzik `vid.site_key`. If that inverse is wrong, `run_s4` would skip a
+    // Szudzik `vid.site_key`. If that inverse is wrong, `run_mutvec_call` would skip a
     // function that really does host a routed call (dropping a real region → an
     // output change), so pin the round-trip across both pairing branches
     // (func>=local and func<local) and the zero/equal edges.
@@ -865,7 +873,7 @@ pub fn suite() runner.Suite {
         for p in pairs {
           f := p[0]
           l := p[1]
-          try assert.equal(s4_region.site_key_func(vid.site_key(f, l)), f)
+          try assert.equal(mutvec_call_region.site_key_func(vid.site_key(f, l)), f)
         }
         .Ok({})
       },
@@ -881,9 +889,9 @@ pub fn suite() runner.Suite {
         accepted: Dict<Int, Bool> = Dict.new()
         accepted[1] = true
         accepted[2] = true
-        try assert.is_true(s4_phase.all_sites_accepted([1, 2], accepted))
-        try assert.is_true(!s4_phase.all_sites_accepted([1, 2, 3], accepted))
-        try assert.is_true(!s4_phase.all_sites_accepted([3], accepted))
+        try assert.is_true(mutvec_call_phase.all_sites_accepted([1, 2], accepted))
+        try assert.is_true(!mutvec_call_phase.all_sites_accepted([1, 2, 3], accepted))
+        try assert.is_true(!mutvec_call_phase.all_sites_accepted([3], accepted))
         .Ok({})
       },
     )
@@ -899,18 +907,18 @@ pub fn suite() runner.Suite {
         // Region 1 threads clones {1,2}; region 2 threads {3}. Candidates {1,3}
         // (2 is a non-candidate co-clone). Clone 1 shares region 1 with the
         // non-candidate 2 → dropped; clone 3's region is clean → survives.
-        keep := s4_phase.surviving_clones([1, 3], [[1, 2], [3]])
+        keep := mutvec_call_phase.surviving_clones([1, 3], [[1, 2], [3]])
         try assert.is_true(!keep.has(1))
         try assert.is_true(keep.has(3))
         try assert.is_true(!keep.has(2))
 
         // A clean multi-clone region keeps every member.
-        keep2 := s4_phase.surviving_clones([4, 5], [[4, 5]])
+        keep2 := mutvec_call_phase.surviving_clones([4, 5], [[4, 5]])
         try assert.is_true(keep2.has(4) and keep2.has(5))
 
         // Transitive cascade: non-candidate 9 drops 1 (via [1,9]); 1's removal
         // drops 2 (via [1,2]); 2's removal drops 3 (via [2,3]) — all gone.
-        keep3 := s4_phase.surviving_clones([1, 2, 3], [[1, 9], [1, 2], [2, 3]])
+        keep3 := mutvec_call_phase.surviving_clones([1, 2, 3], [[1, 9], [1, 2], [2, 3]])
         try assert.is_true(!keep3.has(1))
         try assert.is_true(!keep3.has(2))
         try assert.is_true(!keep3.has(3))
@@ -986,8 +994,8 @@ pub fn suite() runner.Suite {
     .test(
       "produce_mutable_decisions yields zero decisions for the S4-rewritten sieve run/clone",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("sieve_scratch"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("sieve_scratch"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         produced := mutable_produce.produce_mutable_decisions_seeded_with_sem(
           dec.module,
           st.builtins,
@@ -1025,10 +1033,10 @@ pub fn suite() runner.Suite {
     // its owned-ness is caller-dependent, so it never owned-routes to the shared
     // clone — verified empirically while settling on this fixture.)
     .test(
-      "run_s4 partitions a mixed owned caller into a MutVec sibling",
+      "run_mutvec_call partitions a mixed owned caller into a MutVec sibling",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("mixed_owned"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("mixed_owned"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
 
         // Exactly one upgrade — for a fresh `$mv` sibling, NOT an original 8G
         // clone route (that would mean the shared clone's ABI was mutated in
@@ -1113,8 +1121,8 @@ pub fn suite() runner.Suite {
     .test(
       "multi-clone accepted region upgrades every threaded clone (no partial-upgrade trap)",
       fn() Result<Void, String> {
-        st := s4_stage(fixture_path("multi_wrap"))
-        dec := s4_phase.run_s4(st.spec, st.builtins)
+        st := mutvec_call_stage(fixture_path("multi_wrap"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
         try assert.equal(dec.accepted.len(), 1)
         try assert.equal(dec.accepted[0].thread_calls.len(), 2) // two distinct clones threaded
         try assert.equal(dec.abi_upgrades.len(), 2) // both upgraded, all-or-nothing

@@ -2,8 +2,8 @@
 //!
 //! Discovery (Step 1, recorded per the task brief): read `builder_region.tw`
 //! and `builder_region_detect.tw`, then confirmed against a scratch dump of
-//! `s4_stage(fixture).prime` (`ir_print.render_anf_module`) for
-//! `boot/tests/fixtures/cfg/s4/sieve_scratch.tw`'s `run` function. Findings:
+//! `mutvec_call_stage(fixture).prime` (`ir_print.render_anf_module`) for
+//! `boot/tests/fixtures/cfg/mutvec_call/sieve_scratch.tw`'s `run` function. Findings:
 //!
 //!   - A `collect` lowers to a boxed builder chain at ANF-lowering time (Core
 //!     IR -> ANF), not via `builder_region`'s fold-to-builder promotion.
@@ -14,7 +14,7 @@
 //!     as a builder chain), so `builder_region.rewrite_module` is a no-op on
 //!     it: `sieve_scratch.tw`'s raw (`--anf`), pre-`builder_region`
 //!     (`--opt` / `art.opt`), and post-`builder_region`
-//!     (`s4_stage(...).prime`) ANF for the `flags` collect are BYTE
+//!     (`mutvec_call_stage(...).prime`) ANF for the `flags` collect are BYTE
 //!     IDENTICAL.
 //!   - The concrete op sequence (boxed/generic — `vector$builder_new` /
 //!     `vector$builder_push` / `vector$builder_freeze` — NOT a typed family
@@ -40,7 +40,7 @@
 //!     `vector$make` to this compilation's actual ids. `classify_producer_prime`
 //!     therefore takes a `BuiltinRegistry` alongside `func`/`handle` — wider
 //!     than the brief's illustrative 2-arg call, which elides it — and
-//!     `s4_stage`'s `builtins` field (in `s4_mutvec_suite.tw`) exists exactly
+//!     `mutvec_call_stage`'s `builtins` field (in `mutvec_call_suite.tw`) exists exactly
 //!     for this: "threaded through for later tasks that need it alongside
 //!     `spec`/`prime`".
 //!
@@ -56,7 +56,7 @@
 //! `site_to_clone.get(vid.site_key(caller, result.id))` to decide whether to
 //! retarget a call. That rewrite runs INSIDE `variant_specialize_module_with_sem`
 //! itself — the `func: AnfFunctionDef` this module's `detect_call_thread_regions`
-//! receives is `s4_stage`'s `prime` (pre-specialize: `builder_region`'s output,
+//! receives is `mutvec_call_stage`'s `prime` (pre-specialize: `builder_region`'s output,
 //! the same pre-clone module `collect_groups` recorded `route_sites` against), so
 //! its call targets are still the GENERIC callee, not the clone. Reconstructing
 //! `site_to_clone` from `spec.routes` (`route_sites[i] -> clone_func`) and keying
@@ -174,7 +174,7 @@ pub fn classify_producer_prime(func: AnfFunctionDef, handle: LocalId, b: Builtin
 }
 
 // ── Call-thread region discovery ──────────────────────────────────────────
-pub type S4Exit = { Scratch, EscapeReturn }
+pub type MutVecCallExit = { Scratch, EscapeReturn }
 
 // A claimed producer-rooted call-thread region: `handle` is a caller-born
 // producer (per `classify_producer_prime`) threaded through one or more
@@ -185,11 +185,11 @@ pub type S4Exit = { Scratch, EscapeReturn }
 // never reaches a top-level terminal (a pure reduction — e.g. `sieve_scratch`
 // returns `count`, not `flags`) and `EscapeReturn` when it is returned exactly
 // once at the top level (e.g. `sieve_escape`).
-pub type S4Region = .{
+pub type MutVecCallRegion = .{
   handle: LocalId,
   producer: MutVecProducer,
   thread_calls: Vector<Int>,
-  exit_kind: S4Exit,
+  exit_kind: MutVecCallExit,
 }
 
 // Every call-site key routed to an owned clone, flattened out of
@@ -252,7 +252,7 @@ fn isqrt(n: Int) Int {
 // this set (built once from `spec.routes`) skips that walk for the ~99% of
 // functions the specializer never routed a call in — sound for every case,
 // including over-cap routes (clone_func = -1), because it keys on the site's
-// caller, not on whether a clone exists. Built once per `run_s4`.
+// caller, not on whether a clone exists. Built once per `run_mutvec_call`.
 pub fn route_caller_funcs(spec: variant_specialize.SpecializeResult) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
   for r in spec.routes {
@@ -494,7 +494,7 @@ fn eligible_region(
   defs: Dict<Int, AnfOp>,
   site_to_clone: Dict<Int, Int>,
   len_id: Int,
-) S4Region? {
+) MutVecCallRegion? {
   rebind_sources := collect_rebind_sources(func.body, handle, Dict.new())
   ctx := ScanCtx.{ handle, defs, site_to_clone, rebind_sources, func_id: func.func_id.id, len_id }
   scan := ctx.scan_uses(func.body, empty_use_scan())
@@ -510,12 +510,12 @@ fn eligible_region(
   if scan.exit_count > 1 {
     return .None
   }
-  exit_kind: S4Exit = if scan.exit_count == 1 {
+  exit_kind: MutVecCallExit = if scan.exit_count == 1 {
     .EscapeReturn
   } else {
     .Scratch
   }
-  .Some(S4Region.{ handle, producer, thread_calls: scan.thread_calls, exit_kind })
+  .Some(MutVecCallRegion.{ handle, producer, thread_calls: scan.thread_calls, exit_kind })
 }
 
 // Find every producer-rooted call-thread region in `func`: a caller-born
@@ -530,7 +530,7 @@ pub fn detect_call_thread_regions(
   func: AnfFunctionDef,
   spec: variant_specialize.SpecializeResult,
   b: BuiltinRegistry,
-) Vector<S4Region> {
+) Vector<MutVecCallRegion> {
   detect_call_thread_regions_with(
     func,
     route_site_targets(spec),
@@ -540,7 +540,7 @@ pub fn detect_call_thread_regions(
 }
 
 // Hoisted core: `site_to_clone` (the route table) and `len_id` depend only on
-// `spec`/`builtins`, not on `func`, so `run_s4` builds them ONCE and threads
+// `spec`/`builtins`, not on `func`, so `run_mutvec_call` builds them ONCE and threads
 // them across the per-module scan instead of paying `route_site_targets`'s
 // whole-routes rebuild + a builtin lookup on every one of the ~4100 functions.
 pub fn detect_call_thread_regions_with(
@@ -548,9 +548,9 @@ pub fn detect_call_thread_regions_with(
   site_to_clone: Dict<Int, Int>,
   len_id: Int,
   b: BuiltinRegistry,
-) Vector<S4Region> {
+) Vector<MutVecCallRegion> {
   defs := collect_defs(func.body, Dict.new())
-  regions: Vector<S4Region> = []
+  regions: Vector<MutVecCallRegion> = []
   for id, _op in defs {
     handle := LocalId.{ id }
     case classify_producer_prime(func, handle, b) {

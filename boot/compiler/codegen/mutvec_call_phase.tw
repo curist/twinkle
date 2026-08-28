@@ -1,21 +1,21 @@
 //! S4 (interprocedural MutVec) — HP-2 phase entrypoint.
 //!
-//! Wires `s4_region`'s discovery and `s4_verify`'s verifier into a single
+//! Wires `mutvec_call_region`'s discovery and `mutvec_call_verify`'s verifier into a single
 //! per-module pass: for every function in the post-`variant_specialize`
 //! module, discover its call-thread regions, then verify each discovered
 //! region and keep the ones the verifier accepts. Discovery MUST run before
 //! verification for a given region — `verify_region`'s condition-2 alias
 //! check is only sound when called on a region that already passed
 //! discovery (a hand-built or otherwise non-discovered region is not a valid
-//! input), so `run_s4` never calls `verify_region` outside that order.
+//! input), so `run_mutvec_call` never calls `verify_region` outside that order.
 //!
 //! `abi_upgrades` records which clone (or `$mv` sibling) may type its receiver
 //! param + return as a flat `MutVec<fam>` instead of the persistent PVec ABI —
 //! derived per routed clone from its accepted-vs-total site partition (see
-//! `build_s4_plan`).
+//! `build_mutvec_call_plan`).
 //!
-//! Task 7 makes the phase ACTIVE: `run_s4` now RETURNS a rewritten `module`
-//! (`apply_s4_rewrite`). Typing a clone MutVec without rewriting its body ops is
+//! Task 7 makes the phase ACTIVE: `run_mutvec_call` now RETURNS a rewritten `module`
+//! (`apply_mutvec_call_rewrite`). Typing a clone MutVec without rewriting its body ops is
 //! unsound — `emit_coerce_stack` has no MutVec↔PVec bridge, so a MutVec slot fed
 //! from persistent-PVec ops falls to a raw `ref.cast` between unrelated GC types
 //! (validation failure / trap; see `mutvec_repr.tw`'s header). So the two edits
@@ -26,10 +26,10 @@
 //! exactly one boundary `mutvec_freeze` for an EscapeReturn — with the threaded
 //! clone call + its `assign handle = <result>` rebind kept as-is so the handle
 //! stays flat across the boundary. The matching slot/`phys_return` typing is
-//! consumed by `mutvec_repr.apply_s4_abi_upgrades`.
+//! consumed by `mutvec_repr.apply_mutvec_call_abi_upgrades`.
 //!
 //! Task 6 (HP-5) adds route partitioning: when only SOME of a shared clone's
-//! routed owned sites are S4-accepted, `build_s4_plan` carves a deterministic
+//! routed owned sites are S4-accepted, `build_mutvec_call_plan` carves a deterministic
 //! `${clone_name}$mv` MutVec sibling for the accepted subset, reroutes only
 //! those sites to it (`retarget_caller_calls`), and leaves the original PVec
 //! clone intact for the rejected owned sites — never mutating the shared clone's
@@ -43,32 +43,34 @@ use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
 use compiler.builder_region_detect.{atom_is_local}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_call_region
+use compiler.codegen.mutvec_call_region.{MutVecCallExit, MutVecCallRegion}
+use compiler.codegen.mutvec_call_verify.{
+  clone_site_targets, func_def_of, sole_receiver_index, verify_region,
+}
 use compiler.codegen.mutvec_region.{MutVecRegion, collect_defs, rewrite_regions_in_func}
-use compiler.codegen.s4_region
-use compiler.codegen.s4_region.{S4Exit, S4Region}
-use compiler.codegen.s4_verify.{clone_site_targets, func_def_of, sole_receiver_index, verify_region}
 use compiler.codegen.variant_specialize
 use compiler.codegen.variant_specialize.{SpecializeResult}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.elem_family.{elem_family_of, elem_family_suffix}
 use compiler.variant_id as vid
 
-pub type S4Decision = .{
-  accepted: Vector<S4Region>,
+pub type MutVecCallDecision = .{
+  accepted: Vector<MutVecCallRegion>,
   module: AnfModule,
   spec: SpecializeResult,
-  abi_upgrades: Vector<S4AbiUpgrade>,
+  abi_upgrades: Vector<MutVecCallAbiUpgrade>,
 }
 
 // HP-4: an owned clone whose every routed site is an accepted S4 region —
 // safe to type its receiver param + return as a flat `MutVec<fam>` instead of
 // the persistent PVec ABI. `param_slots` holds the clone's own receiver LOCAL
 // id(s) (today always exactly one entry — the sole receiver param a routed
-// thread call resolves to, per `s4_verify.sole_receiver_index`); `fam` is the
+// thread call resolves to, per `mutvec_call_verify.sole_receiver_index`); `fam` is the
 // element family shared by every accepted caller of this clone (condition 5
-// in `s4_verify` already proves caller/callee repr agreement per site, so one
+// in `mutvec_call_verify` already proves caller/callee repr agreement per site, so one
 // `fam` covers the whole clone).
-pub type S4AbiUpgrade = .{
+pub type MutVecCallAbiUpgrade = .{
   clone_func: Int,
   param_slots: Vector<Int>,
   return_mutvec: Bool,
@@ -77,7 +79,7 @@ pub type S4AbiUpgrade = .{
 
 // One accepted thread call's clone attribution: which clone it routes to,
 // which of the clone's own params is the receiver, and the element family.
-// Recorded per accepted region so `build_s4_plan` can check each clone's
+// Recorded per accepted region so `build_mutvec_call_plan` can check each clone's
 // accepted sites against the full `spec.routes` picture before committing to a
 // direct upgrade vs a `$mv` sibling — a single accepted region is never
 // sufficient on its own, since the same clone may have OTHER routed sites (other
@@ -87,33 +89,33 @@ type ThreadObservation = .{ clone_func: Int, recv_local: Int, fam: ElemRepr }
 // Discover + verify every call-thread region across `spec.anf`'s functions,
 // derive the HP-4 ABI-upgrade table from the accepted ones, and REWRITE the
 // module: upgraded clone bodies + all-sites-upgraded caller regions move to
-// flat `mutvec_*` ops (`apply_s4_rewrite`). `abi_upgrades` is the paired
-// decision output the backend consumes via `mutvec_repr.apply_s4_abi_upgrades`
+// flat `mutvec_*` ops (`apply_mutvec_call_rewrite`). `abi_upgrades` is the paired
+// decision output the backend consumes via `mutvec_repr.apply_mutvec_call_abi_upgrades`
 // to type the clone param/return + routed caller call-result slots MutVec.
-pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
-  accepted: Vector<S4Region> = []
+pub fn run_mutvec_call(spec: SpecializeResult, b: BuiltinRegistry) MutVecCallDecision {
+  accepted: Vector<MutVecCallRegion> = []
   accepted_sites: Dict<Int, Bool> = Dict.new()
   obs: Vector<ThreadObservation> = []
 
   // Accepted regions keyed by their caller function id, so the rewrite (below)
   // can re-locate every region back on the function it was discovered in
   // without re-running discovery. Program order preserved (append per func).
-  accepted_by_func: Dict<Int, Vector<S4Region>> = Dict.new()
+  accepted_by_func: Dict<Int, Vector<MutVecCallRegion>> = Dict.new()
 
   // Spec-invariant discovery inputs, built once and threaded through the scan.
   // `route_callers` gates the scan to the functions that actually call a routed
   // clone (the only ones that can host a thread region); `route_targets`/`len_id`
   // are the per-function-invariant tables `detect_call_thread_regions` otherwise
   // rebuilds ~4100 times.
-  route_callers := s4_region.route_caller_funcs(spec)
-  route_targets := s4_region.route_site_targets(spec)
+  route_callers := mutvec_call_region.route_caller_funcs(spec)
+  route_targets := mutvec_call_region.route_site_targets(spec)
   len_id := builtins.id(b, "vector$len").id
 
   for func in spec.anf.functions {
     if !route_callers.has(func.func_id.id) {
       continue
     }
-    regions := s4_region.detect_call_thread_regions_with(func, route_targets, len_id, b)
+    regions := mutvec_call_region.detect_call_thread_regions_with(func, route_targets, len_id, b)
     if regions.len() > 0 {
       defs := collect_defs(func.body, Dict.new())
       site_to_clone := clone_site_targets(spec)
@@ -144,7 +146,7 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
   // accepted callers' calls reroute to the sibling. No accepted site → no
   // upgrade (persistent fallback). `plan` bundles the sibling defs, the
   // per-site retarget map, and the sibling-aware site→clone table.
-  plan := build_s4_plan(spec, accepted_sites, obs)
+  plan := build_mutvec_call_plan(spec, accepted_sites, obs)
 
   // Region-membership coupling (Task 7 gate), now evaluated against the
   // sibling-aware `aug_site_to_clone` so an accepted region that reroutes to a
@@ -163,21 +165,21 @@ pub fn run_s4(spec: SpecializeResult, b: BuiltinRegistry) S4Decision {
 
   .{
     accepted,
-    module: apply_s4_rewrite(spec, final, accepted_by_func, b),
+    module: apply_mutvec_call_rewrite(spec, final, accepted_by_func, b),
     spec,
     abi_upgrades: final.upgrades,
   }
 }
 
-// The partition plan produced by `build_s4_plan`: which clones/siblings adopt
+// The partition plan produced by `build_mutvec_call_plan`: which clones/siblings adopt
 // the MutVec ABI (`upgrades`), the sibling function defs to append to the module
 // (`siblings`), the per-site call retarget map keyed by
 // `vid.site_key(caller_func, call_result_local)` → sibling func id (`retarget`),
 // and the sibling-aware site→clone table the region-flatten gate reads
 // (`aug_site_to_clone` = `clone_site_targets(spec)` with every retargeted site
 // remapped to its sibling).
-type S4Plan = .{
-  upgrades: Vector<S4AbiUpgrade>,
+type MutVecCallPlan = .{
+  upgrades: Vector<MutVecCallAbiUpgrade>,
   siblings: Vector<AnfFunctionDef>,
   retarget: Dict<Int, Int>,
   aug_site_to_clone: Dict<Int, Int>,
@@ -217,17 +219,17 @@ fn clones_per_generic(spec: SpecializeResult) Dict<Int, Int> {
 // original left persistent. `obs` supplies the receiver-local + element family
 // (proven per accepted region in `verify_region`), reused for the sibling since
 // it copies the original clone's params verbatim.
-fn build_s4_plan(
+fn build_mutvec_call_plan(
   spec: SpecializeResult,
   accepted_sites: Dict<Int, Bool>,
   obs: Vector<ThreadObservation>,
-) S4Plan {
+) MutVecCallPlan {
   base := clone_site_targets(spec)
   aug := base
   next_id := max_func_id(spec.anf) + 1
   gen_count := clones_per_generic(spec)
   extra: Dict<Int, Int> = Dict.new()
-  upgrades: Vector<S4AbiUpgrade> = []
+  upgrades: Vector<MutVecCallAbiUpgrade> = []
   siblings: Vector<AnfFunctionDef> = []
   retarget: Dict<Int, Int> = Dict.new()
   for r in spec.routes {
@@ -245,7 +247,7 @@ fn build_s4_plan(
     if accepted_subset.len() == r.route_sites.len() {
       // Every routed site accepted → upgrade the original clone in place.
       upgrades = .append(
-        S4AbiUpgrade.{
+        MutVecCallAbiUpgrade.{
           clone_func: r.clone_func,
           param_slots: [o.recv_local],
           return_mutvec: true,
@@ -284,7 +286,7 @@ fn build_s4_plan(
         },
       )
       upgrades = .append(
-        S4AbiUpgrade.{
+        MutVecCallAbiUpgrade.{
           clone_func: sib_id,
           param_slots: [o.recv_local],
           return_mutvec: true,
@@ -305,7 +307,7 @@ fn build_s4_plan(
 // retargets, so the accepted subset reverts to the persistent original — the
 // `aug_site_to_clone` is rebuilt from the base table plus only the surviving
 // retargets. Sound because it only ever removes upgrades (reject-by-default).
-fn finalize_plan(spec: SpecializeResult, plan: S4Plan, keep: Dict<Int, Bool>) S4Plan {
+fn finalize_plan(spec: SpecializeResult, plan: MutVecCallPlan, keep: Dict<Int, Bool>) MutVecCallPlan {
   upgrades := plan.upgrades.filter(fn(u) { keep.has(u.clone_func) })
   siblings := plan.siblings.filter(fn(s) { keep.has(s.func_id.id) })
   retarget: Dict<Int, Int> = Dict.new()
@@ -326,12 +328,12 @@ fn finalize_plan(spec: SpecializeResult, plan: S4Plan, keep: Dict<Int, Bool>) S4
 // with `region_all_upgraded` (which reads the same table). A thread call whose
 // site key resolves to no clone is skipped here while `region_all_upgraded`
 // treats it as disqualifying; that skip/reject asymmetry stays sound because (a)
-// `verify_region` (s4_verify.tw) rejects any accepted region carrying a
+// `verify_region` (mutvec_call_verify.tw) rejects any accepted region carrying a
 // `.None`-resolving thread call, so an accepted region never has one, and (b)
 // `aug` only ever REMAPS existing keys to siblings — it removes none — so it
 // introduces no new `.None`.
 fn build_region_clone_sets(
-  accepted_by_func: Dict<Int, Vector<S4Region>>,
+  accepted_by_func: Dict<Int, Vector<MutVecCallRegion>>,
   site_to_clone: Dict<Int, Int>,
 ) Vector<Vector<Int>> {
   out: Vector<Vector<Int>> = []
@@ -417,10 +419,10 @@ pub fn surviving_clones(candidates: Vector<Int>, region_clone_sets: Vector<Vecto
 // expect a MutVec-returning clone while the clone stays PVec would trap.
 // `upgrades` empty (boot's own source — no qualifying S4 shape) → `spec.anf`
 // returned unchanged, byte-identical, so self-host stays at the fixed point.
-fn apply_s4_rewrite(
+fn apply_mutvec_call_rewrite(
   spec: SpecializeResult,
-  plan: S4Plan,
-  accepted_by_func: Dict<Int, Vector<S4Region>>,
+  plan: MutVecCallPlan,
+  accepted_by_func: Dict<Int, Vector<MutVecCallRegion>>,
   b: BuiltinRegistry,
 ) AnfModule {
   if plan.upgrades.len() == 0 {
@@ -515,11 +517,11 @@ fn retarget_op(local: LocalId, func_id: Int, op: AnfOp, retarget: Dict<Int, Int>
 // Rewrite each accepted caller region in `f` whose thread calls all route to an
 // upgraded clone. Builds the `MutVecRegion` the S2 lowering consumes (same
 // builder-chain flattening, index-read swap, and escape-gated boundary freeze)
-// from the S4Region's producer + exit kind, then reuses
+// from the MutVecCallRegion's producer + exit kind, then reuses
 // `mutvec_region.rewrite_regions_in_func` verbatim.
 fn rewrite_caller_regions(
   f: AnfFunctionDef,
-  regs: Vector<S4Region>,
+  regs: Vector<MutVecCallRegion>,
   site_to_clone: Dict<Int, Int>,
   upgraded: Dict<Int, Bool>,
   b: BuiltinRegistry,
@@ -552,7 +554,7 @@ fn rewrite_caller_regions(
   }
 }
 
-fn exit_escapes(k: S4Exit) Bool {
+fn exit_escapes(k: MutVecCallExit) Bool {
   case k {
     .Scratch => false,
     .EscapeReturn => true,
@@ -561,7 +563,7 @@ fn exit_escapes(k: S4Exit) Bool {
 
 // True iff every thread call in `region` routes to a clone in `upgraded`.
 fn region_all_upgraded(
-  region: S4Region,
+  region: MutVecCallRegion,
   func_id: Int,
   site_to_clone: Dict<Int, Int>,
   upgraded: Dict<Int, Bool>,
@@ -589,7 +591,11 @@ fn handle_family_suffix(f: AnfFunctionDef, handle: LocalId) String? {
 // Rewrite every upgraded-clone receiver in `clone` to flat mutvec ops. The
 // receiver locals come from `upgrades` (this clone's `param_slots`); the family
 // suffix is read off each receiver param's own mono, so no i64 hard-coding.
-fn rewrite_clone_for(clone: AnfFunctionDef, upgrades: Vector<S4AbiUpgrade>, b: BuiltinRegistry) AnfFunctionDef {
+fn rewrite_clone_for(
+  clone: AnfFunctionDef,
+  upgrades: Vector<MutVecCallAbiUpgrade>,
+  b: BuiltinRegistry,
+) AnfFunctionDef {
   cur := clone
   for u in upgrades {
     if u.clone_func == clone.func_id.id {
@@ -676,7 +682,7 @@ fn rewrite_clone_op(op: AnfOp, recv: LocalId, ids: CloneRwIds) AnfOp {
 // tag `mutvec_repr`'s slot typing already uses. `.None` when the family
 // can't be resolved (no mono recorded, or not a registered element family) —
 // treated by the caller as "cannot prove a repr", the same reject-by-default
-// posture `s4_verify.repr_agrees` takes for its own condition-5 check.
+// posture `mutvec_call_verify.repr_agrees` takes for its own condition-5 check.
 fn handle_elem_repr(func: AnfFunctionDef, handle_id: Int) ElemRepr? {
   case func.op_result_mono.get(handle_id) {
     .Some(ty) => case elem_family_of(ty) {
@@ -689,11 +695,11 @@ fn handle_elem_repr(func: AnfFunctionDef, handle_id: Int) ElemRepr? {
 
 // Every thread call in an ACCEPTED region, resolved to its clone + receiver
 // param + element family. Mirrors the exact same site-key/clone/receiver-index
-// lookups `s4_verify.verify_region` already performed to accept this region
+// lookups `mutvec_call_verify.verify_region` already performed to accept this region
 // (reusing its own `clone_site_targets`/`func_def_of`/`sole_receiver_index`),
 // so this recomputation can never disagree with what was actually verified.
 fn region_observations(
-  region: S4Region,
+  region: MutVecCallRegion,
   func: AnfFunctionDef,
   defs: Dict<Int, AnfOp>,
   site_to_clone: Dict<Int, Int>,
@@ -732,7 +738,7 @@ fn region_observations(
 
 // `pub` so the guard's core predicate — "every site, not a majority" — has
 // direct unit coverage independent of a full SpecializeResult/discovery
-// walk (see s4_mutvec_suite.tw).
+// walk (see mutvec_call_suite.tw).
 pub fn all_sites_accepted(route_sites: Vector<Int>, accepted_sites: Dict<Int, Bool>) Bool {
   for sk in route_sites {
     if !accepted_sites.has(sk) {
