@@ -1,0 +1,297 @@
+//! S5 follow-up spike: the two dimensions dict_spike.tw did NOT measure, which
+//! together decide whether a flat `MutDict` could beat the persistent HAMT
+//! *unconditionally* (not just at k/n >= 1).
+//!
+//! dict_spike.tw covered mutate + freeze and found the k/n ~= 1 crossover. But
+//! "unconditional" hinges on:
+//!
+//!   READS   — build-once/lookup-heavy is the regime flat "loses" today (freeze
+//!             tax on few mutations). If flat open-addressing GET beats HAMT GET,
+//!             a dict that STAYS flat (never freezes) could still win that regime
+//!             on read throughput alone. This measures the dict read wall.
+//!
+//!   FORKS   — the structural advantage a flat backing CANNOT replicate: with the
+//!             old version still live (`v = base; v[k]=x`), a persistent HAMT
+//!             shares in O(log n); a flat backing must copy O(n). Vary ops-per-
+//!             fork `d` to find the density at which flat's O(1) writes amortize
+//!             the O(n) clone. Sparse forks favor persistent; dense favor flat.
+//!
+//! Same open-addressing proxy + sparse bijective keys as dict_spike.tw; every
+//! strategy applies the identical stream so the printed guards must match.
+
+use @std.buffer
+use @std.buffer.{I64View}
+use @std.date
+
+kmult: Int = 0x9e3779b97f4a7c15
+
+fn key_of(i: Int) Int {
+  i * kmult + 1
+}
+
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn next_lcg(s: Int) Int {
+  s * 6364136223846793005 + 1442695040888963407 & 0x7fffffffffffffff
+}
+
+fn next_cap(n: Int) Int {
+  c := 1
+  for c < n * 2 {
+    c = c * 2
+  }
+  c
+}
+
+fn ht_hash(k: Int, cap: Int) Int {
+  h := k * kmult & 0x7fffffffffffffff
+  h = h ^ h >> 32
+  h = h ^ h >> 16
+  h & cap - 1
+}
+
+fn ht_set(keys: I64View, vals: I64View, order: I64View, ol: Int, cap: Int, k: Int, v: Int) Int {
+  slot := ht_hash(k, cap)
+  out := ol
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == 0 => {
+        keys.set(slot, k)
+        vals.set(slot, v)
+        order.set(out, k)
+        out = out + 1
+        done = true
+      },
+      cur == k => {
+        vals.set(slot, v)
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  out
+}
+
+fn ht_get(keys: I64View, vals: I64View, cap: Int, k: Int) Int {
+  slot := ht_hash(k, cap)
+  res := 0
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == k => {
+        res = vals.at(slot)
+        done = true
+      },
+      cur == 0 => {
+        res = 0 - 1
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  res
+}
+
+// Build a persistent Dict of n sparse keys.
+fn build_dict(n: Int) Dict<Int, Int> {
+  m := Dict.new()
+  i := 0
+  for i < n {
+    m[key_of(i)] = i
+    i = i + 1
+  }
+  m
+}
+
+// ── READS ─────────────────────────────────────────────────────────────────
+// r random probes against a persistent Dict vs a flat open-addressing table.
+fn bench_reads(n: Int, r: Int) Void {
+  m := build_dict(n)
+
+  cap := next_cap(n)
+  kbuf := buffer.new(cap * 8)
+  vbuf := buffer.new(cap * 8)
+  obuf := buffer.new(n * 8)
+  keys := kbuf.view_i64(0, cap)
+  vals := vbuf.view_i64(0, cap)
+  order := obuf.view_i64(0, n)
+  slot := 0
+  for slot < cap {
+    keys.set(slot, 0)
+    slot = slot + 1
+  }
+  ol := 0
+  i := 0
+  for i < n {
+    ol = ht_set(keys, vals, order, ol, cap, key_of(i), i)
+    i = i + 1
+  }
+
+  // persistent reads
+  t0 := date.now()
+  sp := 0
+  s := 1
+  j := 0
+  for j < r {
+    s = next_lcg(s)
+    sp = sp + dget(m, key_of(s % n))
+    j = j + 1
+  }
+  t1 := date.now()
+
+  // flat reads (identical probe stream)
+  sf := 0
+  s = 1
+  j = 0
+  for j < r {
+    s = next_lcg(s)
+    sf = sf + ht_get(keys, vals, cap, key_of(s % n))
+    j = j + 1
+  }
+  t2 := date.now()
+
+  kbuf.free()
+  vbuf.free()
+  obuf.free()
+
+  pms := t1 - t0
+  fms := t2 - t1
+  ratio := if fms > 0.0 {
+    pms / fms
+  } else {
+    0.0
+  }
+  println(
+    "  reads n=${n} r=${r}  persistent=${pms}ms  flat=${fms}ms  flat_speedup=${ratio}x  (guard ${sp}==${sf})",
+  )
+}
+
+// ── FORKS ─────────────────────────────────────────────────────────────────
+// f forked versions, each doing d updates, with the base kept live across all
+// forks (so persistent forks are true structural-sharing copies, not in-place).
+//   persistent : v = base; d writes  (O(log n)/write, shares the base)
+//   flat       : clone the cap-slot backing (O(n)), then d O(1) writes
+// Sparse d favors persistent; dense d favors flat once the clone amortizes.
+fn bench_forks(n: Int, f: Int, d: Int) Void {
+  base := build_dict(n)
+
+  cap := next_cap(n)
+  bk := buffer.new(cap * 8)
+  bv := buffer.new(cap * 8)
+  bo := buffer.new(n * 8)
+  bkeys := bk.view_i64(0, cap)
+  bvals := bv.view_i64(0, cap)
+  border := bo.view_i64(0, n)
+  slot := 0
+  for slot < cap {
+    bkeys.set(slot, 0)
+    slot = slot + 1
+  }
+  bol := 0
+  i := 0
+  for i < n {
+    bol = ht_set(bkeys, bvals, border, bol, cap, key_of(i), i)
+    i = i + 1
+  }
+
+  // persistent: each fork copies-on-write from the still-live base.
+  tp0 := date.now()
+  sp := 0
+  s := 1
+  fi := 0
+  for fi < f {
+    v := base
+    j := 0
+    for j < d {
+      s = next_lcg(s)
+      v[key_of(s % n)] = fi + j
+      j = j + 1
+    }
+    sp = sp + dget(v, key_of(0)) + dget(base, key_of(fi % n))
+    fi = fi + 1
+  }
+  tp1 := date.now()
+
+  // flat: each fork clones the backing (bulk copy proxy) then does d O(1) writes.
+  sf := 0
+  s = 1
+  fi = 0
+  for fi < f {
+    ck := buffer.new(cap * 8)
+    cv := buffer.new(cap * 8)
+    co := buffer.new(n * 8)
+    ckeys := ck.view_i64(0, cap)
+    cvals := cv.view_i64(0, cap)
+    corder := co.view_i64(0, n)
+    p := 0
+    for p < cap {
+      ckeys.set(p, bkeys.at(p))
+      cvals.set(p, bvals.at(p))
+      p = p + 1
+    }
+    p = 0
+    for p < bol {
+      corder.set(p, border.at(p))
+      p = p + 1
+    }
+    ol := bol
+    j := 0
+    for j < d {
+      s = next_lcg(s)
+      ol = ht_set(ckeys, cvals, corder, ol, cap, key_of(s % n), fi + j)
+      j = j + 1
+    }
+    sf = sf + ht_get(ckeys, cvals, cap, key_of(0)) + ht_get(bkeys, bvals, cap, key_of(fi % n))
+    ck.free()
+    cv.free()
+    co.free()
+    fi = fi + 1
+  }
+  tf1 := tp1
+  tf2 := date.now()
+
+  bk.free()
+  bv.free()
+  bo.free()
+
+  pms := tp1 - tp0
+  fms := tf2 - tf1
+  win := if pms < fms {
+    "persistent"
+  } else {
+    "flat"
+  }
+  println(
+    "  forks n=${n} f=${f} d=${d}  persistent=${pms}ms  flat(clone+write)=${fms}ms  winner=${win}  (guard ${sp}==${sf})",
+  )
+}
+
+println("=== READ WALL (does flat GET beat HAMT GET?) ===")
+bench_reads(4096, 2000000)
+bench_reads(65536, 2000000)
+bench_reads(1048576, 2000000)
+
+println("")
+println("=== FORK CROSSOVER (sparse->dense ops per fork) ===")
+println("-- n=65536, f=64 --")
+bench_forks(65536, 64, 4)
+bench_forks(65536, 64, 64)
+bench_forks(65536, 64, 1024)
+bench_forks(65536, 64, 16384)
+println("-- n=1048576, f=16 --")
+bench_forks(1048576, 16, 4)
+bench_forks(1048576, 16, 256)
+bench_forks(1048576, 16, 4096)
+bench_forks(1048576, 16, 65536)

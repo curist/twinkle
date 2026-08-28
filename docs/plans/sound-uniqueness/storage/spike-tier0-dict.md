@@ -113,6 +113,81 @@ clone. Flat-clone wins when a forked version does enough ops to amortize the cop
 real selector is *ops-per-fork* and whether the snapshot stays flat — not k/n
 alone.
 
+## Round 2 (2026-08-28): reads + forks — the "unconditional" question
+
+Round 1 (above) measured **mutate + freeze** and found the k/n ≈ 1 crossover.
+The question "could a flat `MutDict` beat persistent *unconditionally* (not just
+at k ≳ n)?" turns on two things round 1 never measured: **read throughput** and
+**fork / structural-sharing cost**. Bench:
+[`boot/bench/mutdict_reads_forks_spike.tw`](../../../../boot/bench/mutdict_reads_forks_spike.tw)
+(same open-addressing proxy + sparse bijective keys; guards match across
+strategies). Single pass, `target/twk run` on main.
+
+### Reads — flat wins, and the lead grows with n
+
+2M random probes, persistent `Dict` GET vs flat open-addressing GET:
+
+| n | persistent | flat | flat speedup |
+|---|---|---|---|
+| 4 096 | 86.5 | 21.8 | **3.96×** |
+| 65 536 | 91.6 | 18.5 | **4.95×** |
+| 1 048 576 | 506.8 | 42.0 | **12.1×** |
+
+Same read-wall shape as vectors: one hash + probe vs a deepening tree traversal,
+so the flat advantage grows as the HAMT gets deeper.
+
+### Forks — persistent wins until forks get very dense
+
+`f` forked versions, each doing `d` updates, base kept **live** across all forks
+(so persistent forks are true copy-on-write structural shares, not in-place):
+
+| n | ops/fork `d` | persistent | flat (clone+write) | winner |
+|---|---|---|---|---|
+| 65 536 | 4 | 0.18 | 95.2 | persistent **520×** |
+| 65 536 | 64 | 2.9 | 55.8 | persistent 19× |
+| 65 536 | 1 024 | 16.0 | 56.7 | persistent 3.5× |
+| 65 536 | 16 384 | 219.8 | 68.2 | **flat 3.2×** |
+| 1 048 576 | 4 | 0.12 | 231.8 | persistent **1900×** |
+| 1 048 576 | 256 | 3.2 | 230.4 | persistent 72× |
+| 1 048 576 | 4 096 | 42.9 | 231.4 | persistent 5.4× |
+| 1 048 576 | 65 536 | 816.2 | 270.0 | **flat 3×** |
+
+The fork crossover sits at roughly **d ≳ n/20 to n/30 updates per fork** — a
+forked version must rewrite a few percent of the whole dict before its O(n) clone
+amortizes against a HAMT's O(log n) structural share. For sparse divergence (the
+common case: a few updates per version) persistent wins by 20–1900×.
+
+### What this says about "unconditional"
+
+Flat wins the two dominant dict operations — **owned mutate (40–70×, round 1)**
+and **reads (4–12×)** — but loses exactly the two things a HAMT is structurally
+built for: **(1)** sparse-divergence forks of a live dict (O(log n) share vs O(n)
+clone), and **(2)** the escape-to-persistent-ABI freeze (round 1's k < n loss).
+So flat **cannot be unconditional** while `Dict` must offer cheap sparse forks and
+a persistent escape — the conditional/gated conclusion stands, now confirmed from
+the read and fork angles too.
+
+**Customer tension made concrete:** the marquee S5 customer, `run_fixpoint`'s
+transfer maps, is the *worst* case for flat — it forks per block with **few
+updates per block** (sparse `d`) at **small width** (32–60, where HAMT reads are
+near-constant and flat's read edge shrinks; see
+[fixpoint-map-intmap.md](../../fixpoint-map-intmap.md)'s round-2 rejection). So
+persistent wins there on both fork and read. A good *first* flat customer is the
+opposite shape: a **large, owned, build-and-query dict that never fork-shares and
+never escapes** (flat build ≈ persistent build, then reads win 4–12× with no
+freeze).
+
+**The bigger lever the data hints at (flat-first default).** Today's model is
+"HAMT by default, flat when dense-mutate is proven." But reads *and* mutate both
+favor flat; only sparse-fork-sharing favors HAMT. The inversion — a
+**flat-immutable-by-default `Dict`, falling back to HAMT only where the compiler
+detects sparse-fork sharing** — is where "beat persistent everywhere" would
+actually come from. It is a much larger change (it touches the persistent `Dict`
+ABI itself, and the freeze/clone snapshot machinery would become the *common*
+path, not the edge), and it needs a real-program census of dict fork-sharing
+density before it's justified. Recorded as the S5 alternative to weigh against the
+gated-`MutDict` slice.
+
 ## Conclusions for S5 (revises the earlier decision)
 
 1. **The dict lever is flat storage (`MutDict`), not a transient HAMT.** Transient
