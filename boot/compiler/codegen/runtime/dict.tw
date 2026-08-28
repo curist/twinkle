@@ -68,6 +68,8 @@ pub fn module() WasmModule {
     node_build_incremental_fn("node_build_sequential", "node_set"),
     node_build_incremental_fn("node_build_editable", "node_set_owned"),
     node_build_bottom_up_fn(),
+    build_order_bulk_fn(),
+    freeze_dense_fn(),
     node_remove_fn(),
     compact_fn(),
     bench_builder_rotation_fn(),
@@ -2508,6 +2510,103 @@ fn node_build_bottom_up_fn() FuncDef {
   }
 }
 
+// ── build_order_bulk(dense: ref Array, len: i32) -> ref PVec ──────────────────
+// Insertion-order key vector pulled directly from the dense stream: order[j] is
+// dense[j].key, since dense is already in insertion order (order_index == j).
+// Subsumes the parallel keys[] array compact() used to maintain.
+fn build_order_bulk_fn() FuncDef {
+  // p0=dense, p1=len; L2=keys, L3=i
+  .{
+    name: "build_order_bulk",
+    params: [arr_REF, .I32],
+    results: [pvec_REF],
+    locals: [arr_NULL, .I32],
+    body: [
+      .RefNull(.Any),
+      .LocalGet(1),
+      .ArrayNew(t_ARRAY),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "oexit",
+        .None,
+        [
+          .Loop(
+            "oloop",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("oexit"),
+              .LocalGet(2),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(3),
+              .ArrayGet(t_ARRAY),
+              .RefCast(false, .Named(t_HAMT_ENTRY)),
+              .StructGet(t_HAMT_ENTRY, he_KEY),
+              .ArraySet(t_ARRAY),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("oloop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .Call("arr_from_array"),
+    ],
+  }
+}
+
+// ── freeze_dense(dense: ref Array, len: i32) -> ref PDict ─────────────────────
+// The shared publication adapter (design §2): build the persistent root in one
+// bottom-up pass and the order vector in bulk, then assemble an ordinary PDict.
+// dense[0..len) must be the hole-free, core_eq-unique live stream in insertion
+// order; the builder performs no rehash and no node_get.
+fn freeze_dense_fn() FuncDef {
+  // p0=dense, p1=len; L2=root
+  .{
+    name: "freeze_dense",
+    params: [arr_REF, .I32],
+    results: [pdict_REF],
+    locals: [hamt_NODE_NULL],
+    body: [
+      .RefNull(.Named(t_HAMT_NODE)),
+      .LocalSet(2),
+      .LocalGet(1),
+      .I32Const(0),
+      .I32GtS,
+      .If(
+        .None,
+        [
+          .LocalGet(0),
+          .I32Const(0),
+          .LocalGet(1),
+          .I32Const(0),
+          .Call("node_build_bottom_up"),
+          .LocalSet(2),
+        ],
+        [],
+      ),
+      .LocalGet(1),
+      .LocalGet(2),
+      .LocalGet(0),
+      .LocalGet(1),
+      .Call("build_order_bulk"),
+      .RefAsNonNull,
+      .I32Const(0),
+      .StructNew(t_PDICT),
+    ],
+  }
+}
+
 // ── compact(dict: PDict?) -> PDict ───────────────────────────────────────────
 // Rebuild order (dropping null tombstones) and refresh every entry's stored
 // order_index. Run only when dead >= live, so amortized O(log n) per remove.
@@ -2522,9 +2621,10 @@ fn node_build_bottom_up_fn() FuncDef {
 // value lookup that a real MutDict stream would not pay — measure it as seam
 // overhead, not builder cost.
 fn compact_fn() FuncDef {
-  // p0=dict; L1=flat order, L2=n, L3=dense entries, L4=keys, L5=j (live count),
-  // L6=i, L7=key, L8=hash, L9=val, L10=root, L11=order, L12=keys_trim,
-  // L13=old_root
+  // p0=dict; L1=flat order, L2=n, L3=dense entries, L4=(unused, was keys),
+  // L5=j (live count), L6=i, L7=key, L8=hash, L9=val, L10=(unused, was root),
+  // L11=(unused, was order), L12=(unused, was keys_trim), L13=old_root (still
+  // used for node_get value recovery)
   .{
     name: "compact",
     params: [pdict_NULL],
@@ -2561,15 +2661,11 @@ fn compact_fn() FuncDef {
       .RefAsNonNull,
       .ArrayLen,
       .LocalSet(2),
-      // dense[n], keys[n] (oversized; filled up to live count j)
+      // dense[n] (oversized; filled up to live count j)
       .RefNull(.Any),
       .LocalGet(2),
       .ArrayNew(t_ARRAY),
       .LocalSet(3),
-      .RefNull(.Any),
-      .LocalGet(2),
-      .ArrayNew(t_ARRAY),
-      .LocalSet(4),
       .I32Const(0),
       .LocalSet(5),
       .I32Const(0),
@@ -2616,12 +2712,6 @@ fn compact_fn() FuncDef {
                   .LocalGet(5),
                   .StructNew(t_HAMT_ENTRY),
                   .ArraySet(t_ARRAY),
-                  // keys[j] = key
-                  .LocalGet(4),
-                  .RefAsNonNull,
-                  .LocalGet(5),
-                  .LocalGet(7),
-                  .ArraySet(t_ARRAY),
                   .LocalGet(5),
                   .I32Const(1),
                   .I32Add,
@@ -2638,49 +2728,11 @@ fn compact_fn() FuncDef {
           ),
         ],
       ),
-      // root = j == 0 ? null : node_build_bottom_up(dense, 0, j, 0)
-      .RefNull(.Named(t_HAMT_NODE)),
-      .LocalSet(10),
-      .LocalGet(5),
-      .I32Const(0),
-      .I32GtS,
-      .If(
-        .None,
-        [
-          .LocalGet(3),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(5),
-          .I32Const(0),
-          .Call("node_build_bottom_up"),
-          .LocalSet(10),
-        ],
-        [],
-      ),
-      // order = arr_from_array(keys[0..j])
-      .RefNull(.Any),
-      .LocalGet(5),
-      .ArrayNew(t_ARRAY),
-      .LocalSet(12),
-      .LocalGet(12),
+      // dense[0..j) is the hole-free live stream; publish via the shared adapter.
+      .LocalGet(3),
       .RefAsNonNull,
-      .I32Const(0),
-      .LocalGet(4),
-      .RefAsNonNull,
-      .I32Const(0),
       .LocalGet(5),
-      .ArrayCopy(t_ARRAY, t_ARRAY),
-      .LocalGet(12),
-      .RefAsNonNull,
-      .Call("arr_from_array"),
-      .LocalSet(11),
-      // PDict { size: j, root, order, tombstones: 0 }
-      .LocalGet(5),
-      .LocalGet(10),
-      .LocalGet(11),
-      .RefAsNonNull,
-      .I32Const(0),
-      .StructNew(t_PDICT),
+      .Call("freeze_dense"),
     ],
   }
 }
