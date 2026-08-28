@@ -86,45 +86,22 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutvec_region.{MutVecProducer, collect_defs}
 use compiler.codegen.variant_specialize
 use compiler.core_ir.{FuncId, LocalId}
-use compiler.elem_family.{mutvec_families}
 use compiler.variant_id as vid
 
 // Builtin FuncIds this recognizer keys on. Deliberately narrower than
 // `mutvec_region`'s own (private) `OpIds`: this module only classifies
 // PRODUCERS (not in-region set/push/get/len ops), so it resolves just the
-// ids a producer shape can reference. `typed_freeze` lists every registered
-// mutvec family's `vector$builder_freeze<suffix>` id, so a promoted typed
-// builder freeze counts as a collect producer too, even though today's
-// fixtures only exercise the boxed form (see the discovery notes above).
-type ProducerIds = .{
-  make: FuncId,
-  builder_new: FuncId,
-  freeze_box: FuncId,
-  typed_freeze: Vector<Int>,
-}
-
-fn typed_freeze_ids(b: BuiltinRegistry) Vector<Int> {
-  collect f in mutvec_families() {
-    builtins.id(b, "vector$builder_freeze${f.suffix}").id
-  }
-}
+// ids a producer shape can reference. Only the boxed `vector$builder_freeze`
+// (`freeze_box`) is tracked — the reused `mutvec_region` lowering rewrites the
+// boxed collect seed only, so a typed builder freeze is not claimed here.
+type ProducerIds = .{ make: FuncId, builder_new: FuncId, freeze_box: FuncId }
 
 fn resolve_producer_ids(b: BuiltinRegistry) ProducerIds {
   .{
     make: builtins.id(b, "vector$make"),
     builder_new: builtins.id(b, "vector$builder_new"),
     freeze_box: builtins.id(b, "vector$builder_freeze"),
-    typed_freeze: typed_freeze_ids(b),
   }
-}
-
-fn is_typed_freeze(id: Int, ids: ProducerIds) Bool {
-  for v in ids.typed_freeze {
-    if v == id {
-      return true
-    }
-  }
-  false
 }
 
 // Trace a builder-chain argument back through its `AInit` alias hops to a
@@ -143,16 +120,22 @@ fn traces_to_builder_new(cur: Int, defs: Dict<Int, AnfOp>, ids: ProducerIds) Boo
   }
 }
 
-// Classify a producer op directly: a builder freeze (collect) whose builder
-// lineage traces back to a `builder_new` with no foreign aliasing, a
-// `Vector.make` call, or an array literal. Mirrors
-// `mutvec_region.producer_of_op`.
+// Classify a producer op directly: a boxed builder freeze (collect) whose
+// builder lineage traces back to a `builder_new` with no foreign aliasing, or a
+// `Vector.make` call — the seed shapes the reused `mutvec_region` lowering can
+// actually rewrite. Array-literal and typed-freeze producers are deliberately
+// NOT claimed (the lowering no-ops them), so they fall back to persistent.
 fn producer_of_op(op: AnfOp, defs: Dict<Int, AnfOp>, ids: ProducerIds) MutVecProducer? {
   case op {
-    .AArrayLit(_) => .Some(.ArrayLitSeed),
+    // Array-literal producers are recognized by the reused caller-region
+    // lowering (`mutvec_region`) only as a no-op, so claiming them here would
+    // commit an ABI upgrade the lowering can't honor — a persistent PVec would
+    // reach a MutVec-typed clone param and trap in `emit_coerce_stack`. Leave
+    // them undiscoverable (persistent fallback) until the lowering handles them.
+    .AArrayLit(_) => .None,
     .ACall(.AGlobalFunc(f), args) => if f.id == ids.make.id and args.len() == 2 {
       .Some(.MakeSeed)
-    } else if (f.id == ids.freeze_box.id or is_typed_freeze(f.id, ids)) and args.len() == 1 {
+    } else if f.id == ids.freeze_box.id and args.len() == 1 {
       case args[0] {
         .ALocal(builder) => if traces_to_builder_new(builder.id, defs, ids) {
           .Some(.CollectSeed)

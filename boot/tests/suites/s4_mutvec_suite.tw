@@ -822,6 +822,25 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    // Producer-narrowing SOUNDNESS GUARD (final-review fix): an owned region
+    // seeded by an ARRAY LITERAL is otherwise identical to the accepted
+    // sieve_scratch shape (handle threaded through the routed set_at clone,
+    // reduced to a scalar), so it WOULD upgrade if discovery still claimed the
+    // ArrayLit producer. But the reused `mutvec_region` lowering no-ops an
+    // ArrayLit seed, so an upgrade would strand a persistent PVec at a
+    // MutVec-typed clone param (an `emit_coerce_stack` cross-repr trap).
+    // Discovery narrows the ArrayLit producer to undiscoverable → persistent
+    // fallback → zero ABI upgrades.
+    .test(
+      "run_s4 makes no ABI upgrade for an array-literal-seeded owned region",
+      fn() Result<Void, String> {
+        st := s4_stage(fixture_path("arraylit_seed"))
+        dec := s4_phase.run_s4(st.spec, st.builtins)
+        try assert.equal(dec.abi_upgrades.len(), 0)
+        try assert.equal(dec.accepted.len(), 0)
+        .Ok({})
+      },
+    )
     // HP-4 SOUNDNESS GUARD — direct unit coverage of the core predicate: a
     // clone upgrades only when EVERY one of its routed sites is accepted, not
     // merely some of them. This is the guard that keeps the partition/sibling
