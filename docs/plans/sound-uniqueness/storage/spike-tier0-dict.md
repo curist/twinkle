@@ -99,9 +99,11 @@ This adds a middle tier to dict publication and reframes when `MutDict` wins:
 
 Consequence: the k/n ≈ 1 crossover was driven by a per-boundary ~600ms freeze. If
 internal forks clone (~15ms) and the HAMT build happens only at the final
-published result, flat `MutDict` stays competitive far below k/n = 1 in
-fork-heavy chains. This is precisely the `run_fixpoint` transfer-map shape: fork
-per block, thread through owned-flat transfer code, build a HAMT only at the end.
+published result, flat `MutDict` can stay competitive farther below k/n = 1 in a
+wide, update-dense helper chain whose flat-preserving forks each perform enough
+work to amortize cloning. This does not describe `run_fixpoint`: its transfer maps
+are small and fork with sparse divergence, so they remain excluded from the
+`MutDict` customer set.
 
 Honest counterpoint: freeze is not the only alternative to clone. A persistent
 HAMT forks in ~O(log n) via structural sharing, so for **sparse-divergence**
@@ -255,10 +257,11 @@ full table, caveats, and reopening requirements are in
    regions (k ≳ n) and *loses* for build-once/lookup-heavy dicts (k < n) because
    of the O(n) HAMT freeze. So it must be gated on a proven update-density / wide
    region with persistent fallback — it is not an unconditional win.
-3. **This is exactly the S4 "stay low across a helper chain" customer.** The freeze
-   only pays off when amortized over many ops before one materialization — i.e. a
-   `MutDict` kept low across a long owned chain (the `run_fixpoint` transfer-map
-   case), not a dict frozen every iteration.
+3. **The S4 customer shape is an update-dense helper chain.** The freeze pays off
+   only when a wide `MutDict` stays low across a long owned chain, each
+   flat-preserving fork performs enough operations to amortize cloning, and one
+   final materialization serves the result. `run_fixpoint`'s small transfer maps
+   fork with sparse divergence and are explicitly excluded from this shape.
 4. **Size/k-dependence bites here (it did not for vectors).** The crossover sits at
    k ≈ n, both unknown at compile time, so `MutDict` adoption needs either a static
    update-density signal (loop trip-count vs distinct-key estimate) or a

@@ -458,8 +458,11 @@ It does not cover:
 - [x] Stop without selection according to the gate above.
 - [x] Add the result and rationale to this document and update the storage README.
 
-**Hard gate:** do not begin Task 4 until Task 3 contains an explicit reviewed
-verdict.
+**Hard gate:** a stop verdict keeps Task 4 closed. Do not begin Task 4 until the
+representation gate is explicitly reopened, the missing construction and
+same-session persistent-control evidence is recorded together with the workload
+evidence required by the verdict, and an explicit reviewed verdict selects one
+retained layout.
 
 ### Task 4 — Build the minimal retained open-addressing MutDict runtime
 
