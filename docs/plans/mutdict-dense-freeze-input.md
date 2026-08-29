@@ -7,13 +7,14 @@
 > or lifecycle machinery until Task 3 records and reviews the representation
 > decision.
 
-**Status:** S5 representation gate stopped without selection after the 2026-08-29
-quick spike. The immutable publication adapter is landed, but the real Wasm-GC
-`MutDict` runtime and its retained storage layout have not started. Candidate M
-and Candidate H both remain open. Reopening requires timed construction, the
-missing k/n=1/8 row, churned-physical-state clone cost, separate HAMT/order/
-publication/total phase splits, the same-session persistent control, and workload
-evidence.
+**Status:** S5 representation gate completed and stopped without selection after
+the 2026-08-29 evidence-closure run. The immutable publication adapter is landed,
+but the real Wasm-GC `MutDict` runtime and its retained storage layout have not
+started. Candidate M wins update-dense rows and decisively beats the aliased
+persistent control, but the optimized boot-compiler census is dominated by
+build-once/low-overwrite maps, where Candidate H wins without justifying a boxed
+storage reopening. Task 4 remains closed pending an evidenced update-dense
+customer.
 
 **Goal:** Measure the smallest real Wasm-GC storage slice that distinguishes an
 unboxed mutable arena followed by one conversion pass from a canonical immutable
@@ -404,6 +405,73 @@ and Task 4 stays hard-gated. Reopening requires that evidence plus a real-progra
 census of overwrite density, removals, publication boundaries, and flat-preserving
 forks, or more decision-specific measurements.
 
+## Evidence closure and boot-compiler census (2026-08-29)
+
+The follow-up completed the quick spike's missing inventory. Key/hash streams are
+prepared before timers; construction, overwrite, churn, post-churn physical clone,
+seam, bottom-up HAMT build, bulk order build, and complete no-clone workload totals
+are reported separately. The same process also runs an equivalent persistent
+trace while retaining the original base, forcing later operations down the
+persistent path. Candidate order remains rotated, with one warmup and three raw
+samples per row.
+
+`target/twk ir boot/main.tw --opt --census --sites` reports 777 static `dict_set`
+and 25 `dict_remove` candidates across the linked optimized compiler. There are
+449 selected `dict_set` rows across the census's optimized/specialized views;
+this is a static site inventory, not a dynamic execution count. CFG/liveness
+inspection shows the representative selected shape:
+
+- `build_type_remap`, `local_map_from_slots`, and `build_trivia_map` carry fresh
+  `Unique` maps through loops and insert at most once per qualifying input item;
+- `compute_pinned` builds fresh set-like maps, with repeated writes only when
+  inputs repeat;
+- cache helpers such as `table_put` and `fix_cache_put` retain aliased record
+  shells/fields and correctly stay persistent;
+- selected removals and flat-preserving forks are not a material current pattern.
+
+The current compiler workload is therefore construction-heavy and predominantly
+build-once or low-overwrite. It does not supply evidence for treating the 1x–4x
+overwrite rows as the default S5 customer.
+
+The table below reports the final 1M-entry aggregation as median followed by the
+full observed range in milliseconds. `total` excludes clone because the census
+found no flat-preserving fork; dense and churned clone costs remain separate
+decision inputs. Publication is `seam + HAMT + order`.
+
+| workload / phase | Candidate M | Candidate H | aliased persistent total |
+|---|---:|---:|---:|
+| dense 1/8x construct | 24.84 (20.77–27.18) | 44.15 (37.03–44.53) | — |
+| dense 1/8x overwrite | 0.14 (0.14–0.22) | 0.38 (0.37–0.65) | — |
+| dense 1/8x seam | 37.06 (27.76–47.99) | 0 direct | — |
+| dense 1/8x HAMT + order | 99.80 | 92.35 | — |
+| dense 1/8x total | 163.98 (152.54–172.19) | 136.55 (128.92–149.04) | 740.00 (639.36–844.67) |
+| dense 1x total | 158.90 (144.41–166.00) | 189.32 (162.85–274.86) | 1532.25 (1393.33–1620.45) |
+| dense 4x total | 151.64 (150.28–222.20) | 299.80 (229.18–309.87) | 3829.95 (3684.39–4091.24) |
+| churn 1x post-churn clone | 30.61 (30.31–40.35) | 1.38 (1.32–1.50) | — |
+| churn 1x total | 164.28 (150.10–195.52) | 195.90 (181.91–240.93) | 1761.00 (1730.44–1875.42) |
+
+Candidate M clears the persistent control by a wide margin and wins the 1x, 4x,
+and churn medians. Its unboxed construction and overwrite advantages therefore
+remain credible for an update-dense region. Candidate H wins the representative
+1/8x row materially because its direct dense handoff avoids M's conversion pass;
+it also retains the much cheaper clone. GC-sensitive builder and seam ranges are
+still visible, so these samples are evidence for workload classes, not a numeric
+compiler threshold.
+
+All rows passed exhaustive value/absence/order checks, retained-base checks,
+post-churn clone isolation, compacted-order removal, and post-publication
+persistence checks. Emitted WAT confirms precomputed hashes feed construction,
+M overwrite uses `struct.set`, H overwrite replaces immutable `HamtEntry`
+records, seams neither hash nor probe, and publication invokes the bottom-up HAMT
+and bulk-order builders.
+
+**Final reviewed verdict: STOP WITHOUT SELECTION.** Candidate M satisfies the
+technical update-dense gate, but the present boot compiler does not evidence that
+workload. Candidate H's win on the observed build-once/low-overwrite class is not
+permission to reopen boxed hot storage; those maps should remain on the existing
+persistent/in-place HAMT path. Reopen S5 only with a concrete update-dense region
+whose measured operations and publication boundary match the rows where M wins.
+
 ## Scope
 
 This plan covers:
@@ -462,9 +530,9 @@ It does not cover:
 
 - [x] Run dense overwrite, churn, pre-churn-base clone, seam, and combined
   `freeze_dense` work in the same process.
-- [ ] Add timed construction, k/n=1/8 rows, a churned-physical-state clone, and a
+- [x] Add timed construction, k/n=1/8 rows, a churned-physical-state clone, and a
   same-session persistent-control workload.
-- [ ] Split `freeze_dense` into HAMT-build and order-build timings and report
+- [x] Split `freeze_dense` into HAMT-build and order-build timings and report
   publication and complete-workload totals separately.
 - [x] Keep exhaustive content, absence, insertion-order, clone-isolation,
   persistent-remove-order, and persistent-version guards.

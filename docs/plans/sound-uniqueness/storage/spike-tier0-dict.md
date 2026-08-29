@@ -4,6 +4,16 @@ Bench source: [`boot/bench/dict_spike.tw`](../../../../boot/bench/dict_spike.tw)
 Run: single pass, `target/twk run` on main (2026-08-01). Wall ms. Guards match
 across all three strategies at every row → proxy validated.
 
+> **2026-08-29 real Wasm-GC closure:** The proxy conclusions are now qualified by
+> the completed arena gate in
+> [mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md). Candidate M
+> beats the aliased persistent control and wins at 1x/4x updates, but Candidate H
+> wins the 1/8x total. Optimized boot CFG/liveness inspection found mostly fresh,
+> loop-carried build-once maps rather than update-dense regions or flat-preserving
+> forks. S5 therefore remains stopped without a retained layout; the current
+> compiler census does not provide a Candidate-M customer, and H's low-density
+> result does not reopen boxed hot storage.
+
 Three strategies, `Dict<Int,Int>` of `n` sparse keys, `k` random updates:
 
 - **inplace** — owned `m[k]=v`; flips to boxed HAMT `dict$set_in_place` (8D). The

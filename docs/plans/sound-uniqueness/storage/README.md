@@ -16,11 +16,14 @@ dense publication adapter are settled, but its live arena element remains behind
 the measurement gate in
 [mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md): unboxed
 mutable records plus one conversion pass versus a boxed canonical `HamtEntry`
-control with external liveness. The 2026-08-29 real Wasm-GC quick spike found a
-workload-dependent crossover and stopped without selecting either candidate.
+control with external liveness. The 2026-08-29 evidence-closure run found a
+workload-dependent crossover and stopped without selecting either candidate:
+Candidate M wins update-dense rows, while the boot compiler's actual selected
+sites are predominantly build-once/low-overwrite maps where Candidate H's direct
+handoff wins without justifying a boxed-storage reopening.
 Representation decisions for S2/S3 and vector append settled 2026-08-01 (see
 [Settled decisions](#settled-decisions)); S5 runtime work remains blocked on the
-missing evidence and workload census.
+absence of an evidenced update-dense customer.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:
@@ -420,18 +423,23 @@ measures two layout-C arena elements:
   replacement on overwrite, direct handoff while hole-free, and compaction after
   deletion.
 
-The real Wasm-GC quick spike left both candidates open. Candidate M's unboxed
-in-place overwrite was about 20–24× faster, but Candidate H's immutable-entry
-pre-churn-base clone was roughly 20–30× cheaper and its dense seam was zero. H won
-the measured one-overwrite-plus-base-clone row, while M won at four overwrites per
-entry; churn plus the pre-churn-base clone had overlapping ranges. A clone of the
-1.25n churned physical state was not measured. This workload-dependent result
-triggered the reviewed **STOP WITHOUT SELECTION** verdict. The canonical arena remains a
-zero-copy/cheap-clone control, not permission to silently weaken the unboxed
-throughput target. S5 stays blocked until the active gate's complete missing-
-evidence inventory—k/n=1/8, construction, churned-state clone, separate HAMT/
-order/publication/total phase splits, and persistent control—plus a workload
-census or more decision-specific measurements justifies reopening.
+The completed real Wasm-GC gate leaves both candidates unselected. Candidate M's
+unboxed construction and overwrite paths are faster and its no-clone total wins
+at 1x, 4x, and churn; Candidate H's immutable-entry clone remains roughly an order
+of magnitude cheaper, its dense seam is zero, and it wins the 1/8x total. At 1M,
+the final medians were M 164 ms versus H 137 ms at 1/8x, M 159 ms versus H 189 ms
+at 1x, and M 152 ms versus H 300 ms at 4x. M also beat the same-session aliased
+persistent control decisively on every row.
+
+The optimized boot census nevertheless found predominantly fresh loop-carried
+maps populated once per qualifying input item, not update-dense maps or
+flat-preserving forks. Representative CFGs (`build_type_remap`,
+`local_map_from_slots`, `build_trivia_map`, and `compute_pinned`) carry `Unique`
+maps to loop exit; cache helpers with aliased record fields correctly remain
+persistent. This workload evidence triggers the final **STOP WITHOUT SELECTION**
+verdict: M wins the class it targets, but that class has no present compiler
+customer; H's low-density win does not justify reopening boxed hot storage. S5
+may reopen only around a concrete update-dense region matching M's winning rows.
 
 A true owned/editable HAMT builder improves rebuilding by about 1.3× but retains
 per-entry HAMT traversal and is not the throughput target. The bottom-up adapter

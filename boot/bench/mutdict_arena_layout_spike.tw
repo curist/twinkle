@@ -5,7 +5,11 @@
 //! benchmark isolates clone, overwrite, remove/reinsert, dense-seam, and
 //! publication costs. Remove with churn_stride=0 means the dense handoff case.
 
+use @std.date
+
 kmult: Int = 0 - 7046029254386353131
+
+type PersistentTrace = .{ result: Dict<Int, Int>, total_ms: Float }
 
 fn key_of(i: Int) Int {
   i * kmult + 1
@@ -25,6 +29,36 @@ fn overwritten_value(n: Int, k: Int, id: Int) Int {
     last_write := id + (k - 1 - id) / n * n
     n + last_write
   }
+}
+
+fn persistent_trace(n: Int, k: Int, churn_stride: Int) PersistentTrace {
+  t0 := date.now()
+  base: Dict<Int, Int> = Dict.new()
+  for i in 0..n {
+    base[key_of(i)] = i
+  }
+
+  // Retain the dense base so every subsequent update must preserve it.
+  result := base
+  for i in 0..k {
+    id := i % n
+    result[key_of(id)] = n + i
+  }
+  if churn_stride > 0 {
+    for i in 0..n {
+      if i % churn_stride == 0 {
+        result = .remove(key_of(i))
+        result[key_of(i)] = 2 * n + i
+      }
+    }
+  }
+  total_ms := date.now() - t0
+
+  // Observing the retained base after the trace prevents in-place lowering.
+  if !verify_result(base, n, 0, 0) {
+    error("persistent control mutated retained base")
+  }
+  .{ result, total_ms }
 }
 
 fn verify_result(m: Dict<Int, Int>, n: Int, k: Int, churn_stride: Int) Bool {
@@ -91,10 +125,12 @@ fn verify_removed_keys(m: Dict<Int, Int>, n: Int, churn_stride: Int, remove_id: 
 fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
   results := Dict.bench_arena_layouts(n, k, churn_stride)
   timings := Dict.bench_arena_timings()
-  parity := results.len() == 2 and timings.len() == 10
+  persistent := persistent_trace(n, k, churn_stride)
+  parity := results.len() == 2 and timings.len() == 18
   if parity {
     parity = verify_result(results[0], n, k, churn_stride)
     parity = parity and verify_result(results[1], n, k, churn_stride)
+    parity = parity and verify_result(persistent.result, n, k, churn_stride)
     i := 0
     for i < results.len() {
       published := results[i]
@@ -119,7 +155,7 @@ fn run_sample(label: String, n: Int, k: Int, churn_stride: Int) Void {
     "FAIL"
   }
   println(
-    "${label} n=${n} k=${k} churn_stride=${churn_stride} mutable_clone=${timings[0]}ms canonical_clone=${timings[1]}ms mutable_update=${timings[2]}ms canonical_update=${timings[3]}ms mutable_churn=${timings[4]}ms canonical_churn=${timings[5]}ms mutable_seam=${timings[6]}ms canonical_seam=${timings[7]}ms mutable_freeze=${timings[8]}ms canonical_freeze=${timings[9]}ms parity=${status}",
+    "${label} n=${n} k=${k} churn_stride=${churn_stride} mutable_construct=${timings[0]}ms canonical_construct=${timings[1]}ms mutable_clone=${timings[2]}ms canonical_clone=${timings[3]}ms mutable_update=${timings[4]}ms canonical_update=${timings[5]}ms mutable_churn=${timings[6]}ms canonical_churn=${timings[7]}ms mutable_churn_clone=${timings[8]}ms canonical_churn_clone=${timings[9]}ms mutable_seam=${timings[10]}ms canonical_seam=${timings[11]}ms mutable_hamt=${timings[12]}ms canonical_hamt=${timings[13]}ms mutable_order=${timings[14]}ms canonical_order=${timings[15]}ms mutable_total=${timings[16]}ms canonical_total=${timings[17]}ms persistent_total=${persistent.total_ms}ms parity=${status}",
   )
   if !parity {
     error("MutDict arena layout parity failed")
@@ -148,9 +184,11 @@ run_sample("warmup-churn-canonical-first", 4096, 4096, 4)
 
 // Three raw samples per row. Three is odd, so the starting order alternates
 // between rows as well as within each row.
+run_reported_row("dense-65k-1over8", 65536, 65536 / 8, 0, false)
 run_reported_row("dense-65k-1x", 65536, 65536, 0, true)
 run_reported_row("dense-65k-4x", 65536, 4 * 65536, 0, false)
 run_reported_row("churn-65k-1x", 65536, 65536, 4, true)
+run_reported_row("dense-1m-1over8", 1048576, 1048576 / 8, 0, true)
 run_reported_row("dense-1m-1x", 1048576, 1048576, 0, false)
 run_reported_row("dense-1m-4x", 1048576, 4 * 1048576, 0, true)
 run_reported_row("churn-1m-1x", 1048576, 1048576, 4, false)
