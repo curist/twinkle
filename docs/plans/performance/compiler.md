@@ -29,41 +29,50 @@ justifies a change on its own. For codegen/ownership work, gate every change on
 **byte-identical output** (A/B diff) plus the `make stage2` fixed point
 (stage3 == stage4).
 
-## Current baseline (2026-07-31, sound-uniqueness on by default)
+## Current baseline (2026-08-29, sound-uniqueness on by default)
 
-Compiling `boot/main.tw` (~257 modules / ~4123 functions) with the bundled CLI,
-sound-uniqueness codegen enabled (the default). Wall-clock (timing off):
-**~20s**. The two sound-uniqueness ownership phases dominate everything —
-**~13.5s of the ~20s**:
+Compiling `boot/main.tw` (265 modules / 4481 emitted functions) with the bundled
+CLI, sound-uniqueness codegen enabled (the default). Three timing-disabled
+wall-clock samples were **20.25–20.87s, median 20.38s**. A forced full
+`make -B stage2` self-host loop took **69.37s** and reached the stage3 == stage4
+fixed point. The two sound-uniqueness ownership phases still dominate the
+single build — **~14.5s of the ~20.4s median**:
 
 ```text
-variant_specialize        ~7.7s   ← 8G whole-program ownership summary + variants
-produce_mutable_decisions  ~5.9s   ← scoped summary reuse + ownership analyze
-compile_modules            ~2.5s   (frontend)
-emit_module                ~0.95s
-prepare_backend            ~0.52s
-verify                     ~0.48s
-optimize                   ~0.47s
-core_link                  ~0.31s
-link                       ~0.26s
-emit_wasm_binary           ~0.25s
-plan_wasm_types            ~0.15s
-lower_anf                  ~0.14s
+variant_specialize         9.52–10.18s  median 9.99s
+produce_mutable_decisions  4.48–4.58s   median 4.53s
+compile_modules            2.67–2.81s   median 2.69s
+emit_module                1.12–1.15s   median 1.12s
+verify                     0.58–0.59s   median 0.59s
+prepare_backend            0.47–0.48s   median 0.48s
+core_link                  0.34–0.35s   median 0.35s
+link                       0.30–0.34s   median 0.31s
+emit_wasm_binary           0.28–0.32s   median 0.30s
+run_mutvec_call            ~0.18s
+plan_wasm_types            ~0.18s
+lower_anf                  0.15–0.16s   median 0.15s
 monomorphize               ~0.09s
+wasm_dce                   0.07–0.08s   median 0.08s
+optimize                   0.05–0.05s   median 0.05s
 ```
 
 Sub-breakdown of the two dominant phases:
 
 ```text
-variant_specialize:        table (summary.compute) ~5806ms   groups ~1616ms   variants ~671ms
-produce_mutable_decisions: summary (reuse path)    ~4786ms   cfg ~987ms       ownership ~813ms
+variant_specialize:        table 6884–7680ms (median 7388ms)
+                           groups 1639–1778ms (median 1695ms)
+                           variants 813–866ms (median 821ms)
+produce_mutable_decisions: summary 3397–3515ms (median 3463ms)
+                           summary:reuse 1629–1666ms (median 1651ms)
+                           cfg 114–115ms; ownership 799–821ms
 ```
 
-The frontend numbers (`compile_modules ~2.5s`, `typecheck` ~358ms, `import_merge`
-~226ms, etc.) are unchanged from the pre-sound-uniqueness measurements below and
-are now a small fraction of the build. Older frontend phase/sub-timing tables
-were measured with sound-uniqueness codegen off (`TWINKLE_VARIANT_SPECIALIZE=0`)
-and so omit these two phases; their shape still holds for the front half.
+The current frontend medians remain a secondary cost: `typecheck` is ~0.51s
+(`bodies` ~0.36s), `import_merge` ~0.32s, and `lower` ~0.29s. Older frontend
+phase/sub-timing tables were measured with sound-uniqueness codegen off
+(`TWINKLE_VARIANT_SPECIALIZE=0`) and so omit the two dominant ownership phases;
+their broad shape still holds for the front half, but their absolute numbers are
+not the current baseline.
 
 ### The dominant redundancy: the whole-program summary is computed ~twice
 
@@ -80,15 +89,16 @@ the FixCache-reuse update below).
 
 ### Shape interpretation
 
-- The frontend (`compile_modules`) is no longer the bottleneck — it is a small
-  fraction once sound-uniqueness codegen is on. Its cost is still many small
+- The frontend (`compile_modules`) is not the bottleneck — it is about 13% of
+  wall time once sound-uniqueness codegen is on. Its cost is still many small
   reasonable costs across a large module graph (`typecheck`, `import_merge` top).
 - The backend tier (`emit_module`, `optimize`, `verify`, `prepare_backend`) is
   broad and close together — sub-timings matter, and these transform IR so they
   are more correctness-sensitive. Treat them as measure-first, not obvious wins.
-- The heaviest absolute cost is the sound-uniqueness codegen phases, whose
-  remaining floor is the 8G whole-program ownership
-  fixpoint (it decides clones, so it is largely inherent).
+- The heaviest absolute cost is the sound-uniqueness codegen phases, now about
+  71% of wall time. The next measurement should decompose 8G's ~7.4s `table`
+  cost by function/SCC and by liveness versus fixpoint work before attempting a
+  data-structure change; the MutDict census does not match this workload.
 
 ### Landed: reuse 8G's FixResults in the mutable producer (`TWINKLE_8G_FIXREUSE`)
 
