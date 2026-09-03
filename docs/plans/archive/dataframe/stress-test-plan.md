@@ -8,7 +8,7 @@
 
 **Tech Stack:** Twinkle (`.tw`), `@std.date` for benchmark timing, the copied `assert.tw` + `runner.tw` test harness (same pattern as `examples/leetcode/`). Run with `target/twk` (built via `make bundle-cli`).
 
-**Design reference:** `docs/plans/performance/dataframe/stress-test.md`.
+**Design reference:** [stress-test.md](stress-test.md).
 
 ---
 

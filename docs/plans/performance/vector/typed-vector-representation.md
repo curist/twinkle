@@ -471,7 +471,8 @@ Add microbenchmarks that isolate:
 - same shape after materializing to a dense runtime buffer once, if available;
 - sort comparator reads (`order_by_micro.tw` already covers this indirectly).
 
-Record numbers in this plan and `docs/plans/performance/dataframe/friction-log.md` where relevant.
+Record numbers in this plan (the dataframe friction log is now archived at
+`docs/plans/archive/dataframe/friction-log.md`).
 
 ### Phase 2 — Dense i64 working-set helper for sort kernels — ✅ done (native value-sort kernel)
 

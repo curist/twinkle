@@ -1,5 +1,16 @@
 # Dataframe Performance and Stress-Test Notes
 
+> **Retired (2026-09-03).** This stress test delivered its findings and has been
+> archived — there is nothing left to *build* in the plan itself. Its two
+> outcomes now live where they belong: the **ergonomics friction** (fluent method
+> chains don't cross module boundaries, circular imports are a hard error,
+> `Result`-returning ops break chaining) is durable and captured in
+> [friction-log.md](friction-log.md); the **performance finding** (`order_by` is
+> sort-bound) drove `sort-bench` and the still-active vector/sort track at
+> [../../performance/vector/](../../performance/vector/README.md). The working
+> engine and benchmarks remain a live regression/bench asset at
+> `examples/performance/dataframe/` — only the plan docs are archived.
+
 This folder keeps the dataframe stress-test docs near the performance track they
 inform. The working code lives in `examples/performance/dataframe/`.
 

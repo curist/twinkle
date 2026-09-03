@@ -1,7 +1,7 @@
 # Dataframe stress test — friction log
 
-Companion to `docs/plans/performance/dataframe/stress-test.md` (spec) and
-`docs/plans/performance/dataframe/stress-test-plan.md` (impl plan). Records what building a
+Companion to [stress-test.md](stress-test.md) (spec) and
+[stress-test-plan.md](stress-test-plan.md) (impl plan). Records what building a
 multi-module columnar query engine (`examples/performance/dataframe/`) revealed about Twinkle's
 app-level ergonomics and collection performance — the actual deliverable of the
 stress test. All findings are from the real build; nothing here is hypothetical.

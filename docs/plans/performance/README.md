@@ -17,16 +17,25 @@ scattered across `docs/plans/`.
 | Subtrack | Role |
 |---------|------|
 | [vector/](vector/README.md) | `Vector<T>`, `sort_by`, typed vector representation, and dataframe `order_by` performance. |
-| [dataframe/](dataframe/README.md) | Dataframe stress-test design, friction log, and app-level benchmark context. |
+
+The dataframe stress test that motivated much of the vector/order-by work has
+been **retired** (findings delivered); its docs live at
+[../archive/dataframe/](../archive/dataframe/README.md), and the working engine
+remains a bench asset at `examples/performance/dataframe/`.
 
 ## Current runtime priority stack
 
 1. **Sound uniqueness and mutable lowering.** Rebuild the boot compiler's
    proof-driven optimization so normal immutable collection and record-update code can use private
-   mutable `Vector`/`Dict`/record representations when ownership is proven. This is the
-   path toward making ordinary AWFY `sieve`/`bounce`/`nbody` reach the class of
-   today's manual `*_mut` Buffer variants, after which Buffer can stop being the
-   recommended workaround for local collection updates.
+   mutable `Vector`/`Dict`/record representations when ownership is proven. **The
+   integer/bool write-heavy case has largely landed** (MutVec for `Int`/`Bool`/
+   `Float`/`Byte`, plus interprocedural S4): AWFY `sieve` on the *persistent*
+   path now matches — and slightly beats — its manual `*_mut` Buffer variant
+   (~0.6 ms vs ~0.8 ms total), and `bounce`/`nbody` have closed much of the gap.
+   Remaining: `Float`/`Byte` `set_in_place` write-routing and param-sourced thaw;
+   `nbody`'s residual gap is float codegen, not persistence. Net direction holds —
+   Buffer is no longer the recommended workaround for ordinary local collection
+   updates, only for FFI / shared-memory / dense byte codecs.
 2. **Typed container representation.** Continue moving hot monomorphic containers
    away from erased `anyref` storage and universal helper APIs. The current lead
    is `Vector<Int>` through the boundaries that real programs use. The

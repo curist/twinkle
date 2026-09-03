@@ -1,11 +1,16 @@
 # `Vector<Byte>` ↔ `Buffer` Interop — Placeholder
 
-> **Status: placeholder / deferred.** This is a forward-work stub, not an
-> executable plan. It records *what changes once `Vector<Byte>` is unboxed* and
-> the one honest ceiling on "fast conversion," so the work is scoped correctly
-> when it is picked up. **Hard prerequisite: `PVecByte`** (the typed `array i8`
-> family — see [`mutvec-later-slices.md`](mutvec-later-slices.md) Phase 4). None
-> of the wins below exist until `Vector<Byte>` is stored unboxed.
+> **Status: forward-work stub, now unblocked.** This is not an executable plan; it
+> records *what changes once `Vector<Byte>` is unboxed* and the one honest ceiling
+> on "fast conversion," so the work is scoped correctly when picked up. **The hard
+> prerequisite `PVecByte`** (the typed `array i8` family —
+> [`mutvec-later-slices.md`](mutvec-later-slices.md) Phase 4) **has landed**, so
+> the two narrow follow-ups below (typed-leaf conversion path, and re-benching the
+> codec go/no-go against the unboxed baseline) are now actionable rather than
+> blocked. The AWFY suite already reflects the upstream half of this: on Sieve the
+> unboxed persistent path beat `@std.buffer`, so the Buffer variant was dropped
+> there; Buffer's durable value narrows to FFI / shared-memory / hottest-loop
+> codecs, exactly as scoped below.
 
 ## Why this exists
 
@@ -67,5 +72,5 @@ per-byte loop*, never *constant-time transfer*.
 - No change to the Buffer surface or the `Vector<Byte>` / `Buffer` boundary as
   documented — this only makes the *crossing* between them cheap and re-validates
   the split with real numbers.
-- Not startable before `PVecByte` (mutvec-later-slices Phase 4 typed-storage
-  prerequisite) lands.
+- (Historical) was gated on `PVecByte` (mutvec-later-slices Phase 4 typed-storage
+  prerequisite); that has since landed, so this gate is cleared.

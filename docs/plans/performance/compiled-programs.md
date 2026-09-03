@@ -46,7 +46,9 @@ Lead docs:
 
 - [vector/README.md](vector/README.md)
 - [vector/generic-sort-by-vector-read-perf.md](vector/generic-sort-by-vector-read-perf.md)
-- [dataframe/README.md](dataframe/README.md)
+- [../archive/dataframe/README.md](../archive/dataframe/README.md) — the retired
+  stress test that motivated this priority (working engine still at
+  `examples/performance/dataframe/`)
 
 Generic comparator mechanics have already seen meaningful wins, but key-index
 sorts remain dominated by random vector reads. Persistent-only dense merge work
@@ -97,10 +99,12 @@ allocation.
 
 ### Now
 
-- Extend typed `Vector<Int>` routing through variant payloads so dataframe
-  `IntCol(Vector<Int>)` can keep typed storage.
-- Add probes that verify variant-held column reads use typed helpers rather than
-  boxed PVec reads.
+- Typed variant payloads + the cross-function return/copy/capture ABI have
+  **landed** (dataframe `IntCol(Vector<Int>)` now keeps typed storage into the
+  comparator); the open read-wall lever is a typed **parameter** ABI for named
+  functions (the merge reads through boxed params). See
+  [vector/boundary-tracklist.md](vector/boundary-tracklist.md) for live per-
+  boundary status (B6 open, B8 open).
 - Keep the vector/order-by benchmark gate current.
 
 ### Next
