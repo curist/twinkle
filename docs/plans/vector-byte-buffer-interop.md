@@ -31,6 +31,31 @@ the ref-cast/unbox half. So the gap collapses toward the *purely structural*
 advantage — a log₃₂ n leaf-boundary walk vs. a single linear-memory load —
 single-digit×, not 30×.
 
+**Measured 2026-09-03, now that `PVecByte` has landed** (200k-byte scan × 40 vs
+`@std.buffer`; read path confirmed in WAT). The prediction is directionally right
+but the collapse is **not** primarily `PVecByte`'s doing, and it only reaches
+part of the byte-read surface:
+
+| `Vector<Byte>` read site | compiles to | × vs Buffer |
+|---|---|---|
+| non-escaping local (`collect`, read in place) | `rt_arr__get_byte` on `PVecByte` (unboxed) | **~4.0×** |
+| passed to a decode function (realistic codec) | `rt_arr__get` (boxed `anyref`) | **~8.2×** |
+| `@std.buffer` | `get_u8` | 1× |
+
+Two corrections this forces:
+
+1. **The 30×→single-digit× collapse is mostly general improvement, not
+   `PVecByte`.** Even the *still-boxed* codec path is already ~8×, not 30×.
+   `PVecByte`'s specific contribution is the further ~2× (8×→4×) it buys by
+   deleting the per-byte unbox — real, but a smaller slice than "deletes the
+   ref-cast/unbox half → collapse" implies.
+2. **The unboxed path only reaches typed storage sites.** A `Vector<Byte>` that
+   crosses a function boundary (exactly what a decode/parse routine does) reads
+   through the boxed `rt_arr__get` — there is no typed-parameter ABI (the same
+   wall the vector/sort read-wall hit). So "once `Vector<Byte>` is stored
+   unboxed" is load-bearing: true for non-escaping locals, **false across call
+   boundaries**. A codec only gets the ~4× floor if it is fully inlined/local.
+
 **What stays uniquely Buffer's, even after PVecByte:**
 
 - **Addressability** — GC arrays are not addressable, so FFI, `SharedArrayBuffer`,
