@@ -10,9 +10,9 @@ fn peg(p: Pegs, which: Int) Vector<Int> {
 
 fn set_peg(p: Pegs, which: Int, v: Vector<Int>) Pegs {
   case which {
-    0 => Pegs.{ a: v, b: p.b, c: p.c, moves: p.moves },
-    1 => Pegs.{ a: p.a, b: v, c: p.c, moves: p.moves },
-    _ => Pegs.{ a: p.a, b: p.b, c: v, moves: p.moves },
+    0 => .{ a: v, b: p.b, c: p.c, moves: p.moves },
+    1 => .{ a: p.a, b: v, c: p.c, moves: p.moves },
+    _ => .{ a: p.a, b: p.b, c: v, moves: p.moves },
   }
 }
 
@@ -22,7 +22,7 @@ fn move_top(p: Pegs, from: Int, to: Int) Pegs {
   p2 := p.set_peg(from, src.drop_last())
   dst := p2.peg(to)
   p3 := p2.set_peg(to, dst.append(disk))
-  Pegs.{ a: p3.a, b: p3.b, c: p3.c, moves: p3.moves + 1 }
+  .{ a: p3.a, b: p3.b, c: p3.c, moves: p3.moves + 1 }
 }
 
 fn move_disks(p: Pegs, n: Int, from: Int, to: Int, via: Int) Pegs {

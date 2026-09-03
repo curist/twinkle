@@ -11,7 +11,6 @@ use .permute
 use .queens
 use .sieve
 use .sieve_direct
-use .sieve_mut
 use .smoke
 use .storage
 use .towers
@@ -112,14 +111,6 @@ harness.run_all([
     size: json.size,
     expected: json.expected,
     run: json.run,
-  },
-  Benchmark.{
-    name: "sieve_mut",
-    warmup: sieve_mut.warmup,
-    iters: sieve_mut.iters,
-    size: sieve_mut.size,
-    expected: sieve_mut.expected,
-    run: sieve_mut.run,
   },
   Benchmark.{
     name: "bounce_mut",

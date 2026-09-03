@@ -6,7 +6,7 @@ pub type RngStep = .{ value: Int, rng: Rng }
 // identical checksums.
 pub fn rng_next(r: Rng) RngStep {
   s := r.seed * 1309 + 13849 & 65535
-  RngStep.{ value: s, rng: Rng.{ seed: s } }
+  .{ value: s, rng: .{ seed: s } }
 }
 
 type Ball = .{ x: Int, y: Int, xv: Int, yv: Int }
@@ -19,7 +19,7 @@ fn new_ball(r: Rng) BallStep {
   s3 := s2.rng.rng_next()
   s4 := s3.rng.rng_next()
   b := Ball.{ x: s1.value % 500, y: s2.value % 500, xv: s3.value % 5 - 2, yv: s4.value % 5 - 2 }
-  BallStep.{ ball: b, rng: s4.rng }
+  .{ ball: b, rng: s4.rng }
 }
 
 type BounceResult = .{ ball: Ball, bounced: Bool }
@@ -52,7 +52,7 @@ fn bounce_step(b: Ball) BounceResult {
     yv = 0 - yv
     bounced = true
   }
-  BounceResult.{ ball: Ball.{ x: nx, y: ny, xv, yv }, bounced }
+  .{ ball: .{ x: nx, y: ny, xv, yv }, bounced }
 }
 
 pub warmup := 10

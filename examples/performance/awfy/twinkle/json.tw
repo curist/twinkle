@@ -32,7 +32,7 @@ fn parse_str(s: String, pos: Int) SResult {
   for bat(s, i) != 34 {
     i = i + 1
   }
-  SResult.{ str: s.substring(start, i), pos: i + 1 }
+  .{ str: s.substring(start, i), pos: i + 1 }
 }
 
 fn parse_num(s: String, pos: Int) NResult {
@@ -52,7 +52,7 @@ fn parse_num(s: String, pos: Int) NResult {
   } else {
     n
   }
-  NResult.{ num: val, pos: i }
+  .{ num: val, pos: i }
 }
 
 fn parse_arr(s: String, pos: Int) PResult {
@@ -60,7 +60,7 @@ fn parse_arr(s: String, pos: Int) PResult {
   items: Vector<Json> = []
   i = skip_ws(s, i)
   if bat(s, i) == 93 {
-    return PResult.{ value: .JArr(items), pos: i + 1 }
+    return .{ value: .JArr(items), pos: i + 1 }
   }
   done := false
   for !done {
@@ -74,7 +74,7 @@ fn parse_arr(s: String, pos: Int) PResult {
       done = true
     }
   }
-  PResult.{ value: .JArr(items), pos: i }
+  .{ value: .JArr(items), pos: i }
 }
 
 fn parse_obj(s: String, pos: Int) PResult {
@@ -82,7 +82,7 @@ fn parse_obj(s: String, pos: Int) PResult {
   entries: Vector<Entry> = []
   i = skip_ws(s, i)
   if bat(s, i) == 125 {
-    return PResult.{ value: .JObj(entries), pos: i + 1 }
+    return .{ value: .JObj(entries), pos: i + 1 }
   }
   done := false
   for !done {
@@ -101,7 +101,7 @@ fn parse_obj(s: String, pos: Int) PResult {
       done = true
     }
   }
-  PResult.{ value: .JObj(entries), pos: i }
+  .{ value: .JObj(entries), pos: i }
 }
 
 fn parse_value(s: String, pos: Int) PResult {
@@ -112,14 +112,14 @@ fn parse_value(s: String, pos: Int) PResult {
     91 => parse_arr(s, p),
     34 => {
       sr := parse_str(s, p)
-      PResult.{ value: .JStr(sr.str), pos: sr.pos }
+      .{ value: .JStr(sr.str), pos: sr.pos }
     },
-    116 => PResult.{ value: .JBool(true), pos: p + 4 },
-    102 => PResult.{ value: .JBool(false), pos: p + 5 },
-    110 => PResult.{ value: .JNull, pos: p + 4 },
+    116 => .{ value: .JBool(true), pos: p + 4 },
+    102 => .{ value: .JBool(false), pos: p + 5 },
+    110 => .{ value: .JNull, pos: p + 4 },
     _ => {
       nr := parse_num(s, p)
-      PResult.{ value: .JNum(nr.num), pos: nr.pos }
+      .{ value: .JNum(nr.num), pos: nr.pos }
     },
   }
 }
@@ -127,7 +127,7 @@ fn parse_value(s: String, pos: Int) PResult {
 fn fold(j: Json, acc: FoldAcc) FoldAcc {
   a := FoldAcc.{ sum: acc.sum, count: acc.count + 1 }
   case j {
-    .JNum(v) => FoldAcc.{ sum: a.sum + v, count: a.count },
+    .JNum(v) => .{ sum: a.sum + v, count: a.count },
     .JArr(items) => {
       r := a
       for x in items {

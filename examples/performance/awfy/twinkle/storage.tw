@@ -14,7 +14,7 @@ fn build(depth: Int, rng: Rng, count: Int, leaf_elems: Int) Built {
     kids: Vector<Tree> = collect i in range(n) {
       .Leaf
     }
-    Built.{ node: .Branch(kids), rng: step.rng, count: c, leaf_elems: leaf_elems + n }
+    .{ node: .Branch(kids), rng: step.rng, count: c, leaf_elems: leaf_elems + n }
   } else {
     kids: Vector<Tree> = []
     r := rng
@@ -29,7 +29,7 @@ fn build(depth: Int, rng: Rng, count: Int, leaf_elems: Int) Built {
       le = b.leaf_elems
       i = i + 1
     }
-    Built.{ node: .Branch(kids), rng: r, count: cc, leaf_elems: le }
+    .{ node: .Branch(kids), rng: r, count: cc, leaf_elems: le }
   }
 }
 
