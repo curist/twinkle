@@ -318,6 +318,7 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.dedup()` | `fn<A: Eq>(xs: Vector<A>) Vector<A>` | Remove adjacent duplicate elements |
 | `.intersperse(sep)` | `fn<A>(xs: Vector<A>, sep: A) Vector<A>` | Insert `sep` between elements |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
+| `.sort()` | `fn<T: Ord>(xs: Vector<T>) Vector<T>` | Return a new sorted vector using the `Ord` contract (e.g. `nums.sort()`) |
 | `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Vector<T>` | Return a new sorted vector using comparator (e.g. `xs.sort_by(Int.compare)`) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
