@@ -19,6 +19,7 @@ Language design notes, rationale, and open questions.
 - [defer.md](design/defer.md) — `defer` semantics
 - [immutability.md](design/immutability.md) — Immutability and explicit state
 - [stdlib.md](design/stdlib.md) — Standard library API design
+- [api-conventions.md](design/api-conventions.md) — Naming and return-type conventions (Option/Result/trap, unwrap/must/_unsafe)
 - [contracts.md](design/contracts.md) — Contract-system design rationale and non-goals
 - [stringify-vector.md](design/stringify-vector.md) — Historical plan for `Vector<T>` stringification under the earlier `Stringify` design
 
