@@ -344,6 +344,12 @@ it rebalances by reversing/splitting the remaining elements. Prefer conservative
 amortized-performance assumptions until benchmark data is available. For tiny
 collections, raw `Vector<T>` may still be faster due to lower overhead.
 
+The pop operations return a `Pop<T>` payload (the queue's own type):
+
+```tw
+pub type Pop<T> = .{ value: T, rest: Queue<T> }
+```
+
 | Function / Method | Signature | Description |
 |-------------------|-----------|-------------|
 | `queue.new()` | `fn<T>() Queue<T>` | Create an empty queue |
@@ -382,6 +388,13 @@ The `examples/performance/compiler/heap_*` benchmarks confirm both a build-and-d
 mixed push/pop workload scale as n·log n with no quadratic blowup. For a
 *one-shot* sort, `Vector.sort_by` is ~3–5× faster than build-then-drain; reach
 for the heap when priorities arrive incrementally or you only need the top few.
+
+`pop` returns a `Pop<T>` payload (the heap's own type, distinct from
+`@std.queue`'s `Pop`):
+
+```tw
+pub type Pop<T> = .{ value: T, rest: Heap<T> }
+```
 
 | Function / Method | Signature | Description |
 |-------------------|-----------|-------------|
