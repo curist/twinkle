@@ -1,8 +1,8 @@
 # Iterator Design
 
-Twinkle supports iteration over a closed set of built-in types (`Array`, `Range`,
-`Dict`) with type-directed lowering, plus a general-purpose `Iterator<T>` type
-for user-defined and streaming iteration.
+Twinkle supports iteration over a closed set of built-in types (`Vector`,
+`String`, `Range`, `Dict`, `Set`, `Channel`) with type-directed lowering, plus a
+general-purpose `Iterator<T>` type for user-defined and streaming iteration.
 
 `Iterator<T>` is:
 
