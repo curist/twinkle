@@ -40,7 +40,7 @@ ImportDecl =
     "use" ModulePath [ "as" Identifier ] ;
 
 ModulePath =
-      "@" Identifier { "." Identifier }   (* stdlib module: @array, @std.json *)
+      "@" Identifier { "." Identifier }   (* stdlib module: @std.fs, @std.buffer *)
     | "." Identifier { "." Identifier }   (* relative module: .helper, .sub.mod *)
     | Identifier { "." Identifier } ;     (* absolute user module: foo.bar, utils *)
 (* Implementation note:
@@ -48,7 +48,7 @@ ModulePath =
    - `use foo.bar as baz` → same file, bound as "baz"
    - `use .helper`        → relative import, loads sibling helper.tw
    - `use .sub.mod`       → relative import, loads sub/mod.tw from same dir
-   - `use @array`         → stdlib module, bound as "array"
+   - `use @std.fs`        → stdlib module, bound as "fs"
    - `use utils`          → loads <root>/utils.tw, bound as "utils"
    - Relative imports resolve from the importing file's parent directory.
    - Parent traversal (`..foo`) is not supported in MVP.
@@ -273,7 +273,7 @@ ArgList =
 PrimaryExpr =
       Literal
     | RecordLiteral
-    | ArrayLiteral
+    | VectorLiteral
     | Identifier
     | VariantExpr        (* .Ok(…), shorthand constructor *)
     | FnExpr
@@ -407,7 +407,7 @@ ForCondition =
     | Expr ;
 (* Implementation note:
    - `for key, value in expr`  (dict / pair iteration)
-   - `for x in expr`          (iterator / range / array)
+   - `for x in expr`          (iterator / range / vector / string / set / channel)
    - `for expr`               (while-style loop; condition is expr)
    - Parsers typically:
        - If the first token is `Identifier` and later on the same header line
@@ -417,10 +417,20 @@ ForCondition =
      is not a valid Expr and cannot conflict. *)
 
 CollectExpr =
-    "collect" Identifier "in" Expr Block ;
+    "collect" CollectCondition Block ;
+
+CollectCondition =
+      Identifier ( "," Identifier )? "in" Expr
+    | Expr ;
 (* Implementation note:
-   - `collect x in expr { ... }` produces `Array<T>`.
-   - Binding `x` is scoped within the block. *)
+   - `collect x in expr { ... }`      produces `Vector<T>` (T = block value type).
+   - `collect x, i in expr { ... }`   two-binder form (element + Int index);
+     supported for Vector/String/Range/Dict/Set, not Iterator. For Dict the
+     binders are key K and value V; for String x is a Byte.
+   - `collect expr { ... }`           conditional (while-style) form; `expr: Bool`.
+   - Binders are scoped within the block. Header disambiguation mirrors
+     ForCondition: an `in` later on the same header line selects the binding form,
+     otherwise the header parses as a generic Expr condition. *)
 
 (* ===== Record Literals ===== *)
 
@@ -447,12 +457,12 @@ RecordField =
    - `.{ x }` desugars to `.{ x: x }`.
    - Mixed fields are allowed: `.{ x, y: 2 }`. *)
 
-(* ===== Array Literals ===== *)
+(* ===== Vector Literals ===== *)
 
-ArrayLiteral =
-    "[" [ ArrayElements ] "]" ;
+VectorLiteral =
+    "[" [ VectorElements ] "]" ;
 
-ArrayElements =
+VectorElements =
     Expr { "," Expr } [ "," ] ;
 
 (* ===== Blocks and Control Flow ===== *)
