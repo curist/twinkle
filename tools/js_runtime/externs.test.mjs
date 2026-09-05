@@ -7,6 +7,33 @@ import { compile, runFile } from "./index.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const fix = (name) => join(here, "fixtures", name);
 
+function decodeFunctionNames(section) {
+  const bytes = new Uint8Array(section);
+  let offset = 0;
+  const readU32 = () => {
+    let value = 0;
+    let shift = 0;
+    while (true) {
+      const byte = bytes[offset++];
+      value |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value;
+      shift += 7;
+    }
+  };
+  const subsectionId = bytes[offset++];
+  assert.equal(subsectionId, 1, "first name subsection describes functions");
+  readU32();
+  const count = readU32();
+  const names = new Map();
+  for (let i = 0; i < count; i++) {
+    const index = readU32();
+    const length = readU32();
+    names.set(index, new TextDecoder().decode(bytes.subarray(offset, offset + length)));
+    offset += length;
+  }
+  return names;
+}
+
 test("compiler emits the twinkle.externs section with per-arg kinds", async () => {
   const wasm = await compile(fix("extern_ref.tw"));
   const mod = new WebAssembly.Module(wasm);
@@ -24,6 +51,22 @@ test("compiler emits the twinkle.externs section with per-arg kinds", async () =
   assert.deepEqual(byName["probe.record"], {
     module: "probe", name: "record", args: ["str"], ret: "void",
   });
+});
+
+test("compiler emits the standard WebAssembly function name section", async () => {
+  const wasm = await compile(fix("extern_ref.tw"));
+  const mod = new WebAssembly.Module(wasm);
+  const sections = WebAssembly.Module.customSections(mod, "name");
+
+  assert.equal(sections.length, 1);
+  const names = decodeFunctionNames(sections[0]);
+  assert.match(names.get(0), /\$extern_/, "imported function occupies index zero");
+  assert.ok(
+    [...names.entries()].some(
+      ([index, name]) => index > 0 && name.startsWith("user__") && !name.includes("$extern_"),
+    ),
+    "defined Twinkle functions follow imported functions in index space",
+  );
 });
 
 test("runtime auto-marshals from the section: externref raw, strings decoded", async () => {

@@ -97,10 +97,10 @@ wasm.tw      ───┤ encode: SpanMark →          run_wasm boundary CATCHE
                 │  (code_offset → span)        (not re-throw): has .stack,
    ┌────────────┴───────────┐                  .message, AND childBytes
    │ name section            │  ── embed ──►           │
-   │ twinkle.debug:          │     in child     onTrap(trapInfo, childBytes):
-   │  file table + source    │     module       render in a DEDICATED boot
-   │  funcidx table          │                  renderer instance (NOT the
-   │  offset→span program    │                  suspended one):
+   │ twinkle.debug:          │     in child     childTrapHandler(info, bytes):
+   │  file table + source    │     module       render in a DEDICATED library
+   │  function/PC ranges     │                  instance (NOT the suspended
+   │  offset→span program    │                  boot CLI instance):
    └────────────────────────┘                  render_runtime_trace(
                                                   childBytes, stack, msg)
                                                         │
@@ -123,19 +123,20 @@ wasm.tw      ───┤ encode: SpanMark →          run_wasm boundary CATCHE
   import, unwinding the boot `run_file` frame — so any compile-time state
   (`artifacts`, a `FileRegistry`) is gone before an outer handler runs, and
   `PipelineArtifacts` carries no source registry anyway. Rendering therefore
-  happens **at the `run_wasm` host boundary** via an **opt-in `onTrap`
-  callback** (see Component 5), which depends on **nothing** but its explicit
-  arguments — no unwound locals, no ambient registry.
-- **Render in a dedicated boot instance — no reentry.** `render_runtime_trace`
-  is pure in `(module bytes, stack, message)`, so it does **not** need the boot
-  instance that is currently suspended lower on the stack. The `twk` CLI already
-  holds `boot.wasm` (it loads it at startup); `onTrap` renders on a **separate,
-  lazily-instantiated boot renderer instance**. A fresh Wasm instance has its own
-  memory and is fully independent of the suspended one, so this works identically
-  on the synchronous and JSPI-suspending `run_wasm` paths and sidesteps the
-  question of reentering a JSPI-suspended instance entirely. Cost — one extra
-  boot instantiation — is paid once, on the terminal trap path, and the renderer
-  instance can be cached.
+  happens **at the `run_wasm` host boundary** via an opt-in
+  **`childTrapHandler` callback** (see Component 5), which depends on **nothing**
+  but its explicit arguments — no unwound locals, no ambient registry.
+- **Render in a dedicated boot-compiled renderer module — no reentry.**
+  `render_runtime_trace` is pure in `(module bytes, stack, message)`, so it does
+  **not** need the boot CLI instance that is currently suspended lower on the
+  stack. It is built as a small `--lib` artifact and bundled beside `boot.wasm`;
+  `childTrapHandler` loads that artifact through the library bridge on first use
+  and caches it. This avoids inventing an internal export ABI for the executable
+  boot module. Phase 2 first extends the library ABI with a `Byte` leaf so
+  `Vector<Byte>` is eligible, then adds a synchronous loader for non-task library
+  modules; the async loader reuses the same core. An independent Wasm instance
+  works while the boot CLI is suspended on both synchronous and JSPI `run_wasm`
+  paths (confirmed by the Phase-0 nested-instance probe).
 - **`render_runtime_trace` is a pure function of `(module bytes, stack string,
   message)`.** It decodes the embedded `twinkle.debug` (file table + source +
   offset→span), parses frames, and renders via `render.tw`. This is exactly what
@@ -154,9 +155,9 @@ Both emitted via the existing `emit_section_into(0x00, …)` custom-section path
 
 1. **`name` section** — standard wasm `name` section (id 0, name `"name"`),
    function-names subsection: `funcidx → mangled Twinkle name`. This alone makes
-   V8 print `at Vector.at (…)` instead of `at wasm-function[123]`, and standard
-   tooling (`wasm-objdump`, browser devtools) understands it for free. This is
-   the **Phase 0 spike** milestone.
+   V8 print a symbolic Twinkle name instead of only `at wasm-function[123]`,
+   and standard tooling (`wasm-objdump`, browser devtools) understands it for
+   free. This is the **Phase 0 spike** milestone.
 
 2. **`twinkle.debug` section** — extensible payload, versioned with a leading
    version byte and length-prefixed subsections so future readers can add
@@ -171,16 +172,19 @@ Both emitted via the existing `emit_section_into(0x00, …)` custom-section path
      `--debug=paths-only` variant may store a path + content checksum instead of
      inline source (deferred; noted so the format leaves room — a per-file flag
      byte selects inline-source vs checksum-only).
-   - **Function table:** `funcidx → { name_str, file_id, decl_span }`. The
-     declaration span lets a frame be labeled even when no fine-grained entry
+   - **Function table:**
+     `funcidx → { name_str, file_id, decl_span, body_start, body_end }`. The
+     absolute body range selects the function when an engine's textual index is
+     unreliable; the declaration span labels a frame when no fine-grained entry
      matches.
    - **Line program (per function):** a sorted, delta-encoded list of
      `(code_offset → Span)` entries — the same idea as a DWARF line program or a
      JS source-map `mappings` field. Symbolication binary-searches `code_offset`
      within a function to get the enclosing `Span`.
 
-**Offset coordinate system (must be pinned in Phase 0).** V8 reports frame
-offsets in the module's *wire-code* coordinate space, while the emitter builds
+**Offset coordinate system (pinned in Phase 0).** V8 reports frame offsets in
+the module's absolute *wire-code* coordinate space, at the trapping opcode for
+the innermost frame and at the call opcode for callers, while the emitter builds
 each function body in a **temporary buffer** (`encode_code_section_payload` in
 `wasm.tw`) whose local origin is the first body byte — *after* the body's
 size-LEB and local-declaration bytes, and offset again by the function's start
@@ -193,6 +197,18 @@ is encoded) before comparing against V8's reported offset. **Phase 0 empirically
 establishes what V8/Deno actually reports** (module-relative vs
 code-section-relative vs body-relative) from a real trap, and the base
 arithmetic is fixed to match that observation before Phase 1 relies on it.
+
+The hexadecimal PC is authoritative for selecting the function as well as its
+line entry: the Deno standalone executable was observed printing the correct
+name but `wasm-function[0]` for every frame, while Node printed the real indices.
+The parser retains the `wasm://wasm/<module-id>` token, skips leading JS/import
+frames (notably the `twinkle_runtime.error` frame), then accepts the first
+contiguous same-module Wasm group and stops at the following JS boundary or
+different module token. Within that group, the decoder records each defined
+function's absolute instruction range, locates a frame by PC range, and treats
+the textual function index/name as optional corroboration. This prevents
+overlapping PCs in suspended boot frames from being misread as child frames.
+Imported functions have names but no code range.
 
 `Span` is `{ file_id, start, end }` (byte offsets) — the existing type in
 `boot/lib/source/span.tw`. `FileRegistry` (`boot/lib/source/registry.tw`)
@@ -253,23 +269,20 @@ ids: `analyze.tw` parses **every** module with a hardcoded `file_id = 0`
 instances in `pipeline.tw` are throwaway helpers for formatting virtual-source
 diagnostics — there is no compilation-wide registry behind the spans. So linked
 expressions from different modules all share `file_id = 0` and cannot be told
-apart. This is the **critical prerequisite**. Two candidate schemes (choose
-during the Phase-1 spike):
-
-  - *Assign at analysis time.* Give each module a stable, unique `file_id`
-    derived from something durable (e.g. an index into a compilation file table,
-    or a hash of the canonical path) and pass it into `parse(...)` instead of
-    `0`. **Caching wrinkle:** parsed ASTs are cached by `source_hash`; a file_id
-    baked into cached spans must either be part of the cache key or be stable
-    across runs (path-derived), or a cache hit will resurface a stale id. The
-    scheme must be chosen so cached spans stay valid.
-  - *Remap at link time.* Leave parse-time ids module-local and, during
-    `core_linker`, rewrite each module's span `file_id`s to a globally unique
-    value as expressions are linked. Invasive (touches every linked `CoreExpr`
-    span) but keeps parsing/caching untouched.
-
-  Whichever is chosen, a Phase-1 test asserts **distinct modules get distinct
-  ids** and that an emitted span round-trips to the correct source line.
+apart. This is the **critical prerequisite**. Phase 0 selected
+**analysis-time assignment**: `cache.Store` owns a stable
+`canonical_path → file_id` map and the corresponding source records.
+`parse_cached` obtains the id before calling `parse(...)`. Because parsed ASTs
+and the id allocation live in the same persistent store, a cache hit cannot
+resurface an id belonging to another file; a fresh store may assign different
+numbers, which is harmless because each emitted debug section carries its own
+matching file table. IDs may be sparse in a later compilation because the store
+retains allocations for modules outside its current dependency closure.
+`FileRegistry` therefore gains explicit-id insertion, and the debug section
+contains only source records referenced by the current artifact. A Phase-1 test
+asserts distinct modules get distinct ids, cache hits preserve them, sparse
+registry reconstruction works, and a span round-trips to the correct source
+line.
 
 **(b) Source-data flow to codegen.** Even with ids fixed, codegen never sees
 source: `codegen_wasm(anf, env, builtins)` and `PipelineArtifacts` carry none.
@@ -280,8 +293,6 @@ the compilation-wide file table established in (a), add it to
 Under `--strip-debug` the table is dropped and the section omitted. Because the
 table is built from the *same* id assignment the spans use, ids match by
 construction — but only once (a) is real, which is why (a) comes first.
-
-### 4. Runtime panic helper (rich trap messages)
 
 ### 4. Runtime panic helper (rich trap messages)
 
@@ -312,11 +323,12 @@ clean message with nothing leaked. Then:
 left unchanged, the boundary renderer would print the same message again. Rather
 than change the language, the **host** owns this:
 
-- When a run has trace rendering active (i.e. `onTrap` is installed — the
-  `twk run` path), the host installs an `error` import variant that **does not
+- When a child run has trace rendering active (i.e. `childTrapHandler` is
+  installed — the `twk run` path), the host installs an `error` import variant that **does not
   pre-write to stderr**; it only throws. The boundary handler is then the **sole
   printer** and renders the report (message included) exactly once. The host
-  knows whether `onTrap` is active because it constructs the import object.
+  knows whether `childTrapHandler` is active because it constructs the import
+  object.
 - When rendering is not active (embeddable/web, `--strip-debug`, stage0-built
   modules), the `error` import keeps today's write-then-throw behavior —
   single-print, no boundary rendering.
@@ -334,18 +346,22 @@ The catch lives where the child module runs. `runWasmBytes` /
 embeddable and web APIs — whose callers rely on runtime failures being thrown.
 So the catch is **opt-in**, never a global behavior change:
 
-- `runWasmBytes{Async}` gain an optional **`onTrap(trapInfo, childBytes)`**
+- `runWasmBytes{Async}` gain an optional internal
+  **`childTrapHandler(trapInfo, childBytes)`**
   option, where `childBytes` is the **JS `Uint8Array`** the runner already holds
   (the wasm-GC `bytesRef` lives only in the `run_wasm` import closure and is
   decoded before the generic runner is called — the generic API must not pretend
-  to receive a GC ref). On a child trap: if `onTrap` is provided, call it and
-  return its exit code; **otherwise re-throw exactly as today** (embeddable/web
-  unaffected).
-- Only the `twk run` path supplies `onTrap`. It closes over a **boot renderer
-  factory** (the CLI holds `boot.wasm`), not the running instance — ordinary/
-  embedded invocations supply nothing and are untouched.
-- `onTrap` renders on a **dedicated boot instance** (lazily instantiated/cached),
-  prints the returned string to stderr once, and yields a nonzero exit code.
+  to receive a GC ref). On a child trap: if `childTrapHandler` is provided, call
+  it and return its exit code; **otherwise re-throw exactly as today**
+  (embeddable/web unaffected).
+- The option is consumed only by the `twinkle_runtime.run_wasm` import when it
+  launches a child; it is not the outer boot runner's own catch handler. Thus a
+  compiler trap still propagates normally. The CLI host installs the child
+  handler, while ordinary/embedded invocations supply nothing and are untouched.
+- `childTrapHandler` renders in the dedicated renderer module (lazily
+  instantiated/cached), prints the returned string to stderr once, and yields a
+  nonzero exit code. The synchronous path uses the new synchronous non-task
+  library loader; the JSPI path may use its async wrapper.
   `run_file` then proceeds normally with `artifacts` intact — it just observes a
   nonzero result. No reentry into the suspended instance; no ABI change to
   `proc.run_wasm` (it still returns `Int`).
@@ -360,7 +376,10 @@ export, then `decodeString` the returned reference. (There is no cross-instance
 GC-ref passing.) This plumbing and its round-trip tests live in Phase 2.
 
 `render_runtime_trace` — pure in its arguments:
-1. Parses V8's stack string into frames `[(funcidx, code_offset)]`. The parser is
+1. Parses V8's stack string into frames carrying a module token and absolute
+   `code_offset` plus optional textual function index and name. It skips leading
+   JS/import frames, then retains only the first contiguous same-module Wasm
+   group. The parser is
    V8-shaped (handles `at <name> (wasm://…:wasm-function[<idx>]:0x<off>)` and
    bare `at wasm-function[<idx>]:0x<off>`); other engines get their own parser
    later. Encapsulated so the engine-specific bit is isolated. Missing/truncated/
@@ -395,7 +414,7 @@ boundary), it falls back to printing the raw message + partial stack with an
   calls for complete traces (out of MVP scope).
 - **JSPI async fibers** (Task concurrency) may split or truncate the host stack;
   handled when the concurrency surface adopts traces (out of MVP scope). (Note:
-  rendering itself avoids JSPI hazards by running in a dedicated boot instance,
+  rendering itself avoids JSPI hazards by running in a dedicated library instance,
   not by reentering the suspended one — see Component 5.)
 - **Engine-specific stack format.** MVP parses V8/Deno. Node reuses it (also V8);
   browser/Safari/Firefox parsers are follow-ups.
@@ -418,6 +437,18 @@ boundary), it falls back to printing the raw message + partial stack with an
   link-time remap, including the caching answer. This unblocks Phase 1.
 - All four gate Phase 1–2 and must be settled here.
 
+**Phase-0 outcome (2026-09-05):** all gates passed. The standard `name` section
+is now emitted and is visible through both `WebAssembly.Module.customSections`
+and `wasm-objdump`; Deno and Node show the emitted symbolic names. V8 PCs are
+absolute module offsets and identify the exact trap/call opcode. Because the
+Deno standalone wrapper reports an unusable textual function index, PC-range
+lookup is authoritative. Nested-instance probes succeeded while an outer boot
+CLI was suspended in both synchronous and JSPI child execution. The renderer is
+a separate boot-compiled library artifact (requiring `Byte` library-ABI support
+and a synchronous non-task loader), `childTrapHandler` is scoped to the
+`run_wasm` import, and file identity uses a canonical-path allocation owned by
+`cache.Store` with explicit sparse-id registry reconstruction.
+
 ### Phase 1 — File identity, span threading, source-data flow, `twinkle.debug`
 - **File identity first** (Component 3a): implement the scheme chosen in Phase 0
   so distinct modules get distinct, stable `file_id`s in emitted spans (fixing
@@ -430,7 +461,7 @@ boundary), it falls back to printing the raw message + partial stack with an
   `Instr` match and in `collect_ref_funcs_instr`.
 - In `encode_instrs`, consume `SpanMark` as zero bytes and record
   `(current_byte_offset → span)` into the current function's line program; record
-  each function's body-start base alongside the function table.
+  each function's absolute instruction range alongside the function table.
 - **Source-data flow** (Component 3b): build the `DebugSourceTable` from the
   compilation-wide file table, add it to `PipelineArtifacts`, and thread it into
   `codegen_wasm`/`link_program`/`emit_linked_wasm`.
@@ -441,12 +472,18 @@ boundary), it falls back to printing the raw message + partial stack with an
   and lookup.
 
 ### Phase 2 — Boundary capture + rendering (end-to-end for `error()`)
-- Add the optional `onTrap(trapInfo, childBytes)` option (`childBytes` = the
-  runner's `Uint8Array`) to `runWasmBytes{Async}`: invoke it on a child trap when
-  provided, else re-throw as today (preserving embeddable/web behavior). Supply
-  `onTrap` only from the `twk run` path, closing over a boot renderer factory.
-- Render on a **dedicated boot instance** (lazily instantiated/cached from the
-  CLI's `boot.wasm`); no reentry, no `proc.run_wasm` ABI change.
+- Add the optional internal `childTrapHandler(trapInfo, childBytes)` option
+  (`childBytes` = the runner's `Uint8Array`) to `runWasmBytes{Async}`: invoke it
+  on a child trap when provided, else re-throw as today (preserving
+  embeddable/web behavior). Consume
+  it only inside the `run_wasm` import so traps in the outer compiler are not
+  captured as child-program failures.
+- Render in the dedicated boot-compiled `--lib` module, bundled beside
+  `boot.wasm`; no reentry and no `proc.run_wasm` ABI change. Extend `LibType`,
+  export wrappers, metadata, and JS conversion with the `Byte` leaf needed by
+  `Vector<Byte>`. Factor the existing library loader into a synchronous core for
+  non-task modules plus its current async entry point, so the sync trap path can
+  instantiate the renderer lazily.
 - Implement the **marshaling protocol**: `makeByteArray(rendererBridge,
   childBytes)`, bridge-encode `stack`/`message`, call `render_runtime_trace`,
   bridge-decode the result; print once; return nonzero exit code. Round-trip
@@ -456,8 +493,9 @@ boundary), it falls back to printing the raw message + partial stack with an
   of `render.tw`. Boot unit tests over fixture `(bytes, stack, message)` inputs
   (golden output), including empty/truncated/unparseable stacks.
 - Install the **host-side `error` variant** that skips the pre-print when
-  `onTrap` is active, so the boundary handler is the sole printer (keep today's
-  write-then-throw when rendering is inactive). Verify no double-print.
+  `childTrapHandler` is active, so the boundary handler is the sole printer
+  (keep today's write-then-throw when rendering is inactive). Verify no
+  double-print.
 - End-to-end: an `error("…")` fixture run via `twk run` produces the target
   trace exactly once; nonzero exit code.
 
@@ -493,31 +531,33 @@ local-variable names; DWARF export.
   bytes) into the line program; record per-function body-start base;
   `collect_ref_funcs_instr` no-ops it; serialize `name` + `twinkle.debug` (file
   table + source, function table, line program).
-- `boot/compiler/query/analyze.tw` (+ `stage_runner.tw`, and/or
-  `core_linker.tw`) — establish compilation-wide file identity: replace the
-  hardcoded `parse(..., 0)` with per-module unique ids (or remap span `file_id`s
-  at link time), per the Phase-0 decision, with the caching answer.
+- `boot/compiler/query/cache.tw` + `analyze.tw` — establish compilation-wide
+  file identity: allocate stable ids by canonical path in the persistent store
+  and replace the hardcoded `parse(..., 0)`.
 - `boot/compiler/artifacts.tw` — add `DebugSourceTable` to `PipelineArtifacts`.
 - `boot/compiler/pipeline.tw` — build the `DebugSourceTable` from the
   compilation-wide file table (ids matching emitted spans).
 - `boot/compiler/codegen/codegen.tw` — `codegen_wasm`/`link_program`/
   `emit_linked_wasm` take the `DebugSourceTable` and hand it to the serializer.
 - `boot/lib/debug/` (new) — debug-section encode/decode, symbolication, V8
-  stack-string parser, offset translation, trace model; `render_runtime_trace`
-  entry (exported).
+  stack-string parser, offset translation, and trace model.
+- `boot/runtime_trace_renderer.tw` (new) — small `--lib` entry exporting
+  `render_runtime_trace`; bundled as the dedicated renderer artifact.
 - `boot/lib/source/render.tw` — thin trace-rendering entry over `render()`;
-  `registry.tw` reconstruction from the embedded file table.
+  `registry.tw` gains explicit-id insertion for reconstruction from a sparse
+  embedded file table.
 - `boot/prelude/…` — `rt.panic` helper (ordinary function over the existing
   `error` import); route OOB fail-arms + div0 codegen through it. No new extern.
-- `boot/commands/…` — `twk build --strip-debug`; ensure the boot module exports
-  `render_runtime_trace`.
-- `tools/js_runtime/runtime.mjs` (+ node/deno mains) — add the opt-in
-  `onTrap(trapInfo, childBytes)` option to `runWasmBytes`/`runWasmBytesAsync`
-  (else re-throw as today); supply `onTrap` from the `twk run` path (sync + JSPI),
-  closing over a lazily-instantiated boot renderer instance; the marshaling
-  round-trip (`makeByteArray` + `encode`/`decodeString` on the renderer bridge);
-  the `error` variant that skips the pre-print when `onTrap` is active; print
-  once; return nonzero exit code.
+- `boot/commands/…` — `twk build --strip-debug`.
+- `tools/js_runtime/runtime.mjs` (+ node/deno mains) — add the opt-in internal
+  `childTrapHandler(trapInfo, childBytes)` option to the child launch inside
+  `runWasmBytes`/`runWasmBytesAsync` (else re-throw as today); install it in the
+  CLI host for sync + JSPI, closing over the lazily-instantiated renderer lib;
+  add the synchronous non-task library loader and `Byte` marshaling; preserve the
+  stack's module token and first child Wasm frame group; the marshaling round-trip
+  (`makeByteArray` + `encode`/`decodeString` on the renderer bridge); the `error`
+  variant that skips the pre-print when `childTrapHandler` is active; print once;
+  return nonzero exit code.
 
 ## Verification
 
@@ -530,6 +570,6 @@ local-variable names; DWARF export.
   stage0 changes** (see Decisions): the debug backend (`SpanMark`, serializer,
   source table) is boot-only and stage0 never runs it; the prelude additions
   (`rt.panic`) are ordinary functions over the **existing** `error` import, which
-  stage0 already compiles; the double-print fix and `onTrap` live in the host.
+  stage0 already compiles; the double-print fix and child trap handler live in the host.
   Still verify the bootstrap end-to-end per the stage0-bootstrap-dependency rule,
   but no stage0 source edits are expected or required.

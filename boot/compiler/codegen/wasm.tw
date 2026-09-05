@@ -988,6 +988,25 @@ fn encode_data_section_payload(data: Vector<DataSegment>, ctx: WasmCtx) WasmBuf 
   payload
 }
 
+// Standard WebAssembly name custom section. Include imported and defined
+// functions because both occupy the module function-index space.
+fn encode_name_section_payload(imports: Vector<ImportDef>, funcs: Vector<FuncDef>, ctx: WasmCtx) WasmBuf {
+  function_names := empty_wasm_buf().emit_u32_leb(imports.len() + funcs.len())
+
+  for imp in imports {
+    function_names = .emit_u32_leb(ctx.func_idx_of(imp.as_sym)).emit_name(imp.as_sym)
+  }
+
+  for f in funcs {
+    function_names = .emit_u32_leb(ctx.func_idx_of(f.name)).emit_name(f.name)
+  }
+
+  named := empty_wasm_buf().emit_name("name")
+  named = .emit_u8(1).emit_u32_leb(function_names.len).emit_wasm_buf(function_names)
+  function_names.buf.free()
+  named
+}
+
 // ── Instruction encoding ───────────────────────────────────────────────
 fn find_label_depth(label_stack: Vector<String>, label: String) Int {
   n := label_stack.len()
@@ -1626,6 +1645,10 @@ fn emit_wasm_parts(
   // 11. Data section (id=11)
   if data.len() > 0 {
     buf = .emit_section_into(11, encode_data_section_payload(data, ctx))
+  }
+
+  if imports.len() > 0 or funcs.len() > 0 {
+    buf = .emit_section_into(0x00, encode_name_section_payload(imports, funcs, ctx))
   }
 
   buf
