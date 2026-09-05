@@ -85,12 +85,15 @@ All adapter logic is explicit in user code.
 The `for` syntax works with a closed set of built-in collection types. There is
 no "Iterable" trait that user types can implement.
 
-Supported types:
+Supported types (see spec §12 for the authoritative list):
 
 * `Vector<T>` — lowered to an indexed loop over length
+* `String` — indexed loop over UTF-8 bytes (`str[i]` yields `Byte`)
 * `Range` — lowered to an integer loop over bounds
-* `Dict<K, V>` — lowered to iteration over keys
+* `Dict<K, V>` — lowered to iteration over key–value pairs
+* `Set<K>` — iteration in first-insertion order
 * `Iterator<T>` — lowered to repeated `next` calls
+* `Channel<T>` — drains received values until the channel is closed
 
 The compiler performs type-directed lowering. Any other type in `for x in coll`
 is a compile-time error. The exact IR is described in `docs/internals/ir.md`.
@@ -146,14 +149,17 @@ s := "user=${user_to_string(user)}"
 
 ### Equality and ordering
 
-Instead of `Eq`/`Ord` traits, define capability records and pass them explicitly:
+For *caller-chosen* equality or ordering, define capability records and pass them
+explicitly. (Canonical, type-owned equality/ordering is instead the `Eq`/`Ord`
+contracts — see [Contracts](contracts.md); use a capability record only when the
+caller should select the semantics.)
 
 ```tw
-type Eq<T> = .{
+type Equality<T> = .{
   equals: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: Vector<T>, needle: T, eq: Eq<T>) Bool {
+fn contains<T>(xs: Vector<T>, needle: T, eq: Equality<T>) Bool {
   for x in xs {
     if eq.equals(x, needle) {
       return true
