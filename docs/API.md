@@ -12,6 +12,7 @@ compiler-recognized contract reference is [contracts.md](contracts.md).
 | `Bool` | i32 | Boolean (`true` / `false`) |
 | `Byte` | i32 | Single byte (0–255) |
 | `Void` | — | Effect-only result type; no literal, cannot be stored or bound (spec §2) |
+| `Never` | — | The type of expressions that never return normally (`error(...)`, `proc.exit(...)`). Has no values; used only as a return type |
 
 ## Built-in Types
 
@@ -766,7 +767,7 @@ Process and environment.
 | `args` | `fn() Vector<String>` | Command-line arguments |
 | `env` | `fn(name: String) Option<String>` | Environment variable lookup |
 | `cwd` | `fn() String` | Current working directory |
-| `exit` | `fn(code: Int)` | Exit process (never returns) |
+| `exit` | `fn(code: Int) Never` | Exit process (never returns) |
 
 ### `@std.date`
 

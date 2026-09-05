@@ -246,6 +246,11 @@ try expr
 Unrecoverable errors trap and cannot be caught: out-of-bounds access, division by
 zero, and explicit `error("msg")`.
 
+`error(...)` and `@std.proc`'s `exit(...)` have return type `Never` — the type of
+expressions that never complete normally. `Never` has no values and is only ever a
+return type; a `Never`-typed expression contributes no type to a surrounding
+multi-branch expression (see §12, "Diverging branches").
+
 ---
 
 ## 7. Functions, Bindings, and Rebinding
