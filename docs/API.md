@@ -435,7 +435,9 @@ existing key keeps its position, and remove+reinsert appends it at the end.
 
 **Assignment syntax:** `d[key] = value` — sets key-value pair (sugar for `Dict.set`).
 
-The free functions `dict_get(d, key)` and `dict_get_unsafe(d, key)` also exist.
+Absence is ordinary data for a keyed lookup, so there is no unchecked dict read:
+`Dict.get` (and `d[key]`) return `Option<V>`. When a key is known to be present,
+force it with `d.get(key).unwrap()`.
 
 Dicts are iterable: `for k, v in d { ... }`.
 Qualified forms (`Dict.values`, etc.) also work.
