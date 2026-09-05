@@ -81,11 +81,14 @@ after close.
 
 ## 4. FFI beyond phase-1 externs
 
-Twinkle supports `extern` declarations for host-provided Wasm imports. Phase-1
-boundary types are intentionally small: `Int`, `Float`, `Bool`, `String`, and
-`Void`/`()`, plus opaque non-null extern handles and their nullable form
-(`ExternType?`). Compound Twinkle values such as records, enums, `Vector`, `Dict`,
-callbacks, and `Result` are still not valid extern boundary types.
+Twinkle supports `extern` declarations for host-provided Wasm imports. The
+boundary type set is intentionally small (see spec §7.2): the scalars `Int`,
+`Float`, `Bool`, `Void`/`()`; `String`; opaque non-null extern handles and their
+nullable form (`ExternType?`); and a fixed set of byte/string vector shapes for
+host I/O — `Vector<Byte>`, `Vector<String>`, and `Result<Vector<Byte>, String>`,
+marshalled by copying so the host never retains a Twinkle GC reference. All other
+compound values — records, enums, general `Vector<T>`/`Dict`, callbacks, and other
+`Option`/`Result` shapes — are still not valid extern boundary types.
 
 Linear-memory interop has a first answer: `@std.buffer` exposes a sandboxed,
 manually allocated/freed `Buffer` with `u8`/`i64`/`f64` views (see
