@@ -70,7 +70,7 @@ as separator.
 
 ```tw
 pub fn join(base: String, part: String) -> String
-pub fn join_all(parts: Array<String>) -> String
+pub fn join_all(parts: Vector<String>) -> String
 pub fn dirname(path: String) -> String
 pub fn basename(path: String) -> String
 pub fn stem(path: String) -> String
@@ -88,7 +88,7 @@ Thin wrapper over host process imports.
 #### API
 
 ```tw
-pub fn args() -> Array<String>
+pub fn args() -> Vector<String>
 pub fn env(name: String) -> Option<String>
 pub fn cwd() -> String
 pub fn exit(code: Int) -> Never

@@ -122,10 +122,10 @@ The `@` sigil is visually distinct, unambiguous (no user module can start with `
 and familiar from Node.js scoped packages. It makes provenance immediately obvious
 at the use site.
 
-**Prelude scope:** Builtin types (`Int`, `Float`, `Bool`, `Void`, `String`,
-`Array<T>`, `Dict<K,V>`, `Option<T>`, `Result<T,E>`), functions (`print`,
-`println`, `error`), and stdlib modules (`Array`, `Dict`, `String`, `Range`)
-remain implicitly in scope. Only richer future stdlib modules require an explicit
+**Prelude scope:** Builtin types (`Int`, `Float`, `Bool`, `Byte`, `Void`,
+`String`, `Vector<T>`, `Dict<K,V>`, `Set<K>`, `Option<T>`, `Result<T,E>`),
+functions (`print`, `println`, `error`), and stdlib collections (`Vector`,
+`Dict`, `Set`, `String`, `Range`) remain implicitly in scope. Only richer future stdlib modules require an explicit
 `use @...`.
 
 ---

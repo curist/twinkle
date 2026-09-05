@@ -8,7 +8,7 @@ explicit escape hatch for shared mutable state.
 
 ## Core Model
 
-* Primitives, strings, arrays, records, dicts, and functions are immutable values.
+* Primitives, strings, vectors, records, dicts, and functions are immutable values.
 * `x = expr` means rebinding a name to a new value, not mutating in place.
 * Assignment-like updates are sugar over "build new value + rebind".
 
@@ -26,11 +26,11 @@ x.field = expr
 // desugars to: x = RecordUpdate(x, field, expr)
 ```
 
-### Array update
+### Vector update
 
 ```tw
 arr[i] = value
-// desugars to: arr = Array.set(arr, i, value)
+// desugars to: arr = Vector.set_unsafe(arr, i, value)   (traps OOB)
 ```
 
 ### Dict update
