@@ -164,6 +164,8 @@ Explicit satisfaction:
 | `<`, `<=`, `>`, `>=` | `Ord` |
 | `c[i]` (positional, `Int`-indexed) | `IndexRead<E>` |
 | `c[a..b]` (range slice) | `Sliceable` |
+| `c[i] = v` (positional write) | `IndexWrite<E>` |
+| `for x in c` (generic parameter) | `IndexRead<E>` or `IntoIterator<E>` |
 
 For generic operands, the relevant contract must be present as a bound. For
 concrete operands, the type must satisfy the contract through the rules above.

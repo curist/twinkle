@@ -11,7 +11,7 @@ compiler-recognized contract reference is [contracts.md](contracts.md).
 | `Float` | f64 | 64-bit floating-point |
 | `Bool` | i32 | Boolean (`true` / `false`) |
 | `Byte` | i32 | Single byte (0–255) |
-| `Void` | — | Unit type |
+| `Void` | — | Effect-only result type; no literal, cannot be stored or bound (spec §2) |
 
 ## Built-in Types
 
