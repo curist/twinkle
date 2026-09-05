@@ -11,11 +11,25 @@ fn color_enabled() Bool {
 }
 
 fn paint(code: String, s: String) String {
-  if color_enabled() {
+  paint_if(color_enabled(), code, s)
+}
+
+fn paint_if(enabled: Bool, code: String, s: String) String {
+  if enabled {
     "\e[${code}m${s}\e[0m"
   } else {
     s
   }
+}
+
+/// Apply bold styling according to an explicit color policy.
+pub fn bold_if(enabled: Bool, s: String) String {
+  paint_if(enabled, "1", s)
+}
+
+/// Apply dim styling according to an explicit color policy.
+pub fn dim_if(enabled: Bool, s: String) String {
+  paint_if(enabled, "2", s)
 }
 
 pub fn bold(s: String) String {

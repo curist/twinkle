@@ -350,15 +350,13 @@ fn reject(s: UseScan) UseScan {
 }
 
 fn record_thread_call(s: UseScan, call_res: Int) UseScan {
-  .{
-    supported: s.supported,
-    thread_calls: s.thread_calls.append(call_res),
-    exit_count: s.exit_count,
-  }
+  s.thread_calls = .append(call_res)
+  s
 }
 
 fn bump_exit(s: UseScan) UseScan {
-  .{ supported: s.supported, thread_calls: s.thread_calls, exit_count: s.exit_count + 1 }
+  s.exit_count = s.exit_count + 1
+  s
 }
 
 fn scan_uses(ctx: ScanCtx, e: AnfExpr, s: UseScan) UseScan {

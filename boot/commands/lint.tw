@@ -353,13 +353,13 @@ pub fn render_report(
       .None => "",
     }
     rule_text := if color {
-      style.bold(rule)
+      style.bold_if(true, rule)
     } else {
       rule
     }
     header := if brief.len() > 0 {
       brief_text := if color {
-        style.dim(brief)
+        style.dim_if(true, brief)
       } else {
         brief
       }
