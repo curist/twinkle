@@ -46,6 +46,7 @@ use .suites.defer_suite
 use .suites.dependency_graph_suite
 use .suites.debug_section_suite
 use .suites.stack_parse_suite
+use .suites.symbolicate_suite
 use .suites.diag_render_suite
 use .suites.diag_suite
 use .suites.dict_builder_shapes_suite
@@ -256,6 +257,7 @@ runner.run_all([
   ast_path_suite.suite(),
   debug_section_suite.suite(),
   stack_parse_suite.suite(),
+  symbolicate_suite.suite(),
   diag_render_suite.suite(),
   file_identity_suite.suite(),
   fix_suite.suite(),

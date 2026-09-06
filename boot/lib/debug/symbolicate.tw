@@ -1,0 +1,64 @@
+//! Symbolication: map parsed trap frames to Twinkle source locations.
+//!
+//! Given a decoded `twinkle.debug` section and the Wasm frames parsed from a
+//! trap's stack string, resolve each frame's module-absolute PC to a source
+//! `Span` (via the section's line program) and a human `file:line:col`
+//! location (via a `FileRegistry` reconstructed from the section's file table).
+//!
+//! V8 PCs and the section's `body_start` values share the module-absolute
+//! coordinate space, so no offset translation is needed — the frame's
+//! `code_offset` is looked up directly. Frames with no enclosing entry
+//! (prelude, imports, anything below the first function body) resolve to `None`
+//! and are carried through unchanged rather than dropped.
+
+use lib.source.registry
+use lib.source.registry.{FileRegistry}
+use lib.source.span.{Span}
+
+use .section.{DebugSection}
+use .stack.{Frame}
+
+/// A frame's resolved source position: file name plus 1-based line/column.
+pub type FrameLoc = .{ file: String, line: Int, column: Int }
+
+/// A parsed frame paired with its resolved span and location, if any.
+pub type ResolvedFrame = .{ frame: Frame, span: Span?, location: FrameLoc? }
+
+/// Rebuild a `FileRegistry` from the section's (possibly sparse) file table so
+/// spans carrying compilation-wide file ids resolve to line/col and snippets.
+pub fn reconstruct_registry(sec: DebugSection) FileRegistry {
+  reg := registry.empty()
+
+  for f in sec.files {
+    reg = .add_file_with_id(f.file_id, f.path, f.source)
+  }
+
+  reg
+}
+
+fn locate(reg: FileRegistry, span: Span) FrameLoc? {
+  lc := try reg.line_col(span)
+  name := try reg.file_name(span.file_id)
+  .Some(.{ file: name, line: lc.line, column: lc.column })
+}
+
+fn resolve(sec: DebugSection, reg: FileRegistry, frame: Frame) ResolvedFrame {
+  span := sec.lookup(frame.code_offset)
+  location: FrameLoc? = case span {
+    .Some(sp) => locate(reg, sp),
+    .None => .None,
+  }
+  .{ frame, span, location }
+}
+
+/// Resolve every frame in stack order, reconstructing the registry once.
+pub fn symbolicate(sec: DebugSection, frames: Vector<Frame>) Vector<ResolvedFrame> {
+  reg := reconstruct_registry(sec)
+  resolved: Vector<ResolvedFrame> = []
+
+  for fr in frames {
+    resolved = .append(resolve(sec, reg, fr))
+  }
+
+  resolved
+}

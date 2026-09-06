@@ -1,0 +1,127 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.section.{DebugSection, FileEntry, FuncDebug}
+use lib.debug.stack.{Frame}
+use lib.debug.symbolicate
+
+// A debug section with two files (sparse ids 0 and 3) and two functions whose
+// line programs map body-relative offsets to source spans. body_start values are
+// absolute module PCs, matching what the encoder records — so a frame's parsed
+// code_offset can be looked up directly with no translation.
+fn sample() DebugSection {
+  files: Vector<FileEntry> = [
+    .{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" },
+    .{ file_id: 3, path: "util.tw", source: "pub fn f() Int {\n  0\n}\n" },
+  ]
+  funcs: Vector<FuncDebug> = [
+    .{
+      func_idx: 6,
+      body_start: 100,
+      lines: [
+        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
+        .{ offset: 8, span: .{ file_id: 0, start: 7, end: 17 } },
+      ],
+    },
+    .{
+      func_idx: 9,
+      body_start: 200,
+      lines: [.{ offset: 0, span: .{ file_id: 3, start: 19, end: 20 } }],
+    },
+  ]
+  .{ files, funcs }
+}
+
+fn frame_at(offset: Int) Frame {
+  .{
+    module_token: .Some("wasm://wasm/abcd"),
+    code_offset: offset,
+    func_index: .Some(0),
+    name: .Some("frame"),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("symbolicate")
+    .test(
+      "reconstructs a sparse-id registry with working line/col and file names",
+      fn() {
+        reg := symbolicate.reconstruct_registry(sample())
+
+        // util.tw is at sparse id 3; the "0" body is at byte 19 (line 2, col 3).
+        lc := try reg.line_col(.{ file_id: 3, start: 19, end: 20 }).ok_or("no line_col")
+        try assert.equal(lc.line, 2)
+        try assert.equal(lc.column, 3)
+
+        name := try reg.file_name(3).ok_or("no file name")
+        try assert.equal(name, "util.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "maps a frame PC to its enclosing span and source location",
+      fn() {
+        // body_start 100 + body-rel 10 selects the second line entry (offset 8),
+        // whose span is `b := a + 2` on line 2.
+        resolved := symbolicate.symbolicate(sample(), [frame_at(110)])
+        try assert.equal(resolved.len(), 1)
+
+        loc := try resolved[0].location.ok_or("expected a resolved location")
+        try assert.equal(loc.file, "main.tw")
+        try assert.equal(loc.line, 2)
+        try assert.equal(loc.column, 1)
+
+        sp := try resolved[0].span.ok_or("expected a span")
+        try assert.equal(sp.start, 7)
+        try assert.equal(sp.end, 17)
+        .Ok({})
+      },
+    )
+    .test(
+      "selects the first line entry at the exact body start",
+      fn() {
+        resolved := symbolicate.symbolicate(sample(), [frame_at(100)])
+        loc := try resolved[0].location.ok_or("expected a resolved location")
+        try assert.equal(loc.line, 1)
+        try assert.equal(loc.column, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "resolves frames that map into a different file",
+      fn() {
+        resolved := symbolicate.symbolicate(sample(), [frame_at(200)])
+        loc := try resolved[0].location.ok_or("expected a resolved location")
+        try assert.equal(loc.file, "util.tw")
+        try assert.equal(loc.line, 2)
+        try assert.equal(loc.column, 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a below-range (prelude/import) frame unresolved",
+      fn() {
+        // No function has body_start <= 50, so there is no enclosing span.
+        resolved := symbolicate.symbolicate(sample(), [frame_at(50)])
+        try assert.equal(resolved.len(), 1)
+        try assert.is_none(resolved[0].span)
+        try assert.is_none(resolved[0].location)
+        .Ok({})
+      },
+    )
+    .test(
+      "preserves frame order and carries the original frame through",
+      fn() {
+        resolved := symbolicate.symbolicate(sample(), [frame_at(50), frame_at(110), frame_at(200)])
+        try assert.equal(resolved.len(), 3)
+        try assert.is_none(resolved[0].location)
+        try assert.equal((try resolved[1].location.ok_or("loc")).line, 2)
+        try assert.equal((try resolved[2].location.ok_or("loc")).file, "util.tw")
+
+        // The parsed frame is carried through unchanged.
+        try assert.equal(resolved[1].frame.code_offset, 110)
+        .Ok({})
+      },
+    )
+}
