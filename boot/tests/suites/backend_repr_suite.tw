@@ -12,6 +12,7 @@
 //!   - Boundary overrides: AWrapAnyref result → OpaqueAnyref;
 //!                         AUnwrapAnyref result → typed repr from target mono
 
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -350,7 +351,7 @@ type CallSite = .{ func_index: Int, slot: Int }
 // Locate the (func_index, slot) of the first `let slot = call(fid_id)` binding.
 fn find_call_result_slot(expr: PreparedExpr, fid_id: Int) Int? {
   case expr {
-    .Let(slot, op, body) => case op {
+    .Let(slot, op, _, body) => case op {
       .ACall(.AGlobalFunc(fid), _) => if fid.id == fid_id {
         .Some(slot.id)
       } else {
@@ -462,7 +463,7 @@ pub fn suite() runner.Suite {
         // fn f(x: Int) Optional<Int> { let t0 = call(fn#99, [x]); t0 }
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         pf := prepared_pf(
@@ -477,7 +478,7 @@ pub fn suite() runner.Suite {
     .test(
       "Never-typed local gets DeadValue repr",
       fn() {
-        body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALitVoid))
+        body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(99)), []), span.unknown(), .Atom(.ALitVoid))
         pf := prepared_pf([], body, mk_mono_map([10], [MonoType.Never]), .Void)
         assert_slot_repr(pf, 10, .DeadValue)
       },
@@ -497,7 +498,7 @@ pub fn suite() runner.Suite {
         store_fid := builtins.id("store")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALitVoid),
         )
         func := mk_func_def(
@@ -549,7 +550,7 @@ pub fn suite() runner.Suite {
         get_fid := builtins.id("get_int")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(

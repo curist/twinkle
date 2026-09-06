@@ -10,6 +10,7 @@
 //!   - prepared backend IR has an explicit representation-transition story
 //!   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
 
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -163,7 +164,7 @@ fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<Int, Str
 // ── ANF inspection helpers ───────────────────────────────────────────
 fn count_wraps_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_wraps_op(op) + count_wraps_expr(body),
+    .Let(_, op, _, body) => count_wraps_op(op) + count_wraps_expr(body),
     _ => 0,
   }
 }
@@ -188,7 +189,7 @@ fn count_wraps_op(op: AnfOp) Int {
 
 fn count_unwraps_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_unwraps_op(op) + count_unwraps_expr(body),
+    .Let(_, op, _, body) => count_unwraps_op(op) + count_unwraps_expr(body),
     _ => 0,
   }
 }
@@ -214,7 +215,7 @@ fn count_unwraps_op(op: AnfOp) Int {
 // Collect all LocalIds that are let-bound (including boundary temps).
 fn collect_let_lids_expr(expr: AnfExpr) Vector<Int> {
   case expr {
-    .Let(local, _, body) => [local.id].concat(collect_let_lids_expr(body)),
+    .Let(local, _, _, body) => [local.id].concat(collect_let_lids_expr(body)),
     _ => [],
   }
 }
@@ -226,7 +227,7 @@ type VectorSetSite = .{ func: PreparedFunc, result: SlotId, base: SlotId }
 
 fn find_vector_set_slots_expr(expr: PreparedExpr, set_id: FuncId) VectorSetSlots? {
   case expr {
-    .Let(result, .ACall(.AGlobalFunc(fid), args), body) => {
+    .Let(result, .ACall(.AGlobalFunc(fid), args), _, body) => {
       if fid.id == set_id.id and args.len() == 3 {
         case args[0] {
           .ASlot(base) => return .Some(VectorSetSlots.{ result, base }),
@@ -235,7 +236,7 @@ fn find_vector_set_slots_expr(expr: PreparedExpr, set_id: FuncId) VectorSetSlots
       }
       find_vector_set_slots_expr(body, set_id)
     },
-    .Let(_, _, body) => find_vector_set_slots_expr(body, set_id),
+    .Let(_, _, _, body) => find_vector_set_slots_expr(body, set_id),
     _ => .None,
   }
 }
@@ -257,7 +258,7 @@ type AnfVectorSetSite = .{ func: FuncId, result: LocalId, base: LocalId, arg_cou
 
 fn find_vector_set_anf_expr(func_id: FuncId, expr: AnfExpr, set_id: FuncId) AnfVectorSetSite? {
   case expr {
-    .Let(result, .ACall(.AGlobalFunc(fid), args), body) => {
+    .Let(result, .ACall(.AGlobalFunc(fid), args), _, body) => {
       if fid.id == set_id.id and args.len() == 3 {
         case args[0] {
           .ALocal(base) => return .Some(
@@ -268,7 +269,7 @@ fn find_vector_set_anf_expr(func_id: FuncId, expr: AnfExpr, set_id: FuncId) AnfV
       }
       find_vector_set_anf_expr(func_id, body, set_id)
     },
-    .Let(_, _, body) => find_vector_set_anf_expr(func_id, body, set_id),
+    .Let(_, _, _, body) => find_vector_set_anf_expr(func_id, body, set_id),
     _ => .None,
   }
 }
@@ -297,7 +298,7 @@ pub fn suite() runner.Suite {
         // User functions have no ABI contracts, so no wraps/unwraps.
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -323,7 +324,7 @@ pub fn suite() runner.Suite {
         // Slot 0: Param x, Slot 1: Local t0
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -362,7 +363,7 @@ pub fn suite() runner.Suite {
         box_fid := builtins.id("box_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -406,7 +407,7 @@ pub fn suite() runner.Suite {
         box_fid := builtins.id("box_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -444,7 +445,7 @@ pub fn suite() runner.Suite {
         unbox_fid := builtins.id("unbox_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -484,7 +485,7 @@ pub fn suite() runner.Suite {
         store_fid := builtins.id("store_int")
         body: AnfExpr = .Let(
           lid(5),
-          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALitVoid),
         )
         func := mk_func_def(
@@ -511,7 +512,7 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]),
+          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -549,7 +550,7 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]),
+          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -560,7 +561,7 @@ pub fn suite() runner.Suite {
           outer_body,
           mk_mono_map([10], [MonoType.Function([], .Void)]),
         )
-        inner_body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .ALitInt(42)), .Atom(.ALocal(lid(11))))
+        inner_body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .ALitInt(42)), span.unknown(), .Atom(.ALocal(lid(11))))
         inner := mk_func_def(99, "inner", [], .Void, inner_body, mk_mono_map([11], [MonoType.Void]))
         converted := convert_closures(mk_module([outer, inner]), empty_env())
 
@@ -570,7 +571,7 @@ pub fn suite() runner.Suite {
             rewritten := converted.anf.functions[1]
 
             case rewritten.body {
-              .Let(_, .AAssign(target, _), _) => try assert.equal(target.id, caps[0].param_local.id),
+              .Let(_, .AAssign(target, _), _, _) => try assert.equal(target.id, caps[0].param_local.id),
               _ => return .Err("rewritten hoisted body did not rewrite captured assign target"),
             }
 
@@ -584,7 +585,7 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]),
+          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -597,7 +598,7 @@ pub fn suite() runner.Suite {
         )
         middle_body: AnfExpr = .Let(
           lid(11),
-          .AMakeClosure(fid(100), [lid(0)]),
+          .AMakeClosure(fid(100), [lid(0)]), span.unknown(),
           .Atom(.ALocal(lid(11))),
         )
         middle := mk_func_def(
@@ -617,7 +618,7 @@ pub fn suite() runner.Suite {
             rewritten_middle := converted.anf.functions[1]
 
             case rewritten_middle.body {
-              .Let(_, .AMakeClosure(_, free_vars), _) => {
+              .Let(_, .AMakeClosure(_, free_vars), _, _) => {
                 try assert.equal(free_vars.len(), 1)
                 try assert.equal(free_vars[0].id, middle_caps[0].param_local.id)
                 .Ok({})
@@ -633,7 +634,7 @@ pub fn suite() runner.Suite {
       fn() {
         some_arm := AnfMatchArm.{
           pattern: .Variant(TypeId.{ id: 0 }, .{ id: 1 }, [CorePattern.Var(lid(1))]),
-          body: .Let(lid(11), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)),
+          body: .Let(lid(11), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Atom(.ALitVoid)),
         }
         none_arm := AnfMatchArm.{
           pattern: .Variant(TypeId.{ id: 0 }, .{ id: 0 }, []),
@@ -641,7 +642,7 @@ pub fn suite() runner.Suite {
         }
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMatch(.ALocal(lid(0)), [some_arm, none_arm]),
+          .AMatch(.ALocal(lid(0)), [some_arm, none_arm]), span.unknown(),
           .Atom(.ALitVoid),
         )
         outer := mk_func_def(

@@ -125,7 +125,7 @@ fn func_id_calls(anf: AnfModule, func_id: Int, target_func: Int) Bool {
 
 fn expr_calls(e: AnfExpr, target: Int) Bool {
   case e {
-    .Let(_local, op, body) => op_calls(op, target) or expr_calls(body, target),
+    .Let(_local, op, _, body) => op_calls(op, target) or expr_calls(body, target),
     _ => false,
   }
 }

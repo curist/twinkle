@@ -194,7 +194,7 @@ fn collect_make_closure_sites(body: PreparedExpr, acc: Vector<MakeClosureSite>) 
   MakeClosureSite,
 > {
   case body {
-    .Let(_, op, rest) => {
+    .Let(_, op, _, rest) => {
       acc2 := make_closure_sites_op(op, acc)
       collect_make_closure_sites(rest, acc2)
     },
@@ -387,7 +387,7 @@ fn return_atom_slots_expr(
   in_tail: Bool,
 ) Vector<Int> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       acc2 := return_atom_slots_op(op, acc, reg, never)
 
       // If the op never falls through (all arms diverge, or a noreturn call), the

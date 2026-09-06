@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -184,11 +185,11 @@ pub fn suite() runner.Suite {
         b := b_reg()
         then_e: AnfExpr = .Atom(.ALitInt(1))
         else_e: AnfExpr = .Atom(.ALitInt(2))
-        after: AnfExpr = .Let(lid(3), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+        after: AnfExpr = .Let(lid(3), dict_set_call(b, lid(0)), span.unknown(), .Atom(.ALitInt(0)))
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e),span.unknown(),  after),
         )
         f := analyzed_func(module_of("f", body))
 
@@ -214,7 +215,7 @@ pub fn suite() runner.Suite {
       fn() {
         // L0 = Dict.new(); return 0   (L0 not returned, so not published)
         b := b_reg()
-        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), span.unknown(), .Atom(.ALitInt(0)))
         f := analyzed_func(module_of("f", body))
         try assert_own(own_at_exit(f, 0, 0), .Unique)
         .Ok({})
@@ -227,8 +228,8 @@ pub fn suite() runner.Suite {
         b := b_reg()
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALitInt(0))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AInit(.ALocal(lid(0))),span.unknown(),  .Atom(.ALitInt(0))),
         )
         f := analyzed_func(module_of("f", body))
         try assert_own(own_at_exit(f, 0, 1), .Unique)
@@ -243,11 +244,11 @@ pub fn suite() runner.Suite {
         b := b_reg()
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
+          dict_new_call(b), span.unknown(),
           .Let(
             lid(1),
-            .AInit(.ALocal(lid(0))),
-            .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+            .AInit(.ALocal(lid(0))),span.unknown(), 
+            .Let(lid(2), dict_set_call(b, lid(0)),span.unknown(),  .Atom(.ALocal(lid(1)))),
           ),
         )
         f := analyzed_func(module_of("f", body))
@@ -263,8 +264,8 @@ pub fn suite() runner.Suite {
         b := b_reg()
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),span.unknown(),  .Atom(.ALocal(lid(0)))),
         )
         f := analyzed_func(module_of("f", body))
         try assert_own(own_at_exit(f, 0, 0), .Shared)
@@ -276,9 +277,9 @@ pub fn suite() runner.Suite {
       fn() {
         // r := if c { Dict.new() } else { Dict.new() }; return r
         b := b_reg()
-        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
-        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), span.unknown(), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), span.unknown(), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), span.unknown(), .Atom(.ALocal(lid(0))))
         f := analyzed_func(module_of("f", body))
         rp := result_param_of(f, "if.join")
         try assert_own(own_entry_named(f, "if.join", rp), .Unique)
@@ -292,11 +293,11 @@ pub fn suite() runner.Suite {
         b := b_reg()
         then_e: AnfExpr = .Let(
           lid(1),
-          dict_new_call(b),
-          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))),span.unknown(),  .Atom(.ALocal(lid(1)))),
         )
-        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), span.unknown(), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), span.unknown(), .Atom(.ALocal(lid(0))))
         f := analyzed_func(module_of("f", body))
         rp := result_param_of(f, "if.join")
         try assert_own(own_entry_named(f, "if.join", rp), .Shared)
@@ -310,13 +311,13 @@ pub fn suite() runner.Suite {
         b := b_reg()
         loop_body: AnfExpr = .Let(
           lid(2),
-          dict_set_call(b, lid(1)),
-          .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))), .Continue),
+          dict_set_call(b, lid(1)), span.unknown(),
+          .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))),span.unknown(),  .Continue),
         )
         body: AnfExpr = .Let(
           lid(1),
-          dict_new_call(b),
-          .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(1)))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(0), .ALoop(loop_body),span.unknown(),  .Atom(.ALocal(lid(1)))),
         )
         f := analyzed_func(module_of("f", body))
 
@@ -335,12 +336,12 @@ pub fn suite() runner.Suite {
         b := b_reg()
         arm: AnfMatchArm = .{
           pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
-          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), span.unknown(), .Atom(.ALitInt(0))),
         }
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]),span.unknown(),  .Atom(.ALitInt(0))),
         )
         f := analyzed_func(module_of("f", body))
 
@@ -358,8 +359,8 @@ pub fn suite() runner.Suite {
         b := b_reg()
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AInit(.ALocal(lid(0))),span.unknown(),  .Atom(.ALocal(lid(1)))),
         )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(valid_at_exit(f, 0, 0))
@@ -374,11 +375,11 @@ pub fn suite() runner.Suite {
         b := b_reg()
         then_e: AnfExpr = .Atom(.ALitInt(1))
         else_e: AnfExpr = .Atom(.ALitInt(2))
-        after: AnfExpr = .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+        after: AnfExpr = .Let(lid(2), dict_set_call(b, lid(0)), span.unknown(), .Atom(.ALitInt(0)))
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e),span.unknown(),  after),
         )
         f := analyzed_func(module_of("f", body))
         blk := case block_named(f, "if.join") {
@@ -395,9 +396,9 @@ pub fn suite() runner.Suite {
       "phase2 t8: render shows populated facts for carried params",
       fn() {
         b := b_reg()
-        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
-        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), span.unknown(), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), span.unknown(), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), span.unknown(), .Atom(.ALocal(lid(0))))
         v := cfg.build_view(module_of("f", body), b)
         a := ownership.analyze(v, b, sem())
         out := a.render_view()
@@ -412,8 +413,8 @@ pub fn suite() runner.Suite {
         b := b_reg()
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), dict_set_call(b, lid(0)),span.unknown(),  .Atom(.ALocal(lid(1)))),
         )
         m := module_of("f", body)
         a1 := ownership.analyze(cfg.build_view(m, b), b, sem()).render_view()
@@ -452,7 +453,7 @@ pub fn suite() runner.Suite {
       fn() {
         then_e: AnfExpr = .Atom(.ALitInt(1))
         else_e: AnfExpr = .Atom(.ALitInt(2))
-        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), span.unknown(), .Atom(.ALitInt(0)))
         v := cfg.build_view(module_of("f", body), b_reg())
         pruned := ownership.prune_dead_merge(v)
         case pruned.function_named("f") {
@@ -487,19 +488,19 @@ pub fn suite() runner.Suite {
         b := b_reg()
         then_e: AnfExpr = .Let(
           lid(2),
-          dict_set_call(b, lid(0)),
-          .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALitInt(1))),
+          dict_set_call(b, lid(0)), span.unknown(),
+          .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),span.unknown(),  .Atom(.ALitInt(1))),
         )
         else_e: AnfExpr = .Let(
           lid(4),
-          dict_set_call(b, lid(0)),
-          .Let(lid(5), .AAssign(lid(0), .ALocal(lid(4))), .Atom(.ALitInt(2))),
+          dict_set_call(b, lid(0)), span.unknown(),
+          .Let(lid(5), .AAssign(lid(0), .ALocal(lid(4))),span.unknown(),  .Atom(.ALitInt(2))),
         )
-        after: AnfExpr = .Let(lid(9), dict_set_call(b, lid(1)), .Atom(.ALitInt(0)))
+        after: AnfExpr = .Let(lid(9), dict_set_call(b, lid(1)), span.unknown(), .Atom(.ALitInt(0)))
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e),span.unknown(),  after),
         )
         v := cfg.build_view(module_of("f", body), b_reg())
 
@@ -547,12 +548,12 @@ pub fn suite() runner.Suite {
         b := b_reg()
         arm: AnfMatchArm = .{
           pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
-          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), span.unknown(), .Atom(.ALitInt(0))),
         }
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b),
-          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+          dict_new_call(b), span.unknown(),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]),span.unknown(),  .Atom(.ALitInt(0))),
         )
         f := analyzed_func(module_of("f", body))
         blk := case block_named(f, "match.arm.0") {

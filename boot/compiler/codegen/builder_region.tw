@@ -19,6 +19,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region_produce
 use compiler.codegen.builder_region_produce.{BuilderRegionDecision, BuilderRegionDecisionTable}
 use compiler.core_ir.{FuncId, LocalId}
+use lib.source.span
 use compiler.mono_type.{MonoType}
 
 // ── Region representation (ported from the deleted opt/builder_region.tw) ──
@@ -46,15 +47,19 @@ fn lower_builder_region(region: BuilderRegion, builder: BuilderConfig) AnfExpr {
   AnfExpr.Let(
     region.builder_local,
     region.init.builder_init_call(builder),
+    span.unknown(),
     AnfExpr.Let(
       region.bind_local,
       .ALoop(region.loop_body),
+      span.unknown(),
       AnfExpr.Let(
         region.freeze_local,
         .ACall(.AGlobalFunc(builder.builder_freeze_id), [.ALocal(region.builder_local)]),
+        span.unknown(),
         AnfExpr.Let(
           region.assign_local,
           .AAssign(region.base_local, .ALocal(region.freeze_local)),
+          span.unknown(),
           region.cont,
         ),
       ),
@@ -74,20 +79,22 @@ fn rewrite_loop_expr(
   builder_push_id: FuncId,
 ) AnfExpr {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, sp, body) => {
       case fold_chunk(op, body, base, push_id, local) {
         .Some(elem) => {
           new_op := AnfOp.ACall(.AGlobalFunc(builder_push_id), [.ALocal(builder), elem])
 
           case body {
-            .Let(assign_local, _, rest) => {
+            .Let(assign_local, _, _, rest) => {
               new_assign := AnfOp.AInit(.ALitVoid)
               return AnfExpr.Let(
                 local,
                 new_op,
+                sp,
                 AnfExpr.Let(
                   assign_local,
                   new_assign,
+                  sp,
                   rewrite_loop_expr(rest, base, builder, push_id, builder_push_id),
                 ),
               )
@@ -99,7 +106,7 @@ fn rewrite_loop_expr(
       }
 
       new_op := rewrite_loop_op_subexpr(op, base, builder, push_id, builder_push_id)
-      AnfExpr.Let(local, new_op, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
+      AnfExpr.Let(local, new_op, sp, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
     },
     _ => expr,
   }
@@ -136,7 +143,7 @@ fn rewrite_loop_op_subexpr(
 // ── Call-site counter (coverage guard) ──
 fn count_global_call_sites(expr: AnfExpr, target: FuncId) Int {
   case expr {
-    .Let(_, op, body) => count_op_call_sites(op, target) + count_global_call_sites(body, target),
+    .Let(_, op, _, body) => count_op_call_sites(op, target) + count_global_call_sites(body, target),
     _ => 0,
   }
 }
@@ -190,7 +197,7 @@ fn splice_loop(
   fold_count: Int,
 ) AnfExpr? {
   case expr {
-    .Let(local, op, body) => if local.id == loop_site.id {
+    .Let(local, op, sp, body) => if local.id == loop_site.id {
       case op {
         .ALoop(loop_body) => {
           rewritten := rewrite_loop_expr(
@@ -232,7 +239,7 @@ fn splice_loop(
         assign_local,
         fold_count,
       ) {
-        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .Some(nb) => .Some(AnfExpr.Let(local, op, sp, nb)),
         .None => .None,
       }
     },
@@ -255,7 +262,7 @@ fn splice_seed(
   fold_count: Int,
 ) AnfExpr? {
   case expr {
-    .Let(local, op, body) => if local.id == base.id {
+    .Let(local, op, sp, body) => if local.id == base.id {
       case splice_loop(
         body,
         base,
@@ -268,7 +275,7 @@ fn splice_seed(
         assign_local,
         fold_count,
       ) {
-        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .Some(nb) => .Some(AnfExpr.Let(local, op, sp, nb)),
         .None => .None,
       }
     } else {
@@ -284,7 +291,7 @@ fn splice_seed(
         assign_local,
         fold_count,
       ) {
-        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .Some(nb) => .Some(AnfExpr.Let(local, op, sp, nb)),
         .None => .None,
       }
     },

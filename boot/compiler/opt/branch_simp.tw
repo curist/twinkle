@@ -6,12 +6,13 @@
 
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.core_ir.{LocalId}
+use lib.source.span
 
 pub type SimpResult = .{ expr: AnfExpr, changed: Bool }
 
 pub fn branch_simplify(expr: AnfExpr) SimpResult {
   case expr {
-    .Let(local, op, body) => case op {
+    .Let(local, op, sp, body) => case op {
       .AIf(.ALitBool(b), then_e, else_e) => {
         selected := if b {
           then_e
@@ -24,7 +25,7 @@ pub fn branch_simplify(expr: AnfExpr) SimpResult {
       _ => {
         op_r := branch_simplify_op(op)
         body_r := branch_simplify(body)
-        .{ expr: .Let(local, op_r.op, body_r.expr), changed: op_r.changed or body_r.changed }
+        .{ expr: .Let(local, op_r.op, sp, body_r.expr), changed: op_r.changed or body_r.changed }
       },
     },
     _ => .{ expr, changed: false },
@@ -36,11 +37,11 @@ pub fn branch_simplify(expr: AnfExpr) SimpResult {
 // If the branch ends in a terminal (Return/Break/Continue), drop continuation.
 fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) AnfExpr {
   case branch {
-    .Atom(a) => .Let(result_local, .AInit(a), continuation),
+    .Atom(a) => .Let(result_local, .AInit(a), span.unknown(), continuation),
     .Return(_) => branch,
     .Break(_) => branch,
     .Continue => branch,
-    .Let(local, op, body) => AnfExpr.Let(local, op, splice_branch(body, result_local, continuation)),
+    .Let(local, op, sp, body) => AnfExpr.Let(local, op, sp, splice_branch(body, result_local, continuation)),
   }
 }
 

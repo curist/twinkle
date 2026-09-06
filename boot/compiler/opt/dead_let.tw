@@ -3,12 +3,13 @@
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
 use compiler.core_ir.{LocalId}
+use lib.source.span.{Span}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
 
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
 
-type DeadLetFrame = .{ local: LocalId, op: AnfOp }
+type DeadLetFrame = .{ local: LocalId, op: AnfOp, span: Span }
 
 pub fn dead_let_elim(expr: AnfExpr) ElimResult {
   dead_let_elim_with_pinned(expr, Dict.new())
@@ -41,7 +42,7 @@ fn dead_let_inner(
   semantics: OptimizerSemantics,
 ) ElimResult {
   case expr {
-    .Let(_, _, _) => dead_let_spine(expr, uses, assigned, semantics),
+    .Let(_, _, _, _) => dead_let_spine(expr, uses, assigned, semantics),
     _ => .{ expr, changed: false },
   }
 }
@@ -59,7 +60,7 @@ fn dead_let_spine(
 
   for !done {
     case cur_expr {
-      .Let(local, op, body) => {
+      .Let(local, op, sp, body) => {
         use_count := uses[local.id].unwrap_or(0)
 
         if use_count == 0
@@ -67,7 +68,7 @@ fn dead_let_spine(
           changed = true
         } else {
           op_result := dead_let_op(op, uses, assigned, semantics)
-          frames = .append(.{ local, op: op_result.op })
+          frames = .append(.{ local, op: op_result.op, span: sp })
           changed = changed or op_result.changed
         }
 
@@ -82,7 +83,7 @@ fn dead_let_spine(
 
   for i >= 0 {
     frame := frames[i]
-    result = .Let(frame.local, frame.op, result)
+    result = .Let(frame.local, frame.op, frame.span, result)
     i = i - 1
   }
 

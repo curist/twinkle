@@ -309,7 +309,7 @@ fn render_anf_expr(
   indent: Int,
 ) Vector<String> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       ty_suffix := case func.op_result_mono[local.id] {
         .Some(ty) => ": ${mono(env, ty)}",
         .None => "",

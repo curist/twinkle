@@ -123,7 +123,7 @@ fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
     child_depth := item.depth + 1
 
     case item.expr {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         stack = .append(DepthWork.{ expr: body, depth: child_depth })
 
         case op {

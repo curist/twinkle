@@ -58,7 +58,7 @@ fn scan_expr(ctx: ConvCtx, expr: AnfExpr, state: ConversionState) ConversionStat
 
   for !done {
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         cur_state = ctx.scan_op(op, cur_state)
         cur = body
       },
@@ -156,7 +156,7 @@ fn rewrite_func(func: AnfFunctionDef, captures: Dict<Int, Vector<CaptureParam>>)
 
 fn rewrite_expr(expr: AnfExpr, rename: Dict<Int, LocalId>) AnfExpr {
   case expr {
-    .Let(local, op, body) => .Let(local, rewrite_op(op, rename), rewrite_expr(body, rename)),
+    .Let(local, op, sp, body) => .Let(local, rewrite_op(op, rename), sp, rewrite_expr(body, rename)),
     .Atom(atom) => .Atom(rewrite_atom(atom, rename)),
     .Return(atom) => .Return(rewrite_atom_opt(atom, rename)),
     .Break(atom) => .Break(rewrite_atom_opt(atom, rename)),
@@ -310,7 +310,7 @@ fn max_local_id_expr(expr: AnfExpr) Int {
 
   for !done {
     case cur {
-      .Let(local, op, body) => {
+      .Let(local, op, _, body) => {
         max_id = max_int(max_id, max_int(local.id, max_local_id_op(op)))
         cur = body
       },
@@ -439,7 +439,7 @@ fn max_int(a: Int, b: Int) Int {
 
 fn collect_pattern_monos(ctx: ConvCtx, expr: AnfExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       out = ctx.collect_pattern_monos_op(op, out)
       ctx.collect_pattern_monos(body, out)
     },

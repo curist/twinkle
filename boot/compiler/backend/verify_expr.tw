@@ -80,7 +80,7 @@ fn verify_expr_at(ctx: VerifyCtx, expr: PreparedExpr, depth: Int) Result<Void, S
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         result_info := try facts.slot_info_result(ctx.pf, slot, "let result")
         try ctx.verify_op(result_info, op, depth)
         cur = body

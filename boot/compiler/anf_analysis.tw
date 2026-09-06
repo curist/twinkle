@@ -49,7 +49,7 @@ pub fn collect_free_locals(expr: AnfExpr, declared: Dict<Int, Bool>) Dict<Int, B
 
     for !done {
       case cur_expr {
-        .Let(local, op, body) => {
+        .Let(local, op, _, body) => {
           op_r := collect_free_op_iter(op, cur_declared, free, stack)
           free = op_r.free
           stack = op_r.stack
@@ -198,7 +198,7 @@ fn collect_free_op_iter(
 
 fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       st := collect_free_op(op, declared, free)
       new_declared := set_add(st.declared, local.id)
       collect_free_expr(body, new_declared, st.free)
@@ -317,7 +317,7 @@ pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> {
 
 fn collect_bound_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       result := set_add(out, local.id)
       result = collect_bound_op(op, result)
       collect_bound_expr(body, result)
@@ -362,7 +362,7 @@ pub fn collect_init_binding_locals(expr: AnfExpr) Dict<Int, Bool> {
 
     for !done {
       case cur_expr {
-        .Let(local, op, body) => {
+        .Let(local, op, _, body) => {
           if is_init_op(op) {
             out = set_add(out, local.id)
           }
@@ -403,7 +403,7 @@ fn push_init_op_exprs(op: AnfOp, stack: Vector<AnfExpr>) Vector<AnfExpr> {
 
 fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       result := if is_init_op(op) {
         set_add(out, local.id)
       } else {
@@ -456,7 +456,7 @@ pub fn collect_assigned_locals(expr: AnfExpr) Dict<Int, Bool> {
 
     for !done {
       case cur_expr {
-        .Let(_, op, body) => {
+        .Let(_, op, _, body) => {
           case op {
             .AAssign(local, _) => out = set_add(out, local.id),
             _ => {},
@@ -474,7 +474,7 @@ pub fn collect_assigned_locals(expr: AnfExpr) Dict<Int, Bool> {
 
 fn collect_assigned_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       result := collect_assigned_op(op, out)
       collect_assigned_expr(body, result)
     },
@@ -511,7 +511,7 @@ pub fn expr_always_diverges(expr: AnfExpr) Bool {
     .Break(_) => true,
     .Continue => true,
     .Atom(_) => false,
-    .Let(_, op, body) => op_always_diverges(op) or expr_always_diverges(body),
+    .Let(_, op, _, body) => op_always_diverges(op) or expr_always_diverges(body),
   }
 }
 

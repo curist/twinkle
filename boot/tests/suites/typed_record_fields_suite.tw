@@ -11,6 +11,7 @@
 //! the real pipeline (compile_source -> closure_convert -> prepare_backend), then
 //! runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
 
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -303,7 +304,7 @@ fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
     params: [SlotId.{ id: 0 }],
     locals: [SlotId.{ id: 1 }],
     slots,
-    body: .Let(SlotId.{ id: 1 }, .AInit(.ASlot(SlotId.{ id: 0 })), .Return(.None)),
+    body: .Let(SlotId.{ id: 1 }, .AInit(.ASlot(SlotId.{ id: 0 })), span.unknown(), .Return(.None)),
     return_mono: .Void,
     phys_return: .None,
   }

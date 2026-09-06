@@ -14,7 +14,7 @@ pub type PropResult = .{ expr: AnfExpr, changed: Bool }
 // ── subst_atom ──────────────────────────────────────────────────────
 pub fn subst_atom(expr: AnfExpr, target: LocalId, replacement: Atom) AnfExpr {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, sp, body) => {
       new_op := subst_op(op, target, replacement)
 
       // Shadow-stop guard: if this Let rebinds target, don't substitute in body
@@ -23,7 +23,7 @@ pub fn subst_atom(expr: AnfExpr, target: LocalId, replacement: Atom) AnfExpr {
       } else {
         subst_atom(body, target, replacement)
       }
-      AnfExpr.Let(local, new_op, new_body)
+      AnfExpr.Let(local, new_op, sp, new_body)
     },
     .Atom(a) => .Atom(subst_atom_val(a, target, replacement)),
     .Return(.Some(a)) => .Return(.Some(subst_atom_val(a, target, replacement))),
@@ -184,7 +184,7 @@ fn copy_prop_inner(
   monos: Dict<Int, MonoType>,
 ) PropResult {
   case expr {
-    .Let(local, op, body) => case op {
+    .Let(local, op, sp, body) => case op {
       .AInit(lit) => {
         use_count := uses[local.id].unwrap_or(0)
 
@@ -199,7 +199,7 @@ fn copy_prop_inner(
         op_result := copy_prop_op(op, uses, free_var_uses, assigned, monos)
         body_result := copy_prop_inner(body, uses, free_var_uses, assigned, monos)
         .{
-          expr: .Let(local, op_result.op, body_result.expr),
+          expr: .Let(local, op_result.op, sp, body_result.expr),
           changed: op_result.changed or body_result.changed,
         }
       },
@@ -207,7 +207,7 @@ fn copy_prop_inner(
         op_result := copy_prop_op(op, uses, free_var_uses, assigned, monos)
         body_result := copy_prop_inner(body, uses, free_var_uses, assigned, monos)
         .{
-          expr: .Let(local, op_result.op, body_result.expr),
+          expr: .Let(local, op_result.op, sp, body_result.expr),
           changed: op_result.changed or body_result.changed,
         }
       },

@@ -482,9 +482,10 @@ fn retarget_caller_calls(f: AnfFunctionDef, retarget: Dict<Int, Int>) AnfFunctio
 
 fn retarget_expr(e: AnfExpr, func_id: Int, retarget: Dict<Int, Int>) AnfExpr {
   case e {
-    .Let(local, op, body) => .Let(
+    .Let(local, op, sp, body) => .Let(
       local,
       retarget_op(local, func_id, op, retarget),
+      sp,
       retarget_expr(body, func_id, retarget),
     ),
     _ => e,
@@ -639,9 +640,10 @@ fn rewrite_clone_body(clone: AnfFunctionDef, recv: LocalId, suffix: String, b: B
 
 fn rewrite_clone_expr(e: AnfExpr, recv: LocalId, ids: CloneRwIds) AnfExpr {
   case e {
-    .Let(local, op, body) => .Let(
+    .Let(local, op, sp, body) => .Let(
       local,
       rewrite_clone_op(op, recv, ids),
+      sp,
       rewrite_clone_expr(body, recv, ids),
     ),
     _ => e,

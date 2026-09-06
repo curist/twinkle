@@ -31,7 +31,7 @@ fn count_uses_into(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
 
   for !done {
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         u = count_op_branch(op, u)
         cur = body
       },
@@ -134,7 +134,7 @@ fn count_op_branch(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
 
 fn count_expr(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       u := count_op(op, uses)
       count_expr(body, u)
     },
@@ -247,7 +247,7 @@ pub fn count_uses_and_free_var_flags(expr: AnfExpr) UsesAndFreeVars {
 
 fn count_expr_ex(expr: AnfExpr, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) UsesAndFreeVars {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       op_result := count_op_ex(op, uses, free_var_uses)
       count_expr_ex(body, op_result.uses, op_result.free_var_uses)
     },
@@ -306,7 +306,7 @@ fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Boo
 
   for !done {
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         if !is_pure_with_semantics(op, semantics) {
           return false
         }

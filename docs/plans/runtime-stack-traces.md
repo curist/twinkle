@@ -450,12 +450,32 @@ and a synchronous non-task loader), `childTrapHandler` is scoped to the
 `cache.Store` with explicit sparse-id registry reconstruction.
 
 ### Phase 1 — File identity, span threading, source-data flow, `twinkle.debug`
-- **File identity first** (Component 3a): implement the scheme chosen in Phase 0
-  so distinct modules get distinct, stable `file_id`s in emitted spans (fixing
-  the hardcoded `parse(..., 0)`), with the caching answer in place. Test:
-  distinct modules → distinct ids; a span round-trips to the correct source line.
-- Add inline `span` to ANF and Prepared expr/op wrappers; copy from
-  `CoreExpr.span` through `prepare`/`slot_assign`.
+
+**Progress (2026-09-06, branch `feat/runtime-stack-traces`):** file identity and
+span threading are **DONE and self-host-verified** (compiles, full boot suite
+green, `make stage2` reaches fixed point). Remaining: `SpanMark`, `encode_instrs`
+line program, `DebugSourceTable`, `twinkle.debug` serialization, `boot/lib/debug/`.
+
+- **[DONE] File identity** (Component 3a): `cache.Store` owns a stable
+  `canonical_path → file_id` allocator (`file_id_for`); `analyze.parse_cached`
+  uses it instead of the hardcoded `parse(..., 0)`. `registry.add_file_with_id`
+  supports sparse explicit-id reconstruction. Exposed a latent coupling: the
+  diagnostic-render registries in `commands/common.tw` and `pipeline.tw` keyed
+  source at id 0, so nonzero file_ids broke source snippets — fixed by keying via
+  `report.primary_file_id`. Tested by `file_identity_suite` + an end-to-end
+  multi-module trap fixture.
+- **[DONE] Span threading — mechanism changed from the description above.** The
+  ANF/Prepared IRs are **bare sum types**, not `.{ kind, ty }` wrappers, so there
+  is no op-wrapper to hang an inline `span` on. Chosen approach (still inline, not
+  a side table): **span on the `Let` binding node** — `AnfExpr.Let` and
+  `PreparedExpr.Let` gained a `Span` field (`Let(id, op, span, body)`). Every
+  `AnfOp`/`PreparedOp` is the RHS of a `Let`, so this names each op inline at
+  exactly statement/call/trap-op granularity, at ~⅕ the churn of wrapping the op
+  enum (~1255 sites). `lower_anf` originates real spans from `CoreExpr.span`
+  (via `LetBinding.span`/`push_accum`); `slot_assign` carries the span across the
+  ANF→Prepared boundary (`LowerSpineEntry.span` + `FinishLet(slot, span)`);
+  every rewrite pass carries `sp` through, synthetic/compiler-generated lets use
+  `span.unknown()` (sentinel `file_id = -1`).
 - Add the `SpanMark(Span)` `Instr` variant; insert it in the `emit/*.tw` layer
   before statements/calls/trap-ops; handle it as a no-op in every exhaustive
   `Instr` match and in `collect_ref_funcs_instr`.

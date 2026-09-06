@@ -59,7 +59,7 @@ fn anf_func(src: String) Result<AnfFunctionDef, String> {
 // Count Let nodes in the top-level chain (not descending into ops)
 fn count_lets(expr: AnfExpr) Int {
   case expr {
-    .Let(_, _, body) => 1 + count_lets(body),
+    .Let(_, _, _, body) => 1 + count_lets(body),
     _ => 0,
   }
 }
@@ -67,7 +67,7 @@ fn count_lets(expr: AnfExpr) Int {
 // Get the tail of a let-chain
 fn tail_of(expr: AnfExpr) AnfExpr {
   case expr {
-    .Let(_, _, body) => tail_of(body),
+    .Let(_, _, _, body) => tail_of(body),
     other => other,
   }
 }
@@ -75,7 +75,7 @@ fn tail_of(expr: AnfExpr) AnfExpr {
 // Get the Nth let binding's op (0-indexed)
 fn nth_op(expr: AnfExpr, n: Int) AnfOp? {
   case expr {
-    .Let(_, op, body) => if n == 0 {
+    .Let(_, op, _, body) => if n == 0 {
       .Some(op)
     } else {
       nth_op(body, n - 1)
@@ -87,7 +87,7 @@ fn nth_op(expr: AnfExpr, n: Int) AnfOp? {
 // Check if any let-binding contains a specific op kind
 fn has_binop(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .ABinOp(_, _, _, _) => true,
       _ => has_binop(body),
     },
@@ -97,7 +97,7 @@ fn has_binop(expr: AnfExpr) Bool {
 
 fn has_call(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .ACall(_, _) => true,
       _ => has_call(body),
     },
@@ -107,7 +107,7 @@ fn has_call(expr: AnfExpr) Bool {
 
 fn has_if(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .AIf(_, _, _) => true,
       _ => has_if(body),
     },
@@ -117,7 +117,7 @@ fn has_if(expr: AnfExpr) Bool {
 
 fn has_loop(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .ALoop(_) => true,
       _ => has_loop(body),
     },
@@ -127,7 +127,7 @@ fn has_loop(expr: AnfExpr) Bool {
 
 fn has_init(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .AInit(_) => true,
       _ => has_init(body),
     },
@@ -137,7 +137,7 @@ fn has_init(expr: AnfExpr) Bool {
 
 fn has_assign(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .AAssign(_, _) => true,
       _ => has_assign(body),
     },
@@ -147,7 +147,7 @@ fn has_assign(expr: AnfExpr) Bool {
 
 fn has_match(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => case op {
+    .Let(_, op, _, body) => case op {
       .AMatch(_, _) => true,
       _ => has_match(body),
     },

@@ -96,7 +96,7 @@ fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, is_init: Bool, out: 
 
   for !done {
     case cur_expr {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         cur = scan_op(op, builtins, is_init, cur)
         cur_expr = body
       },
@@ -273,7 +273,7 @@ fn extract_closure_monos(expr: PreparedExpr, slots: Dict<Int, SlotInfo>, out: Sc
 
   for !done {
     case cur_expr {
-      .Let(sid, op, body) => {
+      .Let(sid, op, _, body) => {
         cur = extract_closure_monos_op(sid, op, slots, cur)
         cur_expr = body
       },

@@ -48,7 +48,7 @@ pub fn expr_always_diverges(expr: PreparedExpr) Bool {
     .Break(_) => true,
     .Continue => true,
     .Atom(_) => false,
-    .Let(_, _, body) => expr_always_diverges(body),
+    .Let(_, _, _, body) => expr_always_diverges(body),
   }
 }
 

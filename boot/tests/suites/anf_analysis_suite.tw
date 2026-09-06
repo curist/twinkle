@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -64,7 +65,7 @@ fn test_pattern_wildcard_lit() Result<Void, String> {
 // ── collect_free_locals ─────────────────────────────────────────────
 fn test_free_simple_let() Result<Void, String> {
   // Let(0, AInit(ALocal(5)), Atom(ALocal(0))) — 5 is free, 0 is declared
-  expr: AnfExpr = .Let(lid(0), .AInit(.ALocal(lid(5))), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALocal(lid(5))), span.unknown(), .Atom(.ALocal(lid(0))))
   free := collect_free_locals(expr, empty_set())
   try assert.is_true(set_has(free, 5))
   try assert.is_false(set_has(free, 0))
@@ -76,7 +77,7 @@ fn test_free_declared_not_free() Result<Void, String> {
   // with 0 declared as seed — nothing should be free
   expr: AnfExpr = .Let(
     lid(1),
-    .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(5), .Int),
+    .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(5), .Int), span.unknown(),
     .Atom(.ALocal(lid(1))),
   )
   free := collect_free_locals(expr, set_of1(0))
@@ -88,7 +89,7 @@ fn test_free_if_branches() Result<Void, String> {
   // with 0 declared — 1, 2 are free
   expr: AnfExpr = .Let(
     lid(4),
-    .AIf(.ALocal(lid(0)), .Atom(.ALocal(lid(1))), .Atom(.ALocal(lid(2)))),
+    .AIf(.ALocal(lid(0)), .Atom(.ALocal(lid(1))), .Atom(.ALocal(lid(2)))), span.unknown(),
     .Atom(.ALocal(lid(4))),
   )
   free := collect_free_locals(expr, set_of1(0))
@@ -104,14 +105,14 @@ fn test_free_match_pattern_declares() Result<Void, String> {
     pattern: .Variant(TypeId.{ id: 5 }, VariantId.{ id: 0 }, [.Var(lid(2))]),
     body: .Atom(.ALocal(lid(2))),
   }
-  expr: AnfExpr = .Let(lid(1), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(lid(1), .AMatch(.ALocal(lid(0)), [arm]), span.unknown(), .Atom(.ALocal(lid(1))))
   free := collect_free_locals(expr, set_of1(0))
   assert.equal(free.len(), 0)
 }
 
 fn test_free_assign_target() Result<Void, String> {
   // Let(0, AAssign(9, ALitInt(42)), Atom(ALitVoid)) — 9 is free
-  expr: AnfExpr = .Let(lid(0), .AAssign(lid(9), .ALitInt(42)), .Atom(.ALitVoid))
+  expr: AnfExpr = .Let(lid(0), .AAssign(lid(9), .ALitInt(42)), span.unknown(), .Atom(.ALitVoid))
   free := collect_free_locals(expr, empty_set())
   try assert.is_true(set_has(free, 9))
   assert.equal(free.len(), 1)
@@ -121,7 +122,7 @@ fn test_free_make_closure() Result<Void, String> {
   // Let(8, AMakeClosure(99, [1, 2]), Atom(ALocal(8))) — 1 declared, 2 free
   expr: AnfExpr = .Let(
     lid(8),
-    .AMakeClosure(FuncId.{ id: 99 }, [lid(1), lid(2)]),
+    .AMakeClosure(FuncId.{ id: 99 }, [lid(1), lid(2)]), span.unknown(),
     .Atom(.ALocal(lid(8))),
   )
   free := collect_free_locals(expr, set_of1(1))
@@ -147,9 +148,9 @@ fn test_bound_nested() Result<Void, String> {
     lid(0),
     .AIf(
       .ALitBool(true),
-      .Let(lid(1), .AInit(.ALitInt(1)), .Atom(.ALocal(lid(1)))),
-      .Let(lid(2), .ALoop(.Let(lid(3), .AInit(.ALitInt(2)), .Break(.None))), .Atom(.ALocal(lid(2)))),
-    ),
+      .Let(lid(1), .AInit(.ALitInt(1)),span.unknown(),  .Atom(.ALocal(lid(1)))),
+      .Let(lid(2), .ALoop(.Let(lid(3), .AInit(.ALitInt(2)),span.unknown(),  .Break(.None))),span.unknown(),  .Atom(.ALocal(lid(2)))),
+    ), span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   bound := collect_bound_locals(expr)
@@ -167,13 +168,13 @@ fn test_assigned_nested() Result<Void, String> {
     lid(0),
     .AIf(
       .ALitBool(true),
-      .Let(lid(1), .AAssign(lid(8), .ALitInt(10)), .Atom(.ALocal(lid(1)))),
+      .Let(lid(1), .AAssign(lid(8), .ALitInt(10)),span.unknown(),  .Atom(.ALocal(lid(1)))),
       .Let(
         lid(2),
-        .ADefer(.Let(lid(3), .AAssign(lid(9), .ALitInt(20)), .Atom(.ALocal(lid(3))))),
+        .ADefer(.Let(lid(3), .AAssign(lid(9), .ALitInt(20)),span.unknown(),  .Atom(.ALocal(lid(3))))),span.unknown(), 
         .Atom(.ALocal(lid(2))),
       ),
-    ),
+    ), span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   assigned := collect_assigned_locals(expr)
@@ -203,7 +204,7 @@ fn test_diverges_if_both_branches() Result<Void, String> {
   // Let(0, AIf(true, Return, Break), Atom(0)) — diverges because both branches do
   expr: AnfExpr = .Let(
     lid(0),
-    .AIf(.ALitBool(true), .Return(.None), .Break(.None)),
+    .AIf(.ALitBool(true), .Return(.None), .Break(.None)), span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   assert.is_true(expr_always_diverges(expr))
@@ -213,7 +214,7 @@ fn test_diverges_if_one_branch_no() Result<Void, String> {
   // Let(0, AIf(true, Return, Atom(1)), Atom(0)) — does NOT diverge
   expr: AnfExpr = .Let(
     lid(0),
-    .AIf(.ALitBool(true), .Return(.None), .Atom(.ALitVoid)),
+    .AIf(.ALitBool(true), .Return(.None), .Atom(.ALitVoid)), span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   assert.is_false(expr_always_diverges(expr))
@@ -221,13 +222,13 @@ fn test_diverges_if_one_branch_no() Result<Void, String> {
 
 fn test_diverges_let_body() Result<Void, String> {
   // Let(0, AInit(1), Return(None)) — diverges because body diverges
-  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)), .Return(.None))
+  expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)), span.unknown(), .Return(.None))
   assert.is_true(expr_always_diverges(expr))
 }
 
 fn test_diverges_loop_conservative() Result<Void, String> {
   // Loop with Return body — conservatively NOT considered diverging at op level
-  expr: AnfExpr = .Let(lid(0), .ALoop(.Return(.None)), .Atom(.ALitVoid))
+  expr: AnfExpr = .Let(lid(0), .ALoop(.Return(.None)), span.unknown(), .Atom(.ALitVoid))
   assert.is_false(expr_always_diverges(expr))
 }
 

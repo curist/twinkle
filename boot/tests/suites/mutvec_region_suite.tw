@@ -75,7 +75,7 @@ fn kind_count(r: mutvec_region.MutVecRegion, name: String) Int {
 // by counting mutvec op calls.
 fn count_calls_expr(e: AnfExpr, fid: Int) Int {
   case e {
-    .Let(_, op, body) => count_calls_op(op, fid) + count_calls_expr(body, fid),
+    .Let(_, op, _, body) => count_calls_op(op, fid) + count_calls_expr(body, fid),
     _ => 0,
   }
 }

@@ -119,7 +119,7 @@ fn args_uses(args: Vector<Atom>, local: LocalId) Int {
 // target is always the accumulator, so it never inflates the count.
 fn count_local_uses(e: AnfExpr, local: LocalId) Int {
   case e {
-    .Let(_, op, body) => count_op_uses(op, local) + count_local_uses(body, local),
+    .Let(_, op, _, body) => count_op_uses(op, local) + count_local_uses(body, local),
     .Atom(a) => atom_use(a, local),
     .Return(.Some(a)) => atom_use(a, local),
     .Return(.None) => 0,

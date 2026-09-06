@@ -26,6 +26,7 @@
 // territory; that task's gate step should not assume a known-good precedent
 // here and should treat a first-time convergence failure as plausible, not
 // a surprise.
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -203,7 +204,7 @@ fn flags_handle(f: AnfFunctionDef) LocalId {
 
 fn find_index_base(e: AnfExpr) LocalId? {
   case e {
-    .Let(_, op, body) => case find_index_base_op(op) {
+    .Let(_, op, _, body) => case find_index_base_op(op) {
       .Some(l) => .Some(l),
       .None => find_index_base(body),
     },
@@ -291,10 +292,10 @@ fn synth_call_result_func() AnfFunctionDef {
   handle := LocalId.{ id: 2 }
   body := AnfExpr.Let(
     call_res,
-    AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 999999 }), []),
+    AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 999999 }), []), span.unknown(),
     AnfExpr.Let(
       handle,
-      AnfOp.AInit(Atom.ALocal(call_res)),
+      AnfOp.AInit(Atom.ALocal(call_res)),span.unknown(), 
       AnfExpr.Return(.Some(Atom.ALocal(handle))),
     ),
   )
@@ -345,10 +346,10 @@ fn synth_passthrough_clone(b: BuiltinRegistry) AnfFunctionDef {
   su := builtins.id(b, "vector$set_unsafe")
   body := AnfExpr.Let(
     wr,
-    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]),
+    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]), span.unknown(),
     AnfExpr.Let(
       LocalId.{ id: 12 },
-      AnfOp.AAssign(recv, Atom.ALocal(wr)),
+      AnfOp.AAssign(recv, Atom.ALocal(wr)),span.unknown(), 
       AnfExpr.Atom(Atom.ALocal(recv)),
     ),
   )
@@ -365,10 +366,10 @@ fn synth_diff_return_clone(b: BuiltinRegistry) AnfFunctionDef {
   su := builtins.id(b, "vector$set_unsafe")
   body := AnfExpr.Let(
     wr,
-    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]),
+    AnfOp.ACall(Atom.AGlobalFunc(su), [Atom.ALocal(recv), Atom.ALocal(idx), Atom.ALocal(val)]), span.unknown(),
     AnfExpr.Let(
       LocalId.{ id: 12 },
-      AnfOp.AAssign(recv, Atom.ALocal(wr)),
+      AnfOp.AAssign(recv, Atom.ALocal(wr)),span.unknown(), 
       // return some other local, not recv
       AnfExpr.Return(.Some(Atom.ALocal(LocalId.{ id: 20 }))),
     ),
@@ -384,7 +385,7 @@ fn synth_republish_clone(b: BuiltinRegistry) AnfFunctionDef {
   val := LocalId.{ id: 9 }
   body := AnfExpr.Let(
     LocalId.{ id: 30 },
-    AnfOp.AInit(Atom.ALocal(recv)),
+    AnfOp.AInit(Atom.ALocal(recv)), span.unknown(),
     AnfExpr.Atom(Atom.ALocal(recv)),
   )
   synth_clone_def(recv, idx, val, body)
@@ -397,7 +398,7 @@ fn synth_caller_alias() AnfFunctionDef {
   handle := LocalId.{ id: 5 }
   body := AnfExpr.Let(
     LocalId.{ id: 1 },
-    AnfOp.AInit(Atom.ALocal(handle)),
+    AnfOp.AInit(Atom.ALocal(handle)), span.unknown(),
     AnfExpr.Atom(Atom.ALitVoid),
   )
   synth_caller_def(body)
@@ -414,7 +415,7 @@ fn synth_caller_multi_exit() AnfFunctionDef {
       Atom.ALitBool(true),
       AnfExpr.Return(.Some(Atom.ALocal(handle))),
       AnfExpr.Return(.Some(Atom.ALocal(handle))),
-    ),
+    ), span.unknown(),
     AnfExpr.Atom(Atom.ALitVoid),
   )
   synth_caller_def(body)

@@ -221,7 +221,7 @@ fn scan_clone(ctx: CCtx, e: AnfExpr, s: CScan) CScan {
 
 fn scan_clone_live(ctx: CCtx, e: AnfExpr, s: CScan) CScan {
   case e {
-    .Let(local, op, body) => ctx.scan_clone(body, ctx.scan_clone_op(op, local, s)),
+    .Let(local, op, _, body) => ctx.scan_clone(body, ctx.scan_clone_op(op, local, s)),
     .Atom(a) => ctx.scan_tail(a, s),
     .Return(.Some(a)) => ctx.scan_tail(a, s),
     // A clone that returns void cannot be a vector-continuation.
@@ -338,7 +338,7 @@ fn reject_if_touches(ctx: CCtx, op: AnfOp, s: CScan) CScan {
 // rejected; this backs it up.
 fn caller_exit_count(e: AnfExpr, handle: LocalId) Int {
   case e {
-    .Let(_, op, body) => caller_exit_count_op(op, handle) + caller_exit_count(body, handle),
+    .Let(_, op, _, body) => caller_exit_count_op(op, handle) + caller_exit_count(body, handle),
     .Atom(a) => bool_int(atom_is_local(a, handle)),
     .Return(.Some(a)) => bool_int(atom_is_local(a, handle)),
     .Return(.None) => 0,
@@ -377,7 +377,7 @@ fn bool_int(b: Bool) Int {
 // call result), so the accepted shape is unaffected.
 fn caller_alias_survives(e: AnfExpr, handle: LocalId) Bool {
   case e {
-    .Let(_, op, body) => caller_alias_op(op, handle) or caller_alias_survives(body, handle),
+    .Let(_, op, _, body) => caller_alias_op(op, handle) or caller_alias_survives(body, handle),
     _ => false,
   }
 }

@@ -9,6 +9,7 @@ use compiler.backend.repr_policy.{ElemRepr}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{BinOp, FieldId, FuncId, GlobalId, LocalId, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
+use lib.source.span.{Span}
 
 // ── Capture parameters ──────────────────────────────────────────────
 // CaptureParam records one explicitly captured outer local in a hoisted function.
@@ -96,7 +97,10 @@ pub type PreparedAtom = {
 }
 
 pub type PreparedExpr = {
-  Let(SlotId, PreparedOp, PreparedExpr),
+  // Span carried from the ANF Let (see AnfExpr.Let) so the emit layer can mark
+  // each let-bound op's byte offset for debug info. Synthetic lets use
+  // `span.unknown()`.
+  Let(SlotId, PreparedOp, Span, PreparedExpr),
   Atom(PreparedAtom),
   Return(PreparedAtom?),
   Break(PreparedAtom?),

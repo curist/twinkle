@@ -16,6 +16,7 @@ use compiler.builder_region_detect.{atom_is_local, op_references_deep}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
+use lib.source.span
 use compiler.elem_family.{elem_family_suffix, mutvec_families}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{next_local_id}
@@ -90,7 +91,7 @@ fn resolve_ids(b: BuiltinRegistry) OpIds {
 // family/suffix dependency, unlike the rest of this module's detector state.
 pub fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
   case e {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       defs[local.id] = op
       collect_defs(body, collect_defs_in_op(op, defs))
     },
@@ -186,7 +187,7 @@ fn scan_uses(e: AnfExpr, h: LocalId, ids: OpIds, s: UseScan) UseScan {
 
 fn scan_uses_at(e: AnfExpr, h: LocalId, ids: OpIds, s: UseScan, terminal_exit_ok: Bool) UseScan {
   case e {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       s2 := scan_use_op(op, local, h, ids, s)
       scan_uses_at(body, h, ids, s2, terminal_exit_ok)
     },
@@ -356,7 +357,7 @@ fn base_seen(out: Vector<LocalId>, id: Int) Bool {
 
 fn collect_set_bases(e: AnfExpr, ids: OpIds, out: Vector<LocalId>) Vector<LocalId> {
   case e {
-    .Let(_, op, body) => collect_set_bases(body, ids, collect_set_bases_in_op(op, ids, out)),
+    .Let(_, op, _, body) => collect_set_bases(body, ids, collect_set_bases_in_op(op, ids, out)),
     _ => out,
   }
 }
@@ -541,6 +542,7 @@ fn freeze_at_exit(ctx: RwCtx, a: Atom, ret: Bool, freeze_local: Int) AnfExpr {
     .Let(
       fresh,
       .ACall(.AGlobalFunc(ctx.mids.freeze), [.ALocal(ctx.h)]),
+      span.unknown(),
       if ret {
         .Return(.Some(frozen))
       } else {
@@ -552,9 +554,10 @@ fn freeze_at_exit(ctx: RwCtx, a: Atom, ret: Bool, freeze_local: Int) AnfExpr {
 
 fn rewrite_expr(ctx: RwCtx, e: AnfExpr, freeze_local: Int) AnfExpr {
   case e {
-    .Let(local, op, body) => .Let(
+    .Let(local, op, sp, body) => .Let(
       local,
       ctx.rewrite_op(op, local),
+      sp,
       ctx.rewrite_expr(body, freeze_local),
     ),
     .Atom(a) => ctx.freeze_at_exit(a, false, freeze_local),
@@ -570,7 +573,7 @@ fn rewrite_expr(ctx: RwCtx, e: AnfExpr, freeze_local: Int) AnfExpr {
 // Vector<Int> so a slot is allocated and mutvec_repr marks it MutVec(I64).
 fn collect_push_results(e: AnfExpr, mids: MutVecIds, acc: Dict<Int, Bool>) Dict<Int, Bool> {
   case e {
-    .Let(local, op, body) => collect_push_results(
+    .Let(local, op, _, body) => collect_push_results(
       body,
       mids,
       collect_push_results_op(local, op, mids, acc),

@@ -24,6 +24,7 @@ use compiler.anf_analysis.{collect_free_locals}
 use compiler.core_ir.{LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{next_local_id}
+use lib.source.span
 
 // ── Public entry point ─────────────────────────────────────────────
 pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
@@ -71,7 +72,7 @@ fn has_defer(expr: AnfExpr) Bool {
 
   for !done {
     case cur {
-      .Let(_, op, body) => if has_defer_op(op) {
+      .Let(_, op, _, body) => if has_defer_op(op) {
         result = true
         done = true
       } else {
@@ -122,7 +123,7 @@ fn elim(
   snap_types: Cell<Dict<Int, MonoType>>,
 ) AnfExpr {
   case expr {
-    .Let(local, op, body) => case op {
+    .Let(local, op, sp, body) => case op {
       // ── ADefer: register and continue into body ──────────
       .ADefer(d) => {
         // Capture-by-value: snapshot each free local at registration time
@@ -164,7 +165,7 @@ fn elim(
           type_map,
           snap_types,
         )
-        .Let(local, .ALoop(new_loop_body), new_body)
+        .Let(local, .ALoop(new_loop_body), sp, new_body)
       },
       // ── General Let: recurse into op sub-expressions and body
       _ => {
@@ -179,7 +180,7 @@ fn elim(
           type_map,
           snap_types,
         )
-        .Let(local, new_op, new_body)
+        .Let(local, new_op, sp, new_body)
       },
     },
     // ── Return: prepend all defers (LIFO) ──────────────────────
@@ -261,7 +262,7 @@ fn prepend_defers(defers: Vector<AnfExpr>, tail: AnfExpr) AnfExpr {
 fn splice_defer_before(deferred: AnfExpr, continuation: AnfExpr) AnfExpr {
   case deferred {
     .Atom(_) => continuation,
-    .Let(local, op, body) => .Let(local, op, splice_defer_before(body, continuation)),
+    .Let(local, op, sp, body) => .Let(local, op, sp, splice_defer_before(body, continuation)),
     // Diverging terminal in a deferred expression — should not happen after
     // type checking, but keep the terminal as a safe fallback.
     terminal => terminal,
@@ -317,7 +318,7 @@ fn prepend_snapshots(snapshots: Vector<SnapshotBinding>, tail: AnfExpr) AnfExpr 
 
   for idx >= 0 {
     s := snapshots[idx]
-    result = .Let(s.snap, .AInit(.ALocal(s.src)), result)
+    result = .Let(s.snap, .AInit(.ALocal(s.src)), span.unknown(), result)
     idx = idx - 1
   }
 
@@ -338,7 +339,7 @@ fn remap_atom(atom: Atom, remap: Dict<Int, Int>) Atom {
 
 fn remap_expr(expr: AnfExpr, remap: Dict<Int, Int>) AnfExpr {
   case expr {
-    .Let(local, op, body) => .Let(local, remap_op(op, remap), remap_expr(body, remap)),
+    .Let(local, op, sp, body) => .Let(local, remap_op(op, remap), sp, remap_expr(body, remap)),
     .Atom(a) => .Atom(remap_atom(a, remap)),
     .Return(.Some(a)) => .Return(.Some(remap_atom(a, remap))),
     .Return(.None) => .Return(.None),

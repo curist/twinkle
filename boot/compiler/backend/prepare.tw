@@ -337,7 +337,7 @@ fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
     }
 
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         if op_children_depth_exceeds(op, d + 1, limit) {
           return true
         }

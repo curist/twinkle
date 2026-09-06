@@ -273,7 +273,7 @@ fn hash_op(op: AnfOp) Int {
 
 fn hash_expr(e: AnfExpr) Int {
   case e {
-    .Let(local, op, body) => mix_all([
+    .Let(local, op, _, body) => mix_all([
       qkeys.hash_text("Let"),
       local.id,
       hash_op(op),
@@ -372,7 +372,7 @@ fn seed_param_indices(
 
 fn mark_closure_expr(e: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case e {
-    .Let(_, op, body) => mark_closure_expr(body, mark_closure_op(op, out)),
+    .Let(_, op, _, body) => mark_closure_expr(body, mark_closure_op(op, out)),
     _ => out,
   }
 }

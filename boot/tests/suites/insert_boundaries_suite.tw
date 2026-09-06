@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -145,7 +146,7 @@ fn env_with_record_and_sum() ResolvedEnv {
 // ── ANF traversal helpers ───────────────────────────────────────────
 fn count_wraps_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_wraps_op(op) + count_wraps_expr(body),
+    .Let(_, op, _, body) => count_wraps_op(op) + count_wraps_expr(body),
     _ => 0,
   }
 }
@@ -171,7 +172,7 @@ fn count_wraps_op(op: AnfOp) Int {
 
 fn count_make_closures_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_make_closures_op(op) + count_make_closures_expr(body),
+    .Let(_, op, _, body) => count_make_closures_op(op) + count_make_closures_expr(body),
     _ => 0,
   }
 }
@@ -197,7 +198,7 @@ fn count_make_closures_op(op: AnfOp) Int {
 
 fn count_unwraps_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_unwraps_op(op) + count_unwraps_expr(body),
+    .Let(_, op, _, body) => count_unwraps_op(op) + count_unwraps_expr(body),
     _ => 0,
   }
 }
@@ -224,7 +225,7 @@ fn count_unwraps_op(op: AnfOp) Int {
 // Collect all let-bound local IDs (to check for duplicates)
 fn collect_let_locals(expr: AnfExpr) Vector<Int> {
   case expr {
-    .Let(local, _, body) => [local.id].concat(collect_let_locals(body)),
+    .Let(local, _, _, body) => [local.id].concat(collect_let_locals(body)),
     _ => [],
   }
 }
@@ -232,7 +233,7 @@ fn collect_let_locals(expr: AnfExpr) Vector<Int> {
 // Find the MonoType of the first AWrapAnyref in the expression
 fn first_wrap_mono(expr: AnfExpr) MonoType? {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       found: MonoType? = case op {
         .AWrapAnyref(_, mono) => .Some(mono),
         _ => .None,
@@ -250,7 +251,7 @@ fn first_wrap_mono(expr: AnfExpr) MonoType? {
 // Find the MonoType of the first AUnwrapAnyref in the expression
 fn first_unwrap_mono(expr: AnfExpr) MonoType? {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       found: MonoType? = case op {
         .AUnwrapAnyref(_, mono) => .Some(mono),
         _ => .None,
@@ -284,7 +285,7 @@ pub fn suite() runner.Suite {
         // fn f(x: Int) Int { let t0 = call(user_fn#99, [x]); t0 }
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -307,7 +308,7 @@ pub fn suite() runner.Suite {
         // int_arg is Int (i64) → AWrapAnyref
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(50)), [.ALocal(lid(0)), .ALocal(lid(1))]),
+          .ACall(.AGlobalFunc(fid(50)), [.ALocal(lid(0)), .ALocal(lid(1))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.String])
@@ -324,7 +325,7 @@ pub fn suite() runner.Suite {
         // Reconstruct with correct fid in the body
         body2: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(builtins.id("test_builtin")), [.ALocal(lid(0)), .ALocal(lid(1))]),
+          .ACall(.AGlobalFunc(builtins.id("test_builtin")), [.ALocal(lid(0)), .ALocal(lid(1))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono2 := mk_mono_map([10], [MonoType.String])
@@ -365,7 +366,7 @@ pub fn suite() runner.Suite {
         get_fid := builtins.id("get_val")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -400,7 +401,7 @@ pub fn suite() runner.Suite {
         str_fid := builtins.id("str_fn")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(str_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(str_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.String])
@@ -431,7 +432,7 @@ pub fn suite() runner.Suite {
         vec_fid := builtins.id("vec_fn")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(vec_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(vec_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Vector(.Int)])
@@ -454,7 +455,7 @@ pub fn suite() runner.Suite {
         // Array get returns anyref, element type is Int → unwrap
         body: AnfExpr = .Let(
           lid(10),
-          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.Int),
+          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.Int), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -486,7 +487,7 @@ pub fn suite() runner.Suite {
         // String is (ref null $rt_types__String) which needs ref.cast
         body: AnfExpr = .Let(
           lid(10),
-          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.String),
+          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, MonoType.String), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.String])
@@ -512,7 +513,7 @@ pub fn suite() runner.Suite {
         // AIndex(str, idx, Str, Byte) — Byte is i32, no anyref crossing
         body: AnfExpr = .Let(
           lid(10),
-          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Str, MonoType.Byte),
+          .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Str, MonoType.Byte), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Byte])
@@ -542,7 +543,7 @@ pub fn suite() runner.Suite {
         rt_fid := builtins.id("roundtrip")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -569,7 +570,7 @@ pub fn suite() runner.Suite {
         len_fid := builtins.id("vec_len")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(len_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(len_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -601,7 +602,7 @@ pub fn suite() runner.Suite {
         set_fid := builtins.id("arr_set")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(set_fid), [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))]),
+          .ACall(.AGlobalFunc(set_fid), [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Vector(.Int)])
@@ -640,7 +641,7 @@ pub fn suite() runner.Suite {
         combine_fid := builtins.id("combine")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(combine_fid), [.ALocal(lid(0)), .ALocal(lid(1))]),
+          .ACall(.AGlobalFunc(combine_fid), [.ALocal(lid(0)), .ALocal(lid(1))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -680,7 +681,7 @@ pub fn suite() runner.Suite {
         rt_fid := builtins.id("roundtrip")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(rt_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -780,7 +781,7 @@ pub fn suite() runner.Suite {
         store_fid := builtins.id("store_bool")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.String])
@@ -803,7 +804,7 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(2)), [.AGlobalFunc(fid(3)), .ALocal(lid(0))]),
+          .ACall(.AGlobalFunc(fid(2)), [.AGlobalFunc(fid(3)), .ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Int])
@@ -861,7 +862,7 @@ pub fn suite() runner.Suite {
     .test(
       "materializes global func at function-typed init boundary",
       fn() {
-        body: AnfExpr = .Let(lid(10), .AInit(.AGlobalFunc(fid(2))), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(lid(10), .AInit(.AGlobalFunc(fid(2))), span.unknown(), .Atom(.ALocal(lid(10))))
         mono := mk_mono_map([10], [MonoType.Function([.Int], .Int)])
         holder := mk_func_def(1, "holder", [], .Function([.Int], .Int), body, mono)
         target := mk_func_def(
@@ -887,7 +888,7 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(11),
-          .AAssign(lid(0), .AGlobalFunc(fid(2))),
+          .AAssign(lid(0), .AGlobalFunc(fid(2))), span.unknown(),
           .Atom(.ALocal(lid(0))),
         )
         mono := mk_mono_map([11], [MonoType.Void])
@@ -920,7 +921,7 @@ pub fn suite() runner.Suite {
     .test(
       "materializes global func in function-valued array literal",
       fn() {
-        body: AnfExpr = .Let(lid(10), .AArrayLit([.AGlobalFunc(fid(2))]), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(lid(10), .AArrayLit([.AGlobalFunc(fid(2))]), span.unknown(), .Atom(.ALocal(lid(10))))
         mono := mk_mono_map([10], [MonoType.Vector(MonoType.Function([.Int], .Int))])
         holder := mk_func_def(1, "holder", [], .Vector(MonoType.Function([.Int], .Int)), body, mono)
         target := mk_func_def(
@@ -954,7 +955,7 @@ pub fn suite() runner.Suite {
           .ARecord(
             TypeId.{ id: 10 },
             [FieldAtom.{ field: .{ id: 0 }, value: .AGlobalFunc(fid(2)) }],
-          ),
+          ), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 10 }, [])])
@@ -989,7 +990,7 @@ pub fn suite() runner.Suite {
             .AGlobalFunc(fid(2)),
             false,
             TypeId.{ id: 10 },
-          ),
+          ), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 10 }, [])])
@@ -1025,7 +1026,7 @@ pub fn suite() runner.Suite {
         env := env_with_record_and_sum()
         body: AnfExpr = .Let(
           lid(10),
-          .AVariant(TypeId.{ id: 11 }, VariantId.{ id: 0 }, [.AGlobalFunc(fid(2))]),
+          .AVariant(TypeId.{ id: 11 }, VariantId.{ id: 0 }, [.AGlobalFunc(fid(2))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 11 }, [])])
@@ -1053,7 +1054,7 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.ALocal(lid(0))]),
+          .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.ALocal(lid(0))]), span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         mono := mk_mono_map([10], [MonoType.Optional(MonoType.String)])

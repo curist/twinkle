@@ -9,6 +9,7 @@ use .core_ir.{
   VariantId,
 }
 use .mono_type.{MonoType, TypeId}
+use lib.source.span.{Span}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
 pub type OpKind = { Int, Float, Bool, Str }
@@ -29,7 +30,10 @@ pub type Atom = {
 
 // ── ANF expressions (flat let-chains) ───────────────────────────────
 pub type AnfExpr = {
-  Let(LocalId, AnfOp, AnfExpr),
+  // The Span locates the let-bound op in source. Because every AnfOp is the RHS
+  // of a Let, this inline span names each op for debug-info emission without
+  // wrapping the op enum. Synthetic lets use `span.unknown()`.
+  Let(LocalId, AnfOp, Span, AnfExpr),
   Atom(Atom),
   Return(Atom?),
   Break(Atom?),

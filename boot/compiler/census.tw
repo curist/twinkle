@@ -55,7 +55,7 @@ fn walk_expr(
   cat: mutable_catalog.MutableCatalog,
 ) Vector<CensusSite> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       after := walk_op(op, local.id, func_id, func, sites, cat)
       walk_expr(body, func_id, func, after, cat)
     },

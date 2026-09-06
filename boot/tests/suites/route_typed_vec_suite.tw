@@ -92,7 +92,7 @@ fn funcs_call_fid(funcs: Vector<PreparedFunc>, fid_id: Int) Bool {
 
 fn expr_calls_fid(expr: PreparedExpr, fid_id: Int) Bool {
   case expr {
-    .Let(_, op, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
+    .Let(_, op, _, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
     _ => false,
   }
 }
@@ -146,7 +146,7 @@ fn find_func(funcs: Vector<PreparedFunc>, name: String) PreparedFunc? {
 // (the first `let slot = call(...)` site found), or .None.
 fn find_call_result_slot(expr: PreparedExpr, fid_id: Int) Int? {
   case expr {
-    .Let(slot, op, body) => case op {
+    .Let(slot, op, _, body) => case op {
       .ACall(callee, _) => case callee {
         .AGlobalFunc(fid) => if fid.id == fid_id {
           .Some(slot.id)

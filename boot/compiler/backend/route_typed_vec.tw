@@ -214,7 +214,7 @@ fn collect_typed_return_call_results(
   acc: Vector<Int>,
 ) Vector<Int> {
   case body {
-    .Let(s, op, rest) => {
+    .Let(s, op, _, rest) => {
       acc2 := case op {
         .ACall(.AGlobalFunc(fid), _) => case src.elig_return_family(fid.id) {
           .Some(ret_key) => if ret_key == fam.mono_key {
@@ -255,7 +255,7 @@ fn collect_relaxed_captures(
   acc: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
   case body {
-    .Let(_, op, rest) => {
+    .Let(_, op, _, rest) => {
       acc = relaxed_captures_op(op, src, fam, acc)
       collect_relaxed_captures(rest, src, fam, acc)
     },
@@ -776,7 +776,7 @@ fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
     }
 
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         if op_children_depth_exceeds(op, d + 1, limit) {
           return true
         }
@@ -863,7 +863,7 @@ fn collect_candidates(
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         acc = collect_candidate_from_op(slot, op, slots, ids, fam, acc)
         acc = collect_candidates_op_branches(op, slots, ids, fam, acc)
         cur = body
@@ -964,7 +964,7 @@ fn collect_gather_results(
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         cur_acc = collect_gather_result_from_op(slot, op, eligible_v, gather_id, cur_acc)
         cur_acc = collect_gather_results_op_branches(op, eligible_v, gather_id, cur_acc)
         cur = body
@@ -1046,7 +1046,7 @@ fn collect_set_results(expr: PreparedExpr, vs: Dict<Int, Bool>, set_id: Int, acc
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         cur_acc = collect_set_result_from_op(slot, op, vs, set_id, cur_acc)
         cur_acc = collect_set_results_op_branches(op, vs, set_id, cur_acc)
         cur = body
@@ -1114,7 +1114,7 @@ fn collect_append_results(expr: PreparedExpr, vs: Dict<Int, Bool>, append_id: In
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         cur_acc = collect_append_result_from_op(slot, op, vs, append_id, cur_acc)
         cur_acc = collect_append_results_op_branches(op, vs, append_id, cur_acc)
         cur = body
@@ -1262,7 +1262,7 @@ fn collect_typed_field_reads(
 
   for !done {
     case cur {
-      .Let(slot, op, body) => {
+      .Let(slot, op, _, body) => {
         cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, slots, fam, cur_acc)
         cur_acc = collect_typed_field_reads_op_branches(op, typed_fields, slots, fam, cur_acc)
         cur = body
@@ -1342,7 +1342,7 @@ fn collect_typed_payload_reads(
 
   for !done {
     case cur {
-      .Let(_, op, body) => {
+      .Let(_, op, _, body) => {
         acc = collect_typed_payload_reads_op(op, typed_payloads, slots, fam, acc)
         cur = body
       },
@@ -1415,7 +1415,7 @@ fn collect_payload_bindings(
 // be traced across the copies introduced by lowering/slot assignment.
 pub fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
   case expr {
-    .Let(slot, op, body) => {
+    .Let(slot, op, _, body) => {
       acc = case op {
         // A self-copy (`Lx = init Lx`, emitted as a redundant rebind) must not
         // overwrite a real `Lx -> src` mapping: doing so turns the chain into a
@@ -1765,7 +1765,7 @@ fn classify_expr(
   gather_read_ok: Bool,
 ) VGroupUse {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       // An op binds a slot, so its sub-expressions (arm/loop/defer bodies) are
       // never a function return — classify_op passes them in_tail=false. The Let
       // body inherits this expression's tail position.
@@ -2494,7 +2494,7 @@ fn scan_consumers(
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
   case expr {
-    .Let(slot, op, body) => {
+    .Let(slot, op, _, body) => {
       stats := case op {
         .ARecordGet(_, fid, tid) => {
           // Is the result slot in the active family?
@@ -2639,7 +2639,7 @@ fn field_store_sites(
   acc: Vector<FieldStoreSite>,
 ) Vector<FieldStoreSite> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       acc2 := field_store_sites_op(op, slots, fam, acc)
       field_store_sites(body, slots, fam, acc2)
     },
@@ -2696,9 +2696,10 @@ fn rewrite(
   fi: FamilyIds,
 ) PreparedExpr {
   case expr {
-    .Let(slot, op, body) => .Let(
+    .Let(slot, op, sp, body) => .Let(
       slot,
       rewrite_op(slot.id, op, eligible_v, eligible_b, ids, fi),
+      sp,
       rewrite(body, eligible_v, eligible_b, ids, fi),
     ),
     _ => expr,

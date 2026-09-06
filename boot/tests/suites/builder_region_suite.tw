@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -92,7 +93,7 @@ fn fu1_function(extra_read: Bool) AnfFunctionDef {
   tail: AnfExpr = if extra_read {
     AnfExpr.Let(
       LocalId.{ id: 3 },
-      AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 99 }), [Atom.ALocal(r)]),
+      AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 99 }), [Atom.ALocal(r)]), span.unknown(),
       AnfExpr.Atom(Atom.ALitVoid),
     )
   } else {
@@ -100,8 +101,8 @@ fn fu1_function(extra_read: Bool) AnfFunctionDef {
   }
   body := AnfExpr.Let(
     r,
-    AnfOp.AInit(Atom.ALitInt(1)),
-    AnfExpr.Let(LocalId.{ id: 2 }, AnfOp.AAssign(acc, Atom.ALocal(r)), tail),
+    AnfOp.AInit(Atom.ALitInt(1)), span.unknown(),
+    AnfExpr.Let(LocalId.{ id: 2 }, AnfOp.AAssign(acc, Atom.ALocal(r)),span.unknown(),  tail),
   )
   .{
     func_id: .{ id: 7 },
@@ -160,7 +161,7 @@ fn find_func(anf: AnfModule, name: String) AnfFunctionDef {
 
 fn count_calls_to(expr: AnfExpr, target: FuncId) Int {
   case expr {
-    .Let(_, op, body) => count_calls_op(op, target) + count_calls_to(body, target),
+    .Let(_, op, _, body) => count_calls_op(op, target) + count_calls_to(body, target),
     _ => 0,
   }
 }

@@ -81,7 +81,7 @@ fn funcs_call_fid(funcs: Vector<PreparedFunc>, fid_id: Int) Bool {
 
 fn expr_calls_fid(expr: PreparedExpr, fid_id: Int) Bool {
   case expr {
-    .Let(_, op, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
+    .Let(_, op, _, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
     _ => false,
   }
 }

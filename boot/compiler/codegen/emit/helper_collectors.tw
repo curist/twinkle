@@ -50,7 +50,7 @@ fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, wa
 
     for !done {
       case cur_expr {
-        .Let(sid, op, body) => {
+        .Let(sid, op, _, body) => {
           stack = push_op_children(op, stack)
 
           case func.slots[sid.id] {
@@ -138,7 +138,7 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
 
     for !done {
       case cur_expr {
-        .Let(sid, op, body) => {
+        .Let(sid, op, _, body) => {
           stack = push_op_children(op, stack)
 
           case func.slots[sid.id] {

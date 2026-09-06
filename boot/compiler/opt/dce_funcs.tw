@@ -93,7 +93,7 @@ fn op_refs(op: AnfOp, acc: Dict<Int, Bool>) Dict<Int, Bool> {
 
 fn expr_refs(e: AnfExpr, acc: Dict<Int, Bool>) Dict<Int, Bool> {
   case e {
-    .Let(_, op, body) => expr_refs(body, op_refs(op, acc)),
+    .Let(_, op, _, body) => expr_refs(body, op_refs(op, acc)),
     .Atom(a) => atom_ref(a, acc),
     .Return(oa) => case oa {
       .Some(a) => atom_ref(a, acc),

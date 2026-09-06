@@ -218,7 +218,7 @@ fn atom_local(atom: Atom) LocalId? {
 
 fn collect_assign_targets(expr: AnfExpr) Vector<LocalId> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       found: Vector<LocalId> = case op {
         .AAssign(local, _) => [local],
         .AIf(_, then_e, else_e) => sorted_union(
@@ -247,7 +247,7 @@ fn collect_assign_targets(expr: AnfExpr) Vector<LocalId> {
 
 fn collect_break_payloads(expr: AnfExpr) Vector<LocalId> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       found: Vector<LocalId> = case op {
         .AIf(_, then_e, else_e) => sorted_union(
           collect_break_payloads(then_e),
@@ -757,7 +757,7 @@ fn build_loop(
 
 fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
   case expr {
-    .Let(local, .AIf(cond_atom, then_e, else_e), body) => ctx.build_if(
+    .Let(local, .AIf(cond_atom, then_e, else_e), _, body) => ctx.build_if(
       current,
       local,
       cond_atom,
@@ -765,15 +765,15 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
       else_e,
       body,
     ),
-    .Let(local, .AMatch(scrutinee, arms), body) => ctx.build_match(
+    .Let(local, .AMatch(scrutinee, arms), _, body) => ctx.build_match(
       current,
       local,
       scrutinee,
       arms,
       body,
     ),
-    .Let(local, .ALoop(loop_body), body) => ctx.build_loop(current, local, loop_body, body),
-    .Let(local, op, body) => {
+    .Let(local, .ALoop(loop_body), _, body) => ctx.build_loop(current, local, loop_body, body),
+    .Let(local, op, _, body) => {
       ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, op, text: op_text(op) })
       ctx.build_expr(current, body)
     },

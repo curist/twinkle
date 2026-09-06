@@ -651,10 +651,10 @@ type RewriteOpResult = .{ op: AnfOp, changed: Bool }
 // changed anything.
 fn rewrite_expr(e: AnfExpr, caller: Int, site_to_clone: Dict<Int, Int>) RewriteResult {
   case e {
-    .Let(local, op, body) => {
+    .Let(local, op, sp, body) => {
       opr := rewrite_op(op, local, caller, site_to_clone)
       br := rewrite_expr(body, caller, site_to_clone)
-      .{ expr: .Let(local, opr.op, br.expr), changed: opr.changed or br.changed }
+      .{ expr: .Let(local, opr.op, sp, br.expr), changed: opr.changed or br.changed }
     },
     _ => .{ expr: e, changed: false },
   }

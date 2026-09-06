@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -73,11 +74,11 @@ fn test_expr_let_chain() Result<Void, String> {
   // let t0 = init(1); let t1 = init(2); t0
   t0 := LocalId.{ id: 100 }
   t1 := LocalId.{ id: 101 }
-  inner: AnfExpr = .Let(t1, .AInit(.ALitInt(2)), .Atom(.ALocal(t0)))
-  outer: AnfExpr = .Let(t0, .AInit(.ALitInt(1)), inner)
+  inner: AnfExpr = .Let(t1, .AInit(.ALitInt(2)), span.unknown(), .Atom(.ALocal(t0)))
+  outer: AnfExpr = .Let(t0, .AInit(.ALitInt(1)), span.unknown(), inner)
 
   case outer {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       try assert.equal(local.id, 100)
 
       case op {
@@ -90,7 +91,7 @@ fn test_expr_let_chain() Result<Void, String> {
 
       // body is another Let
       case body {
-        .Let(l2, _, tail) => {
+        .Let(l2, _, _, tail) => {
           try assert.equal(l2.id, 101)
 
           case tail {

@@ -120,7 +120,7 @@ fn scan_body(
   creators: Dict<Int, Bool>,
 ) Void {
   case expr {
-    .Let(slot, op, body) => {
+    .Let(slot, op, _, body) => {
       scan_op(slot.id, op, wrap_slots, unwrap_monos, creators)
       scan_body(body, wrap_slots, unwrap_monos, creators)
     },

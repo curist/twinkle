@@ -6,6 +6,17 @@ pub fn new(file_id: Int, start: Int, end: Int) Span {
   .{ file_id, start, end }
 }
 
+// A location-less span for compiler-synthesized nodes that have no source
+// origin. `file_id == -1` marks it so debug-info emission can skip it rather
+// than record a bogus offset→span entry.
+pub fn unknown() Span {
+  .{ file_id: -1, start: 0, end: 0 }
+}
+
+pub fn is_unknown(s: Span) Bool {
+  s.file_id < 0
+}
+
 pub fn merge(a: Span, b: Span) Span {
   start := if a.start < b.start {
     a.start

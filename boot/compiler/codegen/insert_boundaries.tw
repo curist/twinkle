@@ -16,6 +16,8 @@ use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.monomorphize.{contains_var}
+use lib.source.span
+use lib.source.span.{Span}
 use compiler.resolver.{ResolvedEnv, lookup_type_def}
 use compiler.type_util.{subst_type_params}
 
@@ -236,7 +238,7 @@ fn needs_boundary_rewrite_expr(expr: AnfExpr, ctx: BCtx) Bool {
 
   for !done {
     case cur {
-      .Let(local, op, body) => {
+      .Let(local, op, _, body) => {
         if needs_boundary_rewrite_op(local, op, ctx) {
           return true
         }
@@ -476,8 +478,8 @@ fn call_needs_boundary_rewrite(result_local: LocalId, callee: Atom, args: Vector
 
 fn rewrite_expr(expr: AnfExpr, ctx: BCtx) RewriteResult {
   case expr {
-    .Let(local, op, body) => {
-      op_result := rewrite_op(local, op, body, ctx)
+    .Let(local, op, sp, body) => {
+      op_result := rewrite_op(local, op, body, sp, ctx)
       op_result
     },
     .Atom(a) => rewrite_tail_atom(a, ctx),
@@ -492,7 +494,7 @@ fn rewrite_tail_atom(atom: Atom, ctx: BCtx) RewriteResult {
 
   case mat {
     .Some(pair) => .{
-      expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), .Atom(.ALocal(pair.temp))),
+      expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), span.unknown(), .Atom(.ALocal(pair.temp))),
       ctx: pair.ctx,
     },
     .None => .{ expr: .Atom(atom), ctx },
@@ -506,7 +508,7 @@ fn rewrite_return_expr(atom: Atom?, ctx: BCtx) RewriteResult {
 
       case mat {
         .Some(pair) => .{
-          expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), .Return(.Some(.ALocal(pair.temp)))),
+          expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), span.unknown(), .Return(.Some(.ALocal(pair.temp)))),
           ctx: pair.ctx,
         },
         .None => .{ expr: .Return(atom), ctx },
@@ -516,7 +518,7 @@ fn rewrite_return_expr(atom: Atom?, ctx: BCtx) RewriteResult {
   }
 }
 
-fn rewrite_init(result_local: LocalId, atom: Atom, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_init(result_local: LocalId, atom: Atom, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   target_mono := case ctx.local_types[result_local.id] {
     .Some(m) => m,
     .None => .Void,
@@ -530,19 +532,20 @@ fn rewrite_init(result_local: LocalId, atom: Atom, body: AnfExpr, ctx: BCtx) Rew
         expr: .Let(
           pair.temp,
           .AMakeClosure(pair.fid, []),
-          .Let(result_local, .AInit(.ALocal(pair.temp)), body_r.expr),
+          span.unknown(),
+          .Let(result_local, .AInit(.ALocal(pair.temp)), sp, body_r.expr),
         ),
         ctx: body_r.ctx,
       }
     },
     .None => {
       body_r := rewrite_expr(body, ctx)
-      .{ expr: .Let(result_local, .AInit(atom), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(result_local, .AInit(atom), sp, body_r.expr), ctx: body_r.ctx }
     },
   }
 }
 
-fn rewrite_assign(result_local: LocalId, target: LocalId, atom: Atom, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_assign(result_local: LocalId, target: LocalId, atom: Atom, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   target_mono := case ctx.local_types[target.id] {
     .Some(m) => m,
     .None => .Void,
@@ -556,19 +559,20 @@ fn rewrite_assign(result_local: LocalId, target: LocalId, atom: Atom, body: AnfE
         expr: .Let(
           pair.temp,
           .AMakeClosure(pair.fid, []),
-          .Let(result_local, .AAssign(target, .ALocal(pair.temp)), body_r.expr),
+          span.unknown(),
+          .Let(result_local, .AAssign(target, .ALocal(pair.temp)), sp, body_r.expr),
         ),
         ctx: body_r.ctx,
       }
     },
     .None => {
       body_r := rewrite_expr(body, ctx)
-      .{ expr: .Let(result_local, .AAssign(target, atom), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(result_local, .AAssign(target, atom), sp, body_r.expr), ctx: body_r.ctx }
     },
   }
 }
 
-fn rewrite_global_set(result_local: LocalId, gid: GlobalId, atom: Atom, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_global_set(result_local: LocalId, gid: GlobalId, atom: Atom, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   target_mono := case ctx.global_monos[gid.id] {
     .Some(m) => m,
     .None => .Void,
@@ -582,29 +586,30 @@ fn rewrite_global_set(result_local: LocalId, gid: GlobalId, atom: Atom, body: An
         expr: .Let(
           pair.temp,
           .AMakeClosure(pair.fid, []),
-          .Let(result_local, .AGlobalSet(gid, .ALocal(pair.temp)), body_r.expr),
+          span.unknown(),
+          .Let(result_local, .AGlobalSet(gid, .ALocal(pair.temp)), sp, body_r.expr),
         ),
         ctx: body_r.ctx,
       }
     },
     .None => {
       body_r := rewrite_expr(body, ctx)
-      .{ expr: .Let(result_local, .AGlobalSet(gid, atom), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(result_local, .AGlobalSet(gid, atom), sp, body_r.expr), ctx: body_r.ctx }
     },
   }
 }
 
-fn rewrite_array_lit(result_local: LocalId, elems: Vector<Atom>, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_array_lit(result_local: LocalId, elems: Vector<Atom>, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   elem_mono := array_elem_mono(case ctx.local_types[result_local.id] {
     .Some(m) => m,
     .None => .Void,
   })
   pair := materialize_atoms_for_expected_mono(elems, elem_mono, ctx)
   body_r := rewrite_expr(body, pair.ctx)
-  inner := AnfExpr.Let(result_local, .AArrayLit(pair.atoms), body_r.expr)
+  inner := AnfExpr.Let(result_local, .AArrayLit(pair.atoms), sp, body_r.expr)
 
   for entry in pair.closure_lets.reverse() {
-    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), inner)
+    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), span.unknown(), inner)
   }
 
   .{ expr: inner, ctx: body_r.ctx }
@@ -615,6 +620,7 @@ fn rewrite_record(
   tid: TypeId,
   fields: Vector<FieldAtom>,
   body: AnfExpr,
+  sp: Span,
   ctx: BCtx,
 ) RewriteResult {
   result_mono := case ctx.local_types[result_local.id] {
@@ -641,10 +647,10 @@ fn rewrite_record(
   }
 
   body_r := rewrite_expr(body, cur_ctx)
-  inner := AnfExpr.Let(result_local, .ARecord(tid, new_fields), body_r.expr)
+  inner := AnfExpr.Let(result_local, .ARecord(tid, new_fields), sp, body_r.expr)
 
   for entry in closure_lets.reverse() {
-    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), inner)
+    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), span.unknown(), inner)
   }
 
   .{ expr: inner, ctx: body_r.ctx }
@@ -658,6 +664,7 @@ fn rewrite_record_update(
   is_mut: Bool,
   tid: TypeId,
   body: AnfExpr,
+  sp: Span,
   ctx: BCtx,
 ) RewriteResult {
   base_mono := case atom_mono(base, ctx) {
@@ -673,9 +680,11 @@ fn rewrite_record_update(
         expr: .Let(
           pair.temp,
           .AMakeClosure(pair.fid, []),
+          span.unknown(),
           .Let(
             result_local,
             .ARecordUpdate(base, fid, .ALocal(pair.temp), is_mut, tid),
+            sp,
             body_r.expr,
           ),
         ),
@@ -685,7 +694,7 @@ fn rewrite_record_update(
     .None => {
       body_r := rewrite_expr(body, ctx)
       .{
-        expr: .Let(result_local, .ARecordUpdate(base, fid, value, is_mut, tid), body_r.expr),
+        expr: .Let(result_local, .ARecordUpdate(base, fid, value, is_mut, tid), sp, body_r.expr),
         ctx: body_r.ctx,
       }
     },
@@ -698,6 +707,7 @@ fn rewrite_variant(
   vid: VariantId,
   args: Vector<Atom>,
   body: AnfExpr,
+  sp: Span,
   ctx: BCtx,
 ) RewriteResult {
   result_mono := case ctx.local_types[result_local.id] {
@@ -724,10 +734,10 @@ fn rewrite_variant(
   }
 
   body_r := rewrite_expr(body, cur_ctx)
-  inner := AnfExpr.Let(result_local, .AVariant(tid, vid, new_args), body_r.expr)
+  inner := AnfExpr.Let(result_local, .AVariant(tid, vid, new_args), sp, body_r.expr)
 
   for entry in closure_lets.reverse() {
-    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), inner)
+    inner = .Let(entry.local, .AMakeClosure(entry.fid, []), span.unknown(), inner)
   }
 
   .{ expr: inner, ctx: body_r.ctx }
@@ -873,9 +883,9 @@ fn materialized_global_func_mono(atom: Atom, expected_mono: MonoType, ctx: BCtx)
   }
 }
 
-fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   case op {
-    .ACall(callee, args) => rewrite_call(local, callee, args, body, ctx),
+    .ACall(callee, args) => rewrite_call(local, callee, args, body, sp, ctx),
     .AIndex(base, index, kind, result_mono) => rewrite_index(
       local,
       base,
@@ -883,14 +893,15 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
       kind,
       result_mono,
       body,
+      sp,
       ctx,
     ),
-    .AInit(atom) => rewrite_init(local, atom, body, ctx),
-    .AAssign(target, atom) => rewrite_assign(local, target, atom, body, ctx),
-    .AGlobalSet(gid, atom) => rewrite_global_set(local, gid, atom, body, ctx),
-    .AArrayLit(elems) => rewrite_array_lit(local, elems, body, ctx),
-    .ARecord(tid, fields) => rewrite_record(local, tid, fields, body, ctx),
-    .AVariant(tid, vid, args) => rewrite_variant(local, tid, vid, args, body, ctx),
+    .AInit(atom) => rewrite_init(local, atom, body, sp, ctx),
+    .AAssign(target, atom) => rewrite_assign(local, target, atom, body, sp, ctx),
+    .AGlobalSet(gid, atom) => rewrite_global_set(local, gid, atom, body, sp, ctx),
+    .AArrayLit(elems) => rewrite_array_lit(local, elems, body, sp, ctx),
+    .ARecord(tid, fields) => rewrite_record(local, tid, fields, body, sp, ctx),
+    .AVariant(tid, vid, args) => rewrite_variant(local, tid, vid, args, body, sp, ctx),
     .ARecordUpdate(base, fid, value, is_mut, tid) => rewrite_record_update(
       local,
       base,
@@ -899,13 +910,14 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
       is_mut,
       tid,
       body,
+      sp,
       ctx,
     ),
     .AIf(cond_e, then_e, else_e) => {
       then_r := rewrite_expr(then_e, ctx)
       else_r := rewrite_expr(else_e, then_r.ctx)
       body_r := rewrite_expr(body, else_r.ctx)
-      .{ expr: .Let(local, .AIf(cond_e, then_r.expr, else_r.expr), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(local, .AIf(cond_e, then_r.expr, else_r.expr), sp, body_r.expr), ctx: body_r.ctx }
     },
     .AMatch(scrutinee, arms) => {
       cur_ctx := ctx
@@ -915,12 +927,12 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
         AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr }
       }
       body_r := rewrite_expr(body, cur_ctx)
-      .{ expr: .Let(local, .AMatch(scrutinee, new_arms), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(local, .AMatch(scrutinee, new_arms), sp, body_r.expr), ctx: body_r.ctx }
     },
     .ALoop(inner) => {
       inner_r := rewrite_expr(inner, ctx)
       body_r := rewrite_expr(body, inner_r.ctx)
-      .{ expr: .Let(local, .ALoop(inner_r.expr), body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(local, .ALoop(inner_r.expr), sp, body_r.expr), ctx: body_r.ctx }
     },
     .ADefer(_) => error(
       "ADefer must be eliminated before boundary insertion (Phase D precondition)",
@@ -928,13 +940,13 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
     _ => {
       // All other ops pass through unchanged
       body_r := rewrite_expr(body, ctx)
-      .{ expr: .Let(local, op, body_r.expr), ctx: body_r.ctx }
+      .{ expr: .Let(local, op, sp, body_r.expr), ctx: body_r.ctx }
     },
   }
 }
 
 // ── Call rewriting ──────────────────────────────────────────────────
-fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: AnfExpr, ctx: BCtx) RewriteResult {
+fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: AnfExpr, sp: Span, ctx: BCtx) RewriteResult {
   // Only rewrite calls to builtins with ABI contracts
   is_intrinsic := case callee {
     .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
@@ -988,10 +1000,10 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
 
       body_r := rewrite_expr(body, cur_ctx)
       inner := body_r.expr
-      inner = .Let(result_local, .ACall(callee, new_args), inner)
+      inner = .Let(result_local, .ACall(callee, new_args), sp, inner)
 
       for entry in closure_lets.reverse() {
-        inner = .Let(entry.local, .AMakeClosure(entry.fid, []), inner)
+        inner = .Let(entry.local, .AMakeClosure(entry.fid, []), span.unknown(), inner)
       }
 
       .{ expr: inner, ctx: body_r.ctx }
@@ -1086,19 +1098,19 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
         final_ctx.local_types[raw_local.id] = .Anyref_
 
         // let result_local = AUnwrapAnyref(ALocal(raw_local), mono); inner_expr
-        inner_expr = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), mono), inner_expr)
+        inner_expr = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), mono), sp, inner_expr)
         call_result_local = raw_local
       }
 
       // The call itself
-      inner_expr = .Let(call_result_local, .ACall(callee, new_args), inner_expr)
+      inner_expr = .Let(call_result_local, .ACall(callee, new_args), sp, inner_expr)
 
       for entry in wrap_lets.reverse() {
-        inner_expr = .Let(entry.local, .AWrapAnyref(entry.atom, entry.mono), inner_expr)
+        inner_expr = .Let(entry.local, .AWrapAnyref(entry.atom, entry.mono), span.unknown(), inner_expr)
       }
 
       for entry in closure_lets.reverse() {
-        inner_expr = .Let(entry.local, .AMakeClosure(entry.fid, []), inner_expr)
+        inner_expr = .Let(entry.local, .AMakeClosure(entry.fid, []), span.unknown(), inner_expr)
       }
 
       .{ expr: inner_expr, ctx: final_ctx }
@@ -1138,6 +1150,7 @@ fn rewrite_index(
   kind: IndexKind,
   result_mono: MonoType,
   body: AnfExpr,
+  sp: Span,
   ctx: BCtx,
 ) RewriteResult {
   case kind {
@@ -1153,14 +1166,15 @@ fn rewrite_index(
         inner := AnfExpr.Let(
           result_local,
           .AUnwrapAnyref(.ALocal(raw_local), result_mono),
+          sp,
           body_r.expr,
         )
-        .{ expr: .Let(raw_local, .AIndex(base, index, kind, result_mono), inner), ctx: body_r.ctx }
+        .{ expr: .Let(raw_local, .AIndex(base, index, kind, result_mono), sp, inner), ctx: body_r.ctx }
       } else {
         // Reference-typed payloads can flow through directly.
         body_r := rewrite_expr(body, ctx)
         .{
-          expr: .Let(result_local, .AIndex(base, index, kind, result_mono), body_r.expr),
+          expr: .Let(result_local, .AIndex(base, index, kind, result_mono), sp, body_r.expr),
           ctx: body_r.ctx,
         }
       }
@@ -1187,7 +1201,7 @@ fn rewrite_index(
         }
         cur_ctx.local_types[key_local.id] = .Anyref_
         new_index = .ALocal(key_local)
-        wrap_expr = .Some(.Let(key_local, .AWrapAnyref(index, mono), .Atom(.ALitVoid)))
+        wrap_expr = .Some(.Let(key_local, .AWrapAnyref(index, mono), span.unknown(), .Atom(.ALitVoid)))
       }
 
       // Dict indexing semantically produces Option<V>. Keep that egress typed
@@ -1198,7 +1212,7 @@ fn rewrite_index(
       body_r := rewrite_expr(body, cur_ctx)
       inner := body_r.expr
 
-      inner = .Let(result_local, .AIndex(base, new_index, kind, result_mono), inner)
+      inner = .Let(result_local, .AIndex(base, new_index, kind, result_mono), sp, inner)
 
       case wrap_expr {
         .Some(_) => {
@@ -1210,7 +1224,7 @@ fn rewrite_index(
             .Some(m) => m,
             .None => .Void,
           }
-          inner = .Let(key_lid, .AWrapAnyref(index, mono), inner)
+          inner = .Let(key_lid, .AWrapAnyref(index, mono), span.unknown(), inner)
         },
         .None => {},
       }
@@ -1221,7 +1235,7 @@ fn rewrite_index(
       // String indexing returns Byte (i32) — no anyref boundary
       body_r := rewrite_expr(body, ctx)
       .{
-        expr: .Let(result_local, .AIndex(base, index, kind, result_mono), body_r.expr),
+        expr: .Let(result_local, .AIndex(base, index, kind, result_mono), sp, body_r.expr),
         ctx: body_r.ctx,
       }
     },
@@ -1236,7 +1250,7 @@ fn find_max_local_expr(expr: AnfExpr, m: Int) Int {
 
   for !done {
     case cur {
-      .Let(local, op, body) => {
+      .Let(local, op, _, body) => {
         max_id = find_max_local_op(op, max_local_id(local, max_id))
         cur = body
       },

@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -211,7 +212,7 @@ fn test_tail_call_emits_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
   prepared := make_one_func_module(
@@ -254,7 +255,7 @@ fn test_non_tail_call_no_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(1))),
   )
   prepared := make_one_func_module(
@@ -297,7 +298,7 @@ fn test_tail_call_void_result_no_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
   prepared := make_one_func_module(func_id, "fire", [sid(0)], [sid(1)], slots, body, MonoType.Void)
@@ -335,17 +336,17 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
 
   then_branch := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   else_branch := PreparedExpr.Let(
     sid(3),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
   )
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AIf(PreparedAtom.ASlot(sid(0)), then_branch, else_branch),
+    PreparedOp.AIf(PreparedAtom.ASlot(sid(0)), then_branch, else_branch), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -435,12 +436,12 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
 
   arm0_body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   arm1_body := PreparedExpr.Let(
     sid(3),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
   )
   arms: Vector<PreparedMatchArm> = [
@@ -449,7 +450,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
   ]
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -599,7 +600,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 0 }, []),
     body: PreparedExpr.Let(
       sid(2),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
     ),
   }
@@ -607,7 +608,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 1 }, []),
     body: PreparedExpr.Let(
       sid(3),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
     ),
   }
@@ -615,14 +616,14 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 2 }, []),
     body: PreparedExpr.Let(
       sid(4),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(4))),
     ),
   }
   arms: Vector<PreparedMatchArm> = [arm0, arm1, arm2]
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -721,7 +722,7 @@ fn test_tail_closure_call_emits_return_call_ref() Result<Void, String> {
 
   body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]), span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(2)))),
   )
   prepared := make_one_func_module(
@@ -776,7 +777,7 @@ fn test_non_tail_closure_call_no_return_call_ref() Result<Void, String> {
 
   body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]), span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   prepared := make_one_func_module(
@@ -1184,7 +1185,7 @@ type MutableAnfCallSite = .{ func: FuncId, result: LocalId, base: LocalId, arg_c
 
 fn find_mutable_anf_call_site_expr(func_id: FuncId, expr: AnfExpr, target_id: FuncId) MutableAnfCallSite? {
   case expr {
-    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), body) => {
+    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), _, body) => {
       if callee_fid.id == target_id.id and args.len() > 0 {
         case args[0] {
           .ALocal(base) => return .Some(
@@ -1195,7 +1196,7 @@ fn find_mutable_anf_call_site_expr(func_id: FuncId, expr: AnfExpr, target_id: Fu
       }
       find_mutable_anf_call_site_expr(func_id, body, target_id)
     },
-    .Let(_, _, body) => find_mutable_anf_call_site_expr(func_id, body, target_id),
+    .Let(_, _, _, body) => find_mutable_anf_call_site_expr(func_id, body, target_id),
     _ => .None,
   }
 }
@@ -1216,13 +1217,13 @@ type MutablePreparedCallHit = .{ result: SlotId, args: Vector<PreparedAtom> }
 
 fn find_mutable_prepared_call_hit_expr(expr: PreparedExpr, target_id: FuncId) MutablePreparedCallHit? {
   case expr {
-    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), body) => {
+    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), _, body) => {
       if callee_fid.id == target_id.id {
         return .Some(MutablePreparedCallHit.{ result, args })
       }
       find_mutable_prepared_call_hit_expr(body, target_id)
     },
-    .Let(_, _, body) => find_mutable_prepared_call_hit_expr(body, target_id),
+    .Let(_, _, _, body) => find_mutable_prepared_call_hit_expr(body, target_id),
     _ => .None,
   }
 }
@@ -1592,10 +1593,10 @@ type AnfRecordUpdateSite = .{
 
 fn find_record_update_anf_site_expr(func_id: FuncId, expr: AnfExpr) AnfRecordUpdateSite? {
   case expr {
-    .Let(result, .ARecordUpdate(.ALocal(base), fid, _, _, tid), body) => .Some(
+    .Let(result, .ARecordUpdate(.ALocal(base), fid, _, _, tid), _, body) => .Some(
       .{ func: func_id, result, base, fid, tid },
     ),
-    .Let(_, _, body) => find_record_update_anf_site_expr(func_id, body),
+    .Let(_, _, _, body) => find_record_update_anf_site_expr(func_id, body),
     _ => .None,
   }
 }
@@ -1622,10 +1623,10 @@ type PreparedRecordUpdateHit = .{
 
 fn find_prepared_record_update_hit_expr(expr: PreparedExpr) PreparedRecordUpdateHit? {
   case expr {
-    .Let(result, .ARecordUpdate(base, fid, _, can_reuse, tid), body) => .Some(
+    .Let(result, .ARecordUpdate(base, fid, _, can_reuse, tid), _, body) => .Some(
       .{ result, base, fid, can_reuse, tid },
     ),
-    .Let(_, _, body) => find_prepared_record_update_hit_expr(body),
+    .Let(_, _, _, body) => find_prepared_record_update_hit_expr(body),
     _ => .None,
   }
 }

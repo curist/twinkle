@@ -34,7 +34,7 @@ pub fn prep_diverges(expr: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, 
     .Break(_) => true,
     .Continue => true,
     .Atom(_) => false,
-    .Let(_, op, body) => prep_op_diverges(op, reg, never) or prep_diverges(body, reg, never),
+    .Let(_, op, _, body) => prep_op_diverges(op, reg, never) or prep_diverges(body, reg, never),
   }
 }
 
@@ -100,19 +100,19 @@ fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry, never: Dict<Int, Bool>) 
 // keep their `error(...)` value arm as a fall-through store, so they still type.
 fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, Bool>) PreparedExpr {
   case expr {
-    .Let(s, op, rest) => case rest {
+    .Let(s, op, sp, rest) => case rest {
       .Atom(.ASlot(s2)) => if s2.id == s.id {
         rewritten := tailify_result_op(op, reg, never)
 
         if op_has_fallthrough_arm(rewritten) {
-          .Let(s, rewritten, rest)
+          .Let(s, rewritten, sp, rest)
         } else {
-          .Let(s, op, rest)
+          .Let(s, op, sp, rest)
         }
       } else {
-        .Let(s, op, tailify_spine(rest, reg, never))
+        .Let(s, op, sp, tailify_spine(rest, reg, never))
       },
-      _ => .Let(s, op, tailify_spine(rest, reg, never)),
+      _ => .Let(s, op, sp, tailify_spine(rest, reg, never)),
     },
     _ => expr,
   }
@@ -129,7 +129,7 @@ fn expr_falls_through(expr: PreparedExpr) Bool {
     .Return(_) => false,
     .Break(_) => false,
     .Continue => false,
-    .Let(_, _, body) => expr_falls_through(body),
+    .Let(_, _, _, body) => expr_falls_through(body),
   }
 }
 
@@ -176,7 +176,7 @@ fn tailify_arm(body: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, Bool>)
 
   case body {
     .Atom(a) => .Return(.Some(a)),
-    .Let(s, op, rest) => .Let(s, op, tailify_arm(rest, reg, never)),
+    .Let(s, op, sp, rest) => .Let(s, op, sp, tailify_arm(rest, reg, never)),
     _ => body,
   }
 }

@@ -66,7 +66,7 @@ pub fn atom_is_local(a: Atom, local: LocalId) Bool {
 
 pub fn expr_references(e: AnfExpr, local: LocalId) Bool {
   case e {
-    .Let(_, op, body) => op_references_deep(op, local) or expr_references(body, local),
+    .Let(_, op, _, body) => op_references_deep(op, local) or expr_references(body, local),
     .Atom(a) => atom_is_local(a, local),
     .Return(.Some(a)) => atom_is_local(a, local),
     .Return(.None) => false,
@@ -157,7 +157,7 @@ pub fn fold_chunk(op: AnfOp, body: AnfExpr, acc: LocalId, push_id: FuncId, resul
 
 fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
   case body {
-    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == acc.id and v.id == result.id,
+    .Let(_, .AAssign(target, .ALocal(v)), _, _) => target.id == acc.id and v.id == result.id,
     _ => false,
   }
 }
@@ -199,11 +199,11 @@ fn is_control_flow_op(op: AnfOp) Bool {
 // NOWHERE else on the arm (condition 3/4/5, sound by rejection).
 fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<LocalId>) ScanResult {
   case arm {
-    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
+    .Let(local, op, _, body) => case fold_chunk(op, body, acc, push_id, local) {
       .Some(_) => {
         // fold at top level; skip past the AAssign, continue scanning the tail
         case body {
-          .Let(_, _, rest) => scan_main_arm(rest, acc, push_id, folds.append(local)),
+          .Let(_, _, _, rest) => scan_main_arm(rest, acc, push_id, folds.append(local)),
           _ => .{ ok: false, fold_sites: [], reason: "malformed fold tail" },
         }
       },
@@ -342,7 +342,7 @@ fn is_break_exit(e: AnfExpr) Bool {
 // still caught by that fallback. Keep the two together.
 fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
   case body {
-    .Let(_, op, rest) => case op {
+    .Let(_, op, _, rest) => case op {
       .AIf(_, then_e, else_e) => if is_break_exit(then_e) and !is_break_exit(else_e) {
         .Some(else_e)
       } else {
@@ -380,7 +380,7 @@ type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
 // loop for `acc` is reached before the chain ends or `acc` is observed.
 fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? {
   case after_seed {
-    .Let(local, op, body) => case op {
+    .Let(local, op, _, body) => case op {
       .ALoop(loop_body) => {
         main_opt := loop_main_arm(loop_body, acc)
         folds := case main_opt {
@@ -417,7 +417,7 @@ fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? 
 // rejected fold-bearing region from an unrelated loop)?
 fn references_fold(e: AnfExpr, acc: LocalId, push_id: FuncId) Bool {
   case e {
-    .Let(_, op, body) => is_fold_attempt(op, acc, push_id)
+    .Let(_, op, _, body) => is_fold_attempt(op, acc, push_id)
       or op_fold_ref(op, acc, push_id)
       or references_fold(body, acc, push_id),
     _ => false,
@@ -452,7 +452,7 @@ fn detect_in_expr(
   cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       // record empty-array-value locals for vector-seed recognition
       ea := empty_arr
       if is_empty_array_value(op) {
@@ -528,7 +528,7 @@ type RefoldHit = .{ acc: LocalId, family: String, push_id: FuncId }
 // over-matching just yields an (always-rejected, always-sound) extra candidate.
 fn first_refold(e: AnfExpr, str_push: FuncId, vec_push: FuncId) RefoldHit? {
   case e {
-    .Let(_, op, body) => case op_refold_hit(op, str_push, vec_push) {
+    .Let(_, op, _, body) => case op_refold_hit(op, str_push, vec_push) {
       .Some(h) => .Some(h),
       .None => first_refold(body, str_push, vec_push),
     },
@@ -592,7 +592,7 @@ fn scan_refold_loops(
   acc_cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case e {
-    .Let(loop_local, .ALoop(loop_body), rest) => {
+    .Let(loop_local, .ALoop(loop_body), _, rest) => {
       out := case claimed[loop_local.id] {
         .Some(_) => acc_cands, // claimed primary region loop
         .None => case first_refold(loop_body, str_push, vec_push) {
@@ -615,7 +615,7 @@ fn scan_refold_loops(
       out2 := scan_refold_loops(loop_body, func_id, func, str_push, vec_push, claimed, out)
       scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out2)
     },
-    .Let(_, op, rest) => {
+    .Let(_, op, _, rest) => {
       out := scan_refold_loops_op(op, func_id, func, str_push, vec_push, claimed, acc_cands)
       scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out)
     },

@@ -1,3 +1,4 @@
+use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -46,7 +47,7 @@ fn direct_value_break_module() AnfModule {
   loop_result := local(1)
   body: AnfExpr = .Let(
     loop_result,
-    .ALoop(.Break(.Some(.ALocal(payload)))),
+    .ALoop(.Break(.Some(.ALocal(payload)))), span.unknown(),
     .Atom(.ALocal(loop_result)),
   )
   func: AnfFunctionDef = .{

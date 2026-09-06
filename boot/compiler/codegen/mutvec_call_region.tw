@@ -271,7 +271,7 @@ pub fn route_caller_funcs(spec: variant_specialize.SpecializeResult) Dict<Int, B
 // needing to look ahead in a single forward walk.
 fn collect_rebind_sources(e: AnfExpr, handle: LocalId, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case e {
-    .Let(local, op, body) => collect_rebind_sources(
+    .Let(local, op, _, body) => collect_rebind_sources(
       body,
       handle,
       collect_rebind_sources_in_op(op, handle, out),
@@ -365,7 +365,7 @@ fn scan_uses(ctx: ScanCtx, e: AnfExpr, s: UseScan) UseScan {
 
 fn scan_uses_at(ctx: ScanCtx, e: AnfExpr, s: UseScan, terminal_exit_ok: Bool) UseScan {
   case e {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       s2 := ctx.scan_use_op(op, local, s)
       ctx.scan_uses_at(body, s2, terminal_exit_ok)
     },

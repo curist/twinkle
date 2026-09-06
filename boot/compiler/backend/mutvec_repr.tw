@@ -130,7 +130,7 @@ fn mark_arg0(acc: SeedAcc, args: Vector<PreparedAtom>) SeedAcc {
 // as inherent-method chains (acc.seed_op(...).seed_expr(...)).
 fn seed_expr(acc: SeedAcc, e: PreparedExpr, ids: MutVecIds) SeedAcc {
   case e {
-    .Let(slot, op, body) => acc.seed_op(slot.id, op, ids).seed_expr(body, ids),
+    .Let(slot, op, _, body) => acc.seed_op(slot.id, op, ids).seed_expr(body, ids),
     _ => acc,
   }
 }
@@ -174,7 +174,7 @@ type PropAcc = .{ handle: Dict<Int, Bool>, changed: Bool }
 
 fn propagate_expr(acc: PropAcc, e: PreparedExpr) PropAcc {
   case e {
-    .Let(slot, op, body) => acc.propagate_op(slot.id, op).propagate_expr(body),
+    .Let(slot, op, _, body) => acc.propagate_op(slot.id, op).propagate_expr(body),
     _ => acc,
   }
 }
@@ -394,7 +394,7 @@ fn collect_call_result_fams(
   acc: Dict<Int, ElemRepr>,
 ) Dict<Int, ElemRepr> {
   case e {
-    .Let(slot, op, body) => collect_call_result_fams(
+    .Let(slot, op, _, body) => collect_call_result_fams(
       body,
       upgrades,
       call_result_fams_op(slot.id, op, upgrades, acc),

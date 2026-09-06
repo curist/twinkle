@@ -251,7 +251,7 @@ fn walk_prepared_expr(
   rows: Vector<AuditRow>,
 ) Vector<AuditRow> {
   case expr {
-    .Let(result_slot, op, body) => {
+    .Let(result_slot, op, _, body) => {
       rows2 := walk_prepared_op(result_slot, op, ctx, cat, rows)
       walk_prepared_expr(body, ctx, cat, rows2)
     },

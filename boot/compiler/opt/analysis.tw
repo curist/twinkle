@@ -53,7 +53,7 @@ fn max_local_in_atom(a: Atom, m: Int) Int {
 
 fn max_local_in_expr(expr: AnfExpr, m: Int) Int {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       m2 := if local.id > m {
         local.id
       } else {

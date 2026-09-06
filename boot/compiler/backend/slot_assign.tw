@@ -28,6 +28,7 @@ use compiler.core_ir.{CorePattern, GlobalId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv, lookup_type_def}
 use compiler.type_util.{subst_type_params}
+use lib.source.span.{Span}
 
 // assign_slots_for_module builds a PreparedFunc for every function in the
 // module, using precomputed_captures for closure ABI ordering.
@@ -149,9 +150,9 @@ pub fn assign_slots(
 
 type LowerValue = { ExprValue(PreparedExpr), OpValue(PreparedOp) }
 
-type LowerWork = { ExprWork(AnfExpr), OpWork(AnfOp), FinishLet(SlotId), FinishIf(PreparedAtom) }
+type LowerWork = { ExprWork(AnfExpr), OpWork(AnfOp), FinishLet(SlotId, Span), FinishIf(PreparedAtom) }
 
-type LowerSpineEntry = .{ slot: SlotId, op: PreparedOp }
+type LowerSpineEntry = .{ slot: SlotId, op: PreparedOp, span: Span }
 
 // Fast path: walk the Let spine iteratively and recurse into ops. Recursion
 // through nested else-if chains (the deep case) is bounded by the depth limit;
@@ -173,9 +174,9 @@ fn lower_expr_at(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: Str
 
   for !done {
     case cur {
-      .Let(local, op, body) => {
+      .Let(local, op, sp, body) => {
         slot := lookup_slot_for(local_to_slot, local.id, "let result", func_name)
-        spine = .append(.{ slot, op: lower_op(op, local_to_slot, func_name, depth + 1) })
+        spine = .append(.{ slot, op: lower_op(op, local_to_slot, func_name, depth + 1), span: sp })
         cur = body
       },
       .Atom(atom) => {
@@ -198,7 +199,7 @@ fn lower_expr_at(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: Str
   i := spine.len() - 1
 
   for i >= 0 {
-    result = .Let(spine[i].slot, spine[i].op, result)
+    result = .Let(spine[i].slot, spine[i].op, spine[i].span, result)
     i = i - 1
   }
 
@@ -215,9 +216,9 @@ fn lower_expr_safe(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: S
 
     case item {
       .ExprWork(cur_expr) => case cur_expr {
-        .Let(local, op, body) => {
+        .Let(local, op, sp, body) => {
           slot := lookup_slot_for(local_to_slot, local.id, "let result", func_name)
-          work = .append(.FinishLet(slot))
+          work = .append(.FinishLet(slot, sp))
           work = .append(.ExprWork(body))
           work = .append(.OpWork(op))
         },
@@ -234,12 +235,12 @@ fn lower_expr_safe(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: S
         },
         _ => values = .append(.OpValue(lower_op(op, local_to_slot, func_name, 0))),
       },
-      .FinishLet(slot) => {
+      .FinishLet(slot, sp) => {
         body := pop_expr_value(values, "slot_assign lower_expr let body")
         values = body.rest
         op := pop_op_value(values, "slot_assign lower_expr let op")
         values = op.rest
-        values = .append(.ExprValue(.Let(slot, op.op, body.expr)))
+        values = .append(.ExprValue(.Let(slot, op.op, sp, body.expr)))
       },
       .FinishIf(condition) => {
         else_v := pop_expr_value(values, "slot_assign lower_expr if else")
@@ -439,7 +440,7 @@ fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
 
 fn collect_let_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
   case expr {
-    .Let(local, op, body) => {
+    .Let(local, op, _, body) => {
       out = .append(local.id)
       out = collect_let_op(op, out)
       collect_let_expr(body, out)
@@ -486,7 +487,7 @@ fn collect_pattern_lids(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
 // ── Pattern mono derivation (needs env for variant field types) ──────
 fn collect_pattern_local_set(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       out = collect_pattern_local_set_op(op, out)
       collect_pattern_local_set(body, out)
     },
@@ -538,7 +539,7 @@ fn collect_pattern_monos(
   out: Dict<Int, MonoType>,
 ) Dict<Int, MonoType> {
   case expr {
-    .Let(_, op, body) => {
+    .Let(_, op, _, body) => {
       out = collect_pattern_monos_op(op, func, env, out)
       collect_pattern_monos(body, func, env, out)
     },
