@@ -1,0 +1,281 @@
+//! `twinkle.debug` custom-section format: encode, decode, and PC lookup.
+//!
+//! The section is self-contained — a reader needs only the module bytes. It
+//! carries a file table (id -> path + source text), a per-function table, and a
+//! per-function line program mapping a byte offset within the function body to
+//! the `Span` the instructions at that offset originate from. Runtime stack
+//! traces decode this to turn a wasm PC into a source `file:line:col`.
+
+use lib.source.span.{Span}
+use lib.source.span as span
+
+// ── Model ───────────────────────────────────────────────────────────
+
+// One line-program entry: instructions starting at `offset` (bytes from the
+// function body content's first byte) originate at `span`.
+pub type LineEntry = .{ offset: Int, span: Span }
+
+// Per-function debug record. `body_start` is the function body content's first
+// byte as an absolute module offset, so a V8 PC maps in via `pc - body_start`.
+pub type FuncDebug = .{ func_idx: Int, body_start: Int, lines: Vector<LineEntry> }
+
+// A source file referenced by some span, carried inline so the trace renderer
+// can reconstruct source without the compiler's ephemeral registry.
+pub type FileEntry = .{ file_id: Int, path: String, source: String }
+
+pub type DebugSection = .{ files: Vector<FileEntry>, funcs: Vector<FuncDebug> }
+
+// Custom-section name and payload version.
+pub fn section_name() String {
+  "twinkle.debug"
+}
+
+fn version() Int {
+  1
+}
+
+// ── Byte writing ────────────────────────────────────────────────────
+
+fn byte_of(n: Int) Byte {
+  case Byte.from_int(n & 0xff) {
+    .Some(b) => b,
+    .None => error("debug.section: byte out of range"),
+  }
+}
+
+// Unsigned LEB128. Inputs here are always non-negative (ids, offsets, lengths).
+fn push_uleb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  out := buf
+  v := n
+
+  for true {
+    low := v & 0x7f
+    v = v >> 7
+
+    if v == 0 {
+      out = .append(byte_of(low))
+      break
+    }
+
+    out = .append(byte_of(low | 0x80))
+  }
+
+  out
+}
+
+fn push_str(buf: Vector<Byte>, s: String) Vector<Byte> {
+  bytes := s.utf8_bytes()
+  out := push_uleb(buf, bytes.len())
+
+  for b in bytes {
+    out = .append(b)
+  }
+
+  out
+}
+
+// ── Byte reading (position threaded, no cursor state) ────────────────
+
+type UlebRead = .{ value: Int, pos: Int }
+
+fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
+  result := 0
+  shift := 0
+  p := pos
+
+  for true {
+    byte := Byte.to_int(bytes[p])
+    p = p + 1
+    result = result | ((byte & 0x7f) << shift)
+
+    if (byte & 0x80) == 0 {
+      break
+    }
+
+    shift = shift + 7
+  }
+
+  .{ value: result, pos: p }
+}
+
+type StrRead = .{ value: String, pos: Int }
+
+fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
+  lr := read_uleb(bytes, pos)
+  len := lr.value
+  slice: Vector<Byte> = []
+  i := 0
+
+  for i < len {
+    slice = .append(bytes[lr.pos + i])
+    i = i + 1
+  }
+
+  s := case String.from_utf8(slice) {
+    .Some(str) => str,
+    .None => error("debug.section: invalid utf8 in section"),
+  }
+  .{ value: s, pos: lr.pos + len }
+}
+
+// ── Encode ──────────────────────────────────────────────────────────
+
+pub fn encode(section: DebugSection) Vector<Byte> {
+  out: Vector<Byte> = [byte_of(version())]
+
+  out = push_uleb(out, section.files.len())
+
+  for f in section.files {
+    out = push_uleb(out, f.file_id)
+    out = .append(byte_of(0)) // flag: 0 = inline source
+    out = push_str(out, f.path)
+    out = push_str(out, f.source)
+  }
+
+  out = push_uleb(out, section.funcs.len())
+
+  for fn_dbg in section.funcs {
+    out = push_uleb(out, fn_dbg.func_idx)
+    out = push_uleb(out, fn_dbg.body_start)
+    out = push_uleb(out, fn_dbg.lines.len())
+    prev := 0
+
+    for entry in fn_dbg.lines {
+      out = push_uleb(out, entry.offset - prev) // delta-encoded, entries are sorted
+      out = push_uleb(out, entry.span.file_id)
+      out = push_uleb(out, entry.span.start)
+      out = push_uleb(out, entry.span.end)
+      prev = entry.offset
+    }
+  }
+
+  out
+}
+
+// ── Decode ──────────────────────────────────────────────────────────
+
+// Returns .None when the payload version is not understood.
+pub fn decode(bytes: Vector<Byte>) DebugSection? {
+  if bytes.len() == 0 or Byte.to_int(bytes[0]) != version() {
+    return .None
+  }
+
+  pos := 1
+  fr := read_uleb(bytes, pos)
+  file_count := fr.value
+  pos = fr.pos
+  files: Vector<FileEntry> = []
+  fi := 0
+
+  for fi < file_count {
+    idr := read_uleb(bytes, pos)
+    file_id := idr.value
+    pos = idr.pos + 1 // skip flag byte
+    pr := read_str(bytes, pos)
+    pos = pr.pos
+    sr := read_str(bytes, pos)
+    pos = sr.pos
+    files = .append(.{ file_id, path: pr.value, source: sr.value })
+    fi = fi + 1
+  }
+
+  cr := read_uleb(bytes, pos)
+  func_count := cr.value
+  pos = cr.pos
+  funcs: Vector<FuncDebug> = []
+  ci := 0
+
+  for ci < func_count {
+    ir := read_uleb(bytes, pos)
+    func_idx := ir.value
+    pos = ir.pos
+    br := read_uleb(bytes, pos)
+    body_start := br.value
+    pos = br.pos
+    lr := read_uleb(bytes, pos)
+    line_count := lr.value
+    pos = lr.pos
+    lines: Vector<LineEntry> = []
+    prev := 0
+    li := 0
+
+    for li < line_count {
+      dr := read_uleb(bytes, pos)
+      offset := prev + dr.value
+      pos = dr.pos
+      fidr := read_uleb(bytes, pos)
+      pos = fidr.pos
+      startr := read_uleb(bytes, pos)
+      pos = startr.pos
+      endr := read_uleb(bytes, pos)
+      pos = endr.pos
+      lines = .append(.{ offset, span: span.new(fidr.value, startr.value, endr.value) })
+      prev = offset
+      li = li + 1
+    }
+
+    funcs = .append(.{ func_idx, body_start, lines })
+    ci = ci + 1
+  }
+
+  .Some(.{ files, funcs })
+}
+
+// ── Lookup ──────────────────────────────────────────────────────────
+
+// The span whose instructions enclose `body_rel` (bytes from the function body
+// content start): the last entry with offset <= body_rel.
+pub fn span_at(fn_dbg: FuncDebug, body_rel: Int) Span? {
+  lines := fn_dbg.lines
+  n := lines.len()
+
+  if n == 0 or body_rel < lines[0].offset {
+    return .None
+  }
+
+  lo := 0
+  hi := n // first index with offset > body_rel
+
+  for lo < hi {
+    mid := (lo + hi) / 2
+
+    if lines[mid].offset <= body_rel {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+
+  .Some(lines[lo - 1].span)
+}
+
+// Map an absolute module PC to its source span: pick the function whose body
+// content starts at the greatest body_start <= pc, then locate the line entry.
+pub fn lookup(section: DebugSection, pc: Int) Span? {
+  best: FuncDebug? = .None
+
+  for f in section.funcs {
+    if f.body_start <= pc {
+      case best {
+        .Some(b) => if f.body_start > b.body_start {
+          best = .Some(f)
+        },
+        .None => best = .Some(f),
+      }
+    }
+  }
+
+  chosen := try best
+  chosen.span_at(pc - chosen.body_start)
+}
+
+// Look up a file's inline source by id (renderer reconstructs a registry).
+pub fn file_source(section: DebugSection, file_id: Int) FileEntry? {
+  for f in section.files {
+    if f.file_id == file_id {
+      return .Some(f)
+    }
+  }
+
+  .None
+}

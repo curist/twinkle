@@ -1,0 +1,108 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.section
+use lib.debug.section.{DebugSection, FileEntry, FuncDebug, LineEntry}
+use lib.source.span.{Span}
+
+fn sample() DebugSection {
+  files: Vector<FileEntry> = [
+    .{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" },
+    .{ file_id: 3, path: "util.tw", source: "pub fn f() Int {\n  0\n}\n" },
+  ]
+  funcs: Vector<FuncDebug> = [
+    .{
+      func_idx: 5,
+      body_start: 200,
+      lines: [
+        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
+        .{ offset: 7, span: .{ file_id: 0, start: 7, end: 17 } },
+        .{ offset: 19, span: .{ file_id: 3, start: 19, end: 20 } },
+      ],
+    },
+    .{
+      func_idx: 6,
+      body_start: 260,
+      lines: [.{ offset: 0, span: .{ file_id: 3, start: 19, end: 20 } }],
+    },
+  ]
+  .{ files, funcs }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("debug section")
+    .test(
+      "encode/decode round-trips files, funcs, and line program",
+      fn() {
+        original := sample()
+        decoded := try section.decode(section.encode(original)).ok_or("decode failed")
+
+        try assert.equal(decoded.files.len(), 2)
+        try assert.equal(decoded.files[1].path, "util.tw")
+        try assert.equal(decoded.files[1].source, "pub fn f() Int {\n  0\n}\n")
+
+        try assert.equal(decoded.funcs.len(), 2)
+        f0 := decoded.funcs[0]
+        try assert.equal(f0.func_idx, 5)
+        try assert.equal(f0.body_start, 200)
+        try assert.equal(f0.lines.len(), 3)
+        // Delta-encoded offsets must round-trip to absolute.
+        try assert.equal(f0.lines[2].offset, 19)
+        try assert.equal(f0.lines[2].span.file_id, 3)
+        try assert.equal(f0.lines[2].span.end, 20)
+        .Ok({})
+      },
+    )
+    .test(
+      "span_at finds the enclosing entry (last offset <= body_rel)",
+      fn() {
+        f := sample().funcs[0]
+
+        // Before the first entry: no span.
+        try assert.is_none(f.span_at(-1))
+
+        s0 := try f.span_at(3).ok_or("no span at 3")
+        try assert.equal(s0.start, 0)
+
+        s1 := try f.span_at(7).ok_or("no span at 7")
+        try assert.equal(s1.start, 7)
+
+        // Between entries falls back to the preceding one.
+        s1b := try f.span_at(18).ok_or("no span at 18")
+        try assert.equal(s1b.start, 7)
+
+        s2 := try f.span_at(100).ok_or("no span at 100")
+        try assert.equal(s2.start, 19)
+        .Ok({})
+      },
+    )
+    .test(
+      "lookup maps an absolute PC through body_start",
+      fn() {
+        sec := sample()
+
+        // PC 207 is in func 5 (body_start 200) at body_rel 7.
+        s := try sec.lookup(207).ok_or("no lookup at 207")
+        try assert.equal(s.start, 7)
+
+        // PC 260 is the start of func 6.
+        s2 := try sec.lookup(260).ok_or("no lookup at 260")
+        try assert.equal(s2.file_id, 3)
+
+        // Before any function body.
+        try assert.is_none(sec.lookup(10))
+        .Ok({})
+      },
+    )
+    .test(
+      "decode rejects an unknown version byte",
+      fn() {
+        b99 := try Byte.from_int(99).ok_or("byte")
+        try assert.is_none(section.decode([b99]))
+        empty: Vector<Byte> = []
+        try assert.is_none(section.decode(empty))
+        .Ok({})
+      },
+    )
+}
