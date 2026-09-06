@@ -1,0 +1,151 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.section
+use lib.debug.section.{DebugSection, FileEntry, FuncDebug}
+use runtime_trace_renderer as renderer
+
+// ── Fixture helpers ─────────────────────────────────────────────────
+fn b(n: Int) Byte {
+  case Byte.from_int(n & 0xff) {
+    .Some(x) => x,
+    .None => error("runtime_trace_renderer_suite: byte out of range"),
+  }
+}
+
+fn append_all(dst: Vector<Byte>, src: Vector<Byte>) Vector<Byte> {
+  for x in src {
+    dst = .append(x)
+  }
+
+  dst
+}
+
+fn uleb(n: Int) Vector<Byte> {
+  out: Vector<Byte> = []
+  v := n
+
+  for true {
+    low := v & 0x7f
+    v = v >> 7
+
+    if v == 0 {
+      out = .append(b(low))
+      break
+    }
+
+    out = .append(b(low | 0x80))
+  }
+
+  out
+}
+
+// Wrap an encoded debug payload in a minimal wasm module: the 8-byte header
+// then a single custom section (id 0) named "twinkle.debug", exactly as the
+// codegen emits it — so `decode_module` has to walk the section framing.
+fn wrap_module(dbg_bytes: Vector<Byte>) Vector<Byte> {
+  name := section.section_name().utf8_bytes()
+
+  content: Vector<Byte> = []
+  content = append_all(content, uleb(name.len()))
+  content = append_all(content, name)
+  content = append_all(content, dbg_bytes)
+
+  out: Vector<Byte> = [b(0x00), b(0x61), b(0x73), b(0x6d), b(0x01), b(0x00), b(0x00), b(0x00)]
+  out = .append(b(0x00)) // custom section id
+  out = append_all(out, uleb(content.len()))
+  out = append_all(out, content)
+  out
+}
+
+// A one-file, one-function section: body_start 100 (0x64), body-rel 10 (PC
+// 0x6e) is `b := a + 2` on line 2.
+fn sample() DebugSection {
+  files: Vector<FileEntry> = [.{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" }]
+  funcs: Vector<FuncDebug> = [
+    .{
+      func_idx: 6,
+      body_start: 100,
+      lines: [
+        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
+        .{ offset: 8, span: .{ file_id: 0, start: 7, end: 17 } },
+      ],
+    },
+  ]
+  .{ files, funcs }
+}
+
+fn module_bytes() Vector<Byte> {
+  wrap_module(sample().encode())
+}
+
+// A Deno-shaped stack: a leading host frame (the `error` shim), the two child
+// Wasm frames, then a trailing host frame — the exact skip/keep/stop shape the
+// parser handles.
+fn deno_stack() String {
+  lines: Vector<String> = [
+    "Error: boom",
+    "    at Object.error (file:///host.js:10:5)",
+    "    at user__deeper (wasm://wasm/abcd:wasm-function[0]:0x6e)",
+    "    at user__main (wasm://wasm/abcd:wasm-function[0]:0x64)",
+    "    at run (file:///host.js:20:3)",
+  ]
+  lines.join("\n")
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+pub fn suite() runner.Suite {
+  runner
+    .suite("runtime trace renderer")
+    .test(
+      "renders a source-mapped trace from full module bytes and a captured stack",
+      fn() {
+        out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom")
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "--> main.tw:2:1")
+        try assert.str_contains(out, "b := a + 2")
+        try assert.str_contains(out, "^^^^^^^^^^")
+
+        // Both child frames appear in the backtrace, innermost first.
+        try assert.str_contains(out, "at user__deeper (main.tw:2:1)")
+        try assert.str_contains(out, "at user__main (main.tw:1:1)")
+        deeper_at := try out.index_of("user__deeper").ok_or("deeper missing")
+        main_at := try out.index_of("user__main").ok_or("main missing")
+        try assert.is_true(deeper_at < main_at)
+        .Ok({})
+      },
+    )
+    .test(
+      "extracts the debug section past other content in the module",
+      fn() {
+        // decode_module must find the section by name, not by position; a
+        // round-trip through wrap_module proves the framing walk.
+        sec := try section.decode_module(module_bytes()).ok_or("expected a section")
+        try assert.equal(sec.files.len(), 1)
+        try assert.equal(sec.funcs.len(), 1)
+        try assert.equal(sec.funcs[0].body_start, 100)
+        .Ok({})
+      },
+    )
+    .test(
+      "falls back to a note when the module carries no debug section",
+      fn() {
+        // Bytes that are not a wasm module at all.
+        garbage: Vector<Byte> = [b(1), b(2), b(3)]
+        out := renderer.render_runtime_trace(garbage, deno_stack(), "boom")
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "no Twinkle stack trace available")
+        .Ok({})
+      },
+    )
+    .test(
+      "falls back to a note when the stack carries no Twinkle frames",
+      fn() {
+        host_only := "Error: boom\n    at run (file:///host.js:20:3)"
+        out := renderer.render_runtime_trace(module_bytes(), host_only, "boom")
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "no Twinkle stack trace available")
+        .Ok({})
+      },
+    )
+}

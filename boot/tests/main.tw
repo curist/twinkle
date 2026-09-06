@@ -42,12 +42,9 @@ use .suites.codegen_integration_suite
 use .suites.core_fold_suite
 use .suites.core_ir_suite
 use .suites.dce_funcs_suite
+use .suites.debug_section_suite
 use .suites.defer_suite
 use .suites.dependency_graph_suite
-use .suites.debug_section_suite
-use .suites.stack_parse_suite
-use .suites.symbolicate_suite
-use .suites.trace_render_suite
 use .suites.diag_render_suite
 use .suites.diag_suite
 use .suites.dict_builder_shapes_suite
@@ -57,11 +54,11 @@ use .suites.dry_run_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
 use .suites.field_backed_collection_suite
+use .suites.file_identity_suite
 use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
 use .suites.fixresult_reuse_suite
-use .suites.file_identity_suite
 use .suites.fmt_suite
 use .suites.graph_scc_suite
 use .suites.group_resolution_suite
@@ -126,6 +123,7 @@ use .suites.return_field_ownership_suite
 use .suites.rewrite_suite
 use .suites.route_typed_vec_suite
 use .suites.runtime_suite
+use .suites.runtime_trace_renderer_suite
 use .suites.scripting_string_suite
 use .suites.scripting_vector_suite
 use .suites.semantic_closure_rebinding_suite
@@ -137,6 +135,7 @@ use .suites.signature_drift_suite
 use .suites.signature_loader_suite
 use .suites.slot_assign_suite
 use .suites.source_suite
+use .suites.stack_parse_suite
 use .suites.stdlib_buffer_suite
 use .suites.stdlib_crypto_suite
 use .suites.stdlib_heap_suite
@@ -149,8 +148,10 @@ use .suites.stdlib_testing_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.string_literal_suite
+use .suites.symbolicate_suite
 use .suites.tail_match_result_typing_suite
 use .suites.task_suite
+use .suites.trace_render_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
 use .suites.typed_record_fields_suite
@@ -260,6 +261,7 @@ runner.run_all([
   stack_parse_suite.suite(),
   symbolicate_suite.suite(),
   trace_render_suite.suite(),
+  runtime_trace_renderer_suite.suite(),
   diag_render_suite.suite(),
   file_identity_suite.suite(),
   fix_suite.suite(),

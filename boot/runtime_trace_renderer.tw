@@ -1,0 +1,53 @@
+//! Top-level runtime trap-trace renderer (the eventual `--lib` module).
+//!
+//! `render_runtime_trace` is the single entry point the host calls at the
+//! `run_wasm` boundary after a child module traps. It is pure in its three
+//! arguments — the child module's own bytes, the V8/Deno `.stack` string, and
+//! the trap message — so it needs neither the compiler's ephemeral state nor
+//! the suspended CLI instance: it runs in a dedicated renderer instance loaded
+//! beside `boot.wasm`.
+//!
+//! It decodes the embedded `twinkle.debug` section from the module bytes,
+//! parses the stack into the child's Wasm frames, and renders the source-mapped
+//! trace via `lib.debug.trace`. When the module carries no usable debug section
+//! (stripped, or built by a non-debug toolchain) it degrades to the trap
+//! headline plus a note rather than promising a trace that cannot be produced.
+
+use lib.debug.section
+use lib.debug.stack.{parse_v8_stack}
+use lib.debug.trace
+use lib.source.registry
+use lib.source.render
+use lib.source.report.{RenderConfig, Report}
+
+// ANSI color is Phase-4 polish; swap this for `report.default_config()` to
+// match the compiler's diagnostic coloring once the host wiring lands.
+fn render_config() RenderConfig {
+  .{ color: false }
+}
+
+// Best-effort boundary: the module has no decodable `twinkle.debug` section, so
+// there is nothing to map frames against. Emit just the trap headline and say
+// so, matching the "all-host stack" note shape in `lib.debug.trace`.
+fn no_debug_fallback(message: String, config: RenderConfig) String {
+  report: Report = .{ severity: .Error, title: message, labels: [], help_lines: [] }
+  head := render.render(report, registry.empty(), config)
+  "${head}\n  (no Twinkle stack trace available)"
+}
+
+/// Render a source-mapped trap trace for a child module that just trapped.
+/// `bytes` is the child module's own wasm (carrying its `twinkle.debug`
+/// section), `stack` is the host's captured `.stack`, and `message` is the trap
+/// message. Falls back to a headline-only note when no debug section or no
+/// Twinkle frame is available.
+pub fn render_runtime_trace(bytes: Vector<Byte>, stack: String, message: String) String {
+  config := render_config()
+
+  case section.decode_module(bytes) {
+    .None => no_debug_fallback(message, config),
+    .Some(sec) => {
+      frames := parse_v8_stack(stack)
+      trace.render_trace(sec, frames, message, config)
+    },
+  }
+}

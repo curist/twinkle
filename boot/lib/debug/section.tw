@@ -6,11 +6,10 @@
 //! the `Span` the instructions at that offset originate from. Runtime stack
 //! traces decode this to turn a wasm PC into a source `file:line:col`.
 
-use lib.source.span.{Span}
 use lib.source.span as span
+use lib.source.span.{Span}
 
 // ── Model ───────────────────────────────────────────────────────────
-
 // One line-program entry: instructions starting at `offset` (bytes from the
 // function body content's first byte) originate at `span`.
 pub type LineEntry = .{ offset: Int, span: Span }
@@ -35,7 +34,6 @@ fn version() Int {
 }
 
 // ── Byte writing ────────────────────────────────────────────────────
-
 fn byte_of(n: Int) Byte {
   case Byte.from_int(n & 0xff) {
     .Some(b) => b,
@@ -75,7 +73,6 @@ fn push_str(buf: Vector<Byte>, s: String) Vector<Byte> {
 }
 
 // ── Byte reading (position threaded, no cursor state) ────────────────
-
 type UlebRead = .{ value: Int, pos: Int }
 
 fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
@@ -86,7 +83,7 @@ fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
   for true {
     byte := Byte.to_int(bytes[p])
     p = p + 1
-    result = result | ((byte & 0x7f) << shift)
+    result = result | (byte & 0x7f) << shift
 
     if (byte & 0x80) == 0 {
       break
@@ -119,7 +116,6 @@ fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
 }
 
 // ── Encode ──────────────────────────────────────────────────────────
-
 pub fn encode(section: DebugSection) Vector<Byte> {
   out: Vector<Byte> = [byte_of(version())]
 
@@ -153,7 +149,6 @@ pub fn encode(section: DebugSection) Vector<Byte> {
 }
 
 // ── Decode ──────────────────────────────────────────────────────────
-
 // Returns .None when the payload version is not understood.
 pub fn decode(bytes: Vector<Byte>) DebugSection? {
   if bytes.len() == 0 or Byte.to_int(bytes[0]) != version() {
@@ -221,8 +216,57 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
   .Some(.{ files, funcs })
 }
 
-// ── Lookup ──────────────────────────────────────────────────────────
+// Locate the `twinkle.debug` custom section inside a full wasm module and
+// decode its payload. A module is a header (`\0asm` + version) followed by
+// sections `id, uleb(len), payload`; a custom section (id 0) begins with a
+// `uleb`-prefixed name, and ours carries the encoded section after that name.
+// Returns .None when the bytes are not a wasm module, carry no debug section,
+// or hold an unrecognized version — the renderer's best-effort boundary.
+pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
+  n := module_bytes.len()
 
+  // 8-byte header: magic "\0asm" then version. Only the magic is checked.
+  if n < 8
+    or Byte.to_int(module_bytes[0]) != 0x00
+    or Byte.to_int(module_bytes[1]) != 0x61
+    or Byte.to_int(module_bytes[2]) != 0x73
+    or Byte.to_int(module_bytes[3]) != 0x6d {
+    return .None
+  }
+
+  target := section_name()
+  pos := 8
+
+  for pos < n {
+    id := Byte.to_int(module_bytes[pos])
+    pos = pos + 1
+    lr := read_uleb(module_bytes, pos)
+    content_start := lr.pos
+    content_end := content_start + lr.value
+
+    if id == 0 {
+      nr := read_str(module_bytes, content_start)
+
+      if nr.value == target {
+        payload: Vector<Byte> = []
+        i := nr.pos
+
+        for i < content_end {
+          payload = .append(module_bytes[i])
+          i = i + 1
+        }
+
+        return decode(payload)
+      }
+    }
+
+    pos = content_end
+  }
+
+  .None
+}
+
+// ── Lookup ──────────────────────────────────────────────────────────
 // The span whose instructions enclose `body_rel` (bytes from the function body
 // content start): the last entry with offset <= body_rel.
 pub fn span_at(fn_dbg: FuncDebug, body_rel: Int) Span? {
