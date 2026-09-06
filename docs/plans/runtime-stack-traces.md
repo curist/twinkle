@@ -451,10 +451,22 @@ and a synchronous non-task loader), `childTrapHandler` is scoped to the
 
 ### Phase 1 — File identity, span threading, source-data flow, `twinkle.debug`
 
-**Progress (2026-09-06, branch `feat/runtime-stack-traces`):** file identity and
-span threading are **DONE and self-host-verified** (compiles, full boot suite
-green, `make stage2` reaches fixed point). Remaining: `SpanMark`, `encode_instrs`
-line program, `DebugSourceTable`, `twinkle.debug` serialization, `boot/lib/debug/`.
+**Phase 1 COMPLETE (2026-09-06, branch `feat/runtime-stack-traces`).** The whole
+producer side — file identity, span threading, `SpanMark`, the line program, the
+source table, `twinkle.debug` serialization, and the `boot/lib/debug/` codec — is
+implemented, unit-tested, and self-host-verified (`make stage2` reaches its fixed
+point after every step; full boot suite + JS section tests green). Six commits;
+the emitted section decodes to a function/line program whose spans map to the
+exact source ranges (`x + 1`, `y * 2` verified byte-for-byte).
+
+**Known follow-up (size):** the boot compiler references nearly every module, so
+its own `twinkle.debug` section is large (~5 MB; boot.wasm roughly doubles). The
+file table is already filtered to referenced files (a trivial program embeds two
+files), but the compiler is inherently the worst case. Pull **Phase 4
+`--strip-debug`** forward before any `bundle-cli`/production/self-host artifact
+ships, and have the Makefile's boot builds strip. Line-program-only (paths, no
+inline source) is the lighter middle option the format's per-file flag byte
+already leaves room for.
 
 - **[DONE] File identity** (Component 3a): `cache.Store` owns a stable
   `canonical_path → file_id` allocator (`file_id_for`); `analyze.parse_cached`
@@ -476,20 +488,28 @@ line program, `DebugSourceTable`, `twinkle.debug` serialization, `boot/lib/debug
   ANF→Prepared boundary (`LowerSpineEntry.span` + `FinishLet(slot, span)`);
   every rewrite pass carries `sp` through, synthetic/compiler-generated lets use
   `span.unknown()` (sentinel `file_id = -1`).
-- Add the `SpanMark(Span)` `Instr` variant; insert it in the `emit/*.tw` layer
-  before statements/calls/trap-ops; handle it as a no-op in every exhaustive
-  `Instr` match and in `collect_ref_funcs_instr`.
-- In `encode_instrs`, consume `SpanMark` as zero bytes and record
-  `(current_byte_offset → span)` into the current function's line program; record
-  each function's absolute instruction range alongside the function table.
-- **Source-data flow** (Component 3b): build the `DebugSourceTable` from the
-  compilation-wide file table, add it to `PipelineArtifacts`, and thread it into
-  `codegen_wasm`/`link_program`/`emit_linked_wasm`.
-- Serialize the `twinkle.debug` section (versioned; file table with path +
-  source text; function table; per-function line program, delta-encoded).
-- New `boot/lib/debug/` module: section encode/decode + offset→span binary
-  search (with base translation). Boot unit tests for encode/decode round-trip
-  and lookup.
+- **[DONE] `SpanMark(Span)` `Instr` variant** (`wasm_ir.tw`), emitted before each
+  let-bound op in `emit_let`/`emit_tail_let` (skipping `span.unknown()`). No-op in
+  the byte encoder, the WAT emitter, and `collect_ref_funcs_instr` (its `_`
+  default). Proven byte-identical output before consumption existed.
+- **[DONE] Line-program capture** in `encode_code_section_payload`: each SpanMark
+  records `(body-relative offset → span)` into the function's line program;
+  `emit_wasm_parts` translates each function's payload-relative body start into an
+  absolute module offset (V8's module-absolute PC space). *(Deviation: store only
+  `body_start`, not `body_end` — the lookup selects the function by greatest
+  `body_start ≤ pc`, which is exact for the contiguous code section; wasm PCs are
+  always inside a body.)*
+- **[DONE] Source-data flow** (Component 3b): `cache.Store` retains a source
+  record per file_id (recorded in `parse_cached`); `module_compiler` builds
+  `PipelineArtifacts.debug_files`, threaded through
+  `codegen_wasm`/`link_program`/`LinkedModule`/`emit_wasm_parts`.
+- **[DONE] `twinkle.debug` serialization** (versioned; file table with path +
+  inline source; function table; per-function delta-encoded line program), filtered
+  to referenced files.
+- **[DONE] `boot/lib/debug/section.tw`**: encode/decode + `span_at`/`lookup`
+  (function-by-body_start + line binary search). Unit-tested round-trip, boundary
+  cases, PC lookup, version rejection (`debug_section_suite`); JS section-shape
+  test in `externs.test.mjs`.
 
 ### Phase 2 — Boundary capture + rendering (end-to-end for `error()`)
 - Add the optional internal `childTrapHandler(trapInfo, childBytes)` option
