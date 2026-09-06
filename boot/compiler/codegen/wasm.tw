@@ -16,6 +16,8 @@ use compiler.codegen.wasm_ir.{
   ImportDef, Instr, MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 use compiler.codegen.wasm_type_util.{val_type_eq}
+use lib.debug.section
+use lib.source.span.{Span}
 
 // ── Byte buffer primitives ─────────────────────────────────────────────
 type WasmBuf = .{ buf: Buffer, len: Int }
@@ -798,6 +800,32 @@ type CodeSectionCache = .{
   func_idx_cache: Dict<String, Int>,
   global_idx_cache: Dict<String, Int>,
   data_idx_cache: Dict<String, Int>,
+  // Debug line program for the function currently being encoded: each SpanMark
+  // records (byte offset within the function body -> span). Reset per function.
+  lines: Vector<section.LineEntry>,
+}
+
+fn record_line(cache: CodeSectionCache, offset: Int, span: Span) CodeSectionCache {
+  cache.lines = .append(.{ offset, span })
+  cache
+}
+
+fn clear_lines(cache: CodeSectionCache) CodeSectionCache {
+  cache.lines = []
+  cache
+}
+
+// Byte length of the unsigned-LEB128 encoding of a non-negative Int.
+fn uleb_len(n: Int) Int {
+  count := 1
+  v := n >> 7
+
+  for v != 0 {
+    count = count + 1
+    v = v >> 7
+  }
+
+  count
 }
 
 type CachedIdxResult = .{ idx: Int, cache: CodeSectionCache }
@@ -812,6 +840,7 @@ fn empty_code_section_cache() CodeSectionCache {
     func_idx_cache: Dict.new(),
     global_idx_cache: Dict.new(),
     data_idx_cache: Dict.new(),
+    lines: [],
   }
 }
 
@@ -847,6 +876,7 @@ fn cached_type_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache,
           data_idx_cache: cache.data_idx_cache,
+          lines: cache.lines,
         },
       }
     },
@@ -865,6 +895,7 @@ fn cached_func_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
           func_idx_cache: cache.func_idx_cache.set(name, idx),
           global_idx_cache: cache.global_idx_cache,
           data_idx_cache: cache.data_idx_cache,
+          lines: cache.lines,
         },
       }
     },
@@ -883,6 +914,7 @@ fn cached_global_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cac
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache.set(name, idx),
           data_idx_cache: cache.data_idx_cache,
+          lines: cache.lines,
         },
       }
     },
@@ -901,6 +933,7 @@ fn cached_data_idx_of(ctx: WasmCtx, name: String, cache: CodeSectionCache) Cache
           func_idx_cache: cache.func_idx_cache,
           global_idx_cache: cache.global_idx_cache,
           data_idx_cache: cache.data_idx_cache.set(name, idx),
+          lines: cache.lines,
         },
       }
     },
@@ -933,9 +966,17 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
   groups
 }
 
-fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) WasmBuf {
+// A function's debug info gathered as its body is encoded. `body_start` is the
+// byte offset (relative to the code-section payload) of the body content's first
+// byte; emit_wasm_parts adds the payload's module offset to make it absolute.
+type CapturedFunc = .{ func_idx: Int, body_start: Int, lines: Vector<section.LineEntry> }
+
+type CodeSectionResult = .{ payload: WasmBuf, funcs: Vector<CapturedFunc> }
+
+fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) CodeSectionResult {
   payload := empty_wasm_buf().emit_u32_leb(funcs.len())
   cache := empty_code_section_cache()
+  captured: Vector<CapturedFunc> = []
 
   for f in funcs {
     // Encode function body into a temporary buffer to measure its size.
@@ -948,18 +989,24 @@ fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) WasmBuf {
       body_buf = .encode_val_type_into(g.ty, ctx)
     }
 
+    cache = clear_lines(cache)
     instr_result := body_buf.encode_instrs_cached(f.body, empty_label_ctx(), ctx, cache)
     body_buf = instr_result.buf
     cache = instr_result.cache
+    body_lines := cache.lines
     body_buf = .emit_u8(0x0B) // end
 
-    // Prefix entry with u32 byte size.
+    // Prefix entry with u32 byte size. The body content begins in the payload
+    // right after the size LEB, i.e. at the payload length recorded here.
     payload = .emit_u32_leb(body_buf.len)
+    body_start := payload.len
     payload = .emit_wasm_buf(body_buf)
     body_buf.buf.free()
+
+    captured = .append(.{ func_idx: ctx.func_idx_of(f.name), body_start, lines: body_lines })
   }
 
-  payload
+  .{ payload, funcs: captured }
 }
 
 fn encode_data_count_section_payload(data: Vector<DataSegment>) WasmBuf {
@@ -1394,9 +1441,10 @@ fn encode_instr_cached(
     .MemorySize => {
       .{ buf: buf.emit_u8(0x3F).emit_u8(0x00), cache } // memory.size mem=0
     },
-    // Debug pseudo-instruction: emits no bytes. The line-program capture reads
-    // the span in the body-encoding loop (see encode_instrs), not here.
-    .SpanMark(_) => .{ buf, cache },
+    // Debug pseudo-instruction: emits no bytes, but records the current byte
+    // offset within the function body so the twinkle.debug line program can map
+    // it back to source. `buf.len` is body-relative here (the body buffer).
+    .SpanMark(sp) => .{ buf, cache: record_line(cache, buf.len, sp) },
   }
 }
 
@@ -1634,9 +1682,21 @@ fn emit_wasm_parts(
     buf = .emit_section_into(12, encode_data_count_section_payload(data))
   }
 
-  // 10. Code section (id=10)
+  // 10. Code section (id=10). Capture per-function debug info and translate the
+  // payload-relative body offsets into absolute module offsets (V8 reports PCs
+  // in module-absolute space — pinned in Phase 0).
+  module_debug: Vector<section.FuncDebug> = []
+
   if funcs.len() > 0 {
-    buf = .emit_section_into(10, encode_code_section_payload(funcs, ctx))
+    code := encode_code_section_payload(funcs, ctx)
+    payload_module_offset := buf.len + 1 + uleb_len(code.payload.len)
+    buf = .emit_section_into(10, code.payload)
+
+    for cf in code.funcs {
+      module_debug = .append(
+        .{ func_idx: cf.func_idx, body_start: payload_module_offset + cf.body_start, lines: cf.lines },
+      )
+    }
   }
 
   t4 := date.now()
@@ -1652,6 +1712,15 @@ fn emit_wasm_parts(
 
   if imports.len() > 0 or funcs.len() > 0 {
     buf = .emit_section_into(0x00, encode_name_section_payload(imports, funcs, ctx))
+  }
+
+  // twinkle.debug custom section (id=0): source-mapped line program. The file
+  // table is populated once the source table is threaded here; for now the line
+  // program's spans carry file ids that the renderer resolves via that table.
+  if module_debug.len() > 0 {
+    dbg_bytes := section.encode(.{ files: [], funcs: module_debug })
+    dbg_payload := empty_wasm_buf().emit_name(section.section_name()).emit_bytes(dbg_bytes)
+    buf = .emit_section_into(0x00, dbg_payload)
   }
 
   buf

@@ -69,6 +69,49 @@ test("compiler emits the standard WebAssembly function name section", async () =
   );
 });
 
+test("compiler emits the twinkle.debug section with a versioned line program", async () => {
+  const wasm = await compile(fix("extern_ref.tw"));
+  const mod = new WebAssembly.Module(wasm);
+  const sections = WebAssembly.Module.customSections(mod, "twinkle.debug");
+
+  assert.equal(sections.length, 1);
+  const u = new Uint8Array(sections[0]);
+  let p = 0;
+  const uleb = () => {
+    let v = 0;
+    let s = 0;
+    let x;
+    do {
+      x = u[p++];
+      v |= (x & 0x7f) << s;
+      s += 7;
+    } while (x & 0x80);
+    return v;
+  };
+
+  assert.equal(u[p++], 1, "version byte");
+  const fileCount = uleb();
+  assert.equal(fileCount, 0, "file table not populated yet");
+  const funcCount = uleb();
+  assert.ok(funcCount > 0, "at least one function has debug info");
+
+  let sawLine = false;
+  for (let i = 0; i < funcCount; i++) {
+    uleb(); // func_idx
+    const bodyStart = uleb();
+    assert.ok(bodyStart > 0 && bodyStart < u.length + wasm.length, "plausible body_start");
+    const lineCount = uleb();
+    for (let j = 0; j < lineCount; j++) {
+      uleb(); // delta offset
+      uleb(); // file_id
+      uleb(); // span start
+      uleb(); // span end
+      sawLine = true;
+    }
+  }
+  assert.ok(sawLine, "at least one line-program entry maps an offset to a span");
+});
+
 test("runtime auto-marshals from the section: externref raw, strings decoded", async () => {
   const CTX = { tag: "the-real-ctx" };
   let drewWith;
