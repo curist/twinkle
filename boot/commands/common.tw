@@ -112,7 +112,6 @@ pub fn format_analysis_diags_with_env(env: ResolvedEnv?, diags: Vector<analyze.A
       .Err(_) => "",
     }
     reg := registry.empty()
-    registry.add_file(reg, d.identity.path, source)
     ctx := diag_render.RenderCtx.{
       registry: reg,
       env,
@@ -121,6 +120,11 @@ pub fn format_analysis_diags_with_env(env: ResolvedEnv?, diags: Vector<analyze.A
       type_names: .Some(d.type_names),
     }
     rep := diag_render.to_report(d.kind, ctx)
+    fid := case report.primary_file_id(rep) {
+      .Some(id) => id,
+      .None => 0,
+    }
+    registry.add_file_with_id(reg, fid, d.identity.path, source)
     parts = .append(render.render(rep, reg, config))
   }
 
@@ -138,7 +142,6 @@ pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
       .Err(_) => "",
     }
     reg := registry.empty()
-    registry.add_file(reg, d.identity.path, source)
     ctx := diag_render.RenderCtx.{
       registry: reg,
       env: .None,
@@ -147,6 +150,11 @@ pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
       type_names: .Some(d.type_names),
     }
     rep := diag_render.to_report(d.kind, ctx)
+    fid := case report.primary_file_id(rep) {
+      .Some(id) => id,
+      .None => 0,
+    }
+    registry.add_file_with_id(reg, fid, d.identity.path, source)
     eprintln(render.render(rep, reg, config))
     eprintln("")
   }

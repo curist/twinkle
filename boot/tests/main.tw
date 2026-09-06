@@ -57,6 +57,7 @@ use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
 use .suites.fixresult_reuse_suite
+use .suites.file_identity_suite
 use .suites.fmt_suite
 use .suites.graph_scc_suite
 use .suites.group_resolution_suite
@@ -252,6 +253,7 @@ runner.run_all([
   query_analyze_suite.suite(),
   ast_path_suite.suite(),
   diag_render_suite.suite(),
+  file_identity_suite.suite(),
   fix_suite.suite(),
   lint_command_suite.suite(),
   lint_pass_suite.suite(),

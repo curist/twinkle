@@ -1,0 +1,49 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.query.cache
+use lib.source.registry
+use lib.source.span.{Span}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("file identity")
+    .test(
+      "distinct paths get distinct stable ids",
+      fn() {
+        store := cache.empty()
+
+        a := store.file_id_for("/proj/main.tw")
+        b := a.store.file_id_for("/proj/util.tw")
+        // Re-request the first path from the latest store.
+        again := b.store.file_id_for("/proj/main.tw")
+
+        try assert.is_true(a.file_id != b.file_id)
+        try assert.equal(again.file_id, a.file_id)
+        .Ok({})
+      },
+    )
+    .test(
+      "sparse explicit-id registry round-trips a span to its source line",
+      fn() {
+        // Ids 0 and 5 are non-contiguous, mirroring a store that retains
+        // allocations for modules outside the current dependency closure.
+        reg := registry.empty()
+        reg = reg.add_file_with_id(0, "a.tw", "first\nsecond\n")
+        reg = reg.add_file_with_id(5, "b.tw", "alpha\nbeta\ngamma\n")
+
+        // "beta" starts at offset 6 in b.tw (after "alpha\n"), on line 2.
+        s: Span = .{ file_id: 5, start: 6, end: 10 }
+        lc := try reg.line_col(s).ok_or("no line_col")
+        try assert.equal(lc.line, 2)
+        try assert.equal(lc.column, 1)
+
+        snip := try reg.snippet(s).ok_or("no snippet")
+        try assert.equal(snip, "beta")
+
+        name := try reg.file_name(5).ok_or("no name")
+        try assert.equal(name, "b.tw")
+        .Ok({})
+      },
+    )
+}

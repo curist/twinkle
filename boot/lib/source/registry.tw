@@ -38,6 +38,24 @@ pub fn add_file(reg: FileRegistry, name: String, source: String) AddFileResult {
   .{ file_id }
 }
 
+// Insert a file under an explicit, caller-chosen id. Used to reconstruct a
+// registry from an embedded debug section whose file ids may be sparse. `count`
+// tracks the exclusive upper bound so it stays consistent with `add_file`.
+pub fn add_file_with_id(reg: FileRegistry, file_id: Int, name: String, source: String) FileRegistry {
+  d := reg.data.get()
+  line_starts := compute_line_starts(source)
+  sf := SourceFile.{ name, source, line_starts }
+  new_files := d.files
+  new_files[file_id] = sf
+  new_count := if file_id + 1 > d.count {
+    file_id + 1
+  } else {
+    d.count
+  }
+  reg.data.set(.{ files: new_files, count: new_count })
+  reg
+}
+
 fn get_file(reg: FileRegistry, file_id: Int) SourceFile? {
   d := reg.data.get()
   d.files[file_id]

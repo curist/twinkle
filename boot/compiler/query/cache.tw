@@ -53,6 +53,29 @@ pub type Store = .{
   graph: dependency.DependencyGraph,
   stats: CacheStats,
   revision: Int,
+  // Compilation-wide file identity: a stable canonical_path → file_id map so
+  // spans from different modules are distinguishable. Because the map lives in
+  // the same persistent store as parsed ASTs, a cache hit cannot resurface an
+  // id belonging to another file. Ids may be sparse in a later compilation
+  // since the store retains allocations outside the current dependency closure.
+  file_ids: Dict<String, Int>,
+  next_file_id: Int,
+}
+
+pub type FileIdAlloc = .{ store: Store, file_id: Int }
+
+// Return the stable file_id for a canonical path, allocating the next id on
+// first sight. Callers thread the returned store forward.
+pub fn file_id_for(store: Store, path: String) FileIdAlloc {
+  case store.file_ids[path] {
+    .Some(id) => .{ store, file_id: id },
+    .None => {
+      id := store.next_file_id
+      store.file_ids[path] = id
+      store.next_file_id = id + 1
+      .{ store, file_id: id }
+    },
+  }
 }
 
 pub type Lookup<T> = .{ store: Store, value: T?, cache_hit: Bool }
@@ -84,6 +107,8 @@ pub fn empty() Store {
     graph: dependency.empty(),
     stats: empty_stats(),
     revision: 0,
+    file_ids: Dict.new(),
+    next_file_id: 0,
   }
 }
 

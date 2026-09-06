@@ -416,7 +416,11 @@ fn parse_cached(
   source_hash: Int,
 ) ParseLoad!AnalysisError {
   parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
-  parsed_out := parse_runner.parse(state.cache, source.text, 0)
+  // Allocate a stable, compilation-wide file id per canonical path so spans
+  // from distinct modules stay distinguishable (a cache hit reuses the id).
+  id_alloc := state.cache.file_id_for(canonical)
+  state.cache = id_alloc.store
+  parsed_out := parse_runner.parse(state.cache, source.text, id_alloc.file_id)
   state.cache = parsed_out.store
   parsed := parsed_out.value
 

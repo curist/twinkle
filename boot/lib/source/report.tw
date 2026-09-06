@@ -47,3 +47,20 @@ pub type Report = .{
   labels: Vector<SpanLabel>,
   help_lines: Vector<String>,
 }
+
+/// The file_id the report's location line points at: the primary label's file,
+/// falling back to the first label. Used to key a single-file render registry
+/// under the same id the spans carry (spans are now compilation-wide file ids).
+pub fn primary_file_id(rep: Report) Int? {
+  for l in rep.labels {
+    if l.is_primary {
+      return .Some(l.span.file_id)
+    }
+  }
+
+  if rep.labels.len() > 0 {
+    return .Some(rep.labels[0].span.file_id)
+  }
+
+  .None
+}
