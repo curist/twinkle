@@ -1,0 +1,100 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.section.{DebugSection, FileEntry, FuncDebug}
+use lib.debug.stack.{Frame}
+use lib.debug.trace
+use lib.source.report.{RenderConfig}
+
+fn sample() DebugSection {
+  files: Vector<FileEntry> = [.{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" }]
+  funcs: Vector<FuncDebug> = [
+    .{
+      func_idx: 6,
+      body_start: 100,
+      lines: [
+        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
+        .{ offset: 8, span: .{ file_id: 0, start: 7, end: 17 } },
+      ],
+    },
+  ]
+  .{ files, funcs }
+}
+
+fn frame_at(offset: Int, name: String) Frame {
+  .{
+    module_token: .Some("wasm://wasm/abcd"),
+    code_offset: offset,
+    func_index: .Some(0),
+    name: .Some(name),
+  }
+}
+
+fn plain() RenderConfig {
+  .{ color: false }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("trace render")
+    .test(
+      "renders the innermost frame with a snippet and caret",
+      fn() {
+        // frame_at(110) -> body-rel 10 -> `b := a + 2` on line 2.
+        out := trace.render_trace(sample(), [frame_at(110, "deeper")], "boom", plain())
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "--> main.tw:2:1")
+        try assert.str_contains(out, "b := a + 2")
+        try assert.str_contains(out, "^^^^^^^^^^")
+        .Ok({})
+      },
+    )
+    .test(
+      "appends an ordered backtrace of resolved frames",
+      fn() {
+        frames: Vector<Frame> = [frame_at(110, "deeper"), frame_at(100, "main")]
+        out := trace.render_trace(sample(), frames, "boom", plain())
+        try assert.str_contains(out, "at deeper (main.tw:2:1)")
+        try assert.str_contains(out, "at main (main.tw:1:1)")
+
+        // deeper (innermost) must appear before main (its caller).
+        deeper_at := try out.index_of("at deeper").ok_or("deeper missing")
+        main_at := try out.index_of("at main").ok_or("main missing")
+        try assert.is_true(deeper_at < main_at)
+        .Ok({})
+      },
+    )
+    .test(
+      "drops unresolved (prelude/import) frames from the backtrace and caret",
+      fn() {
+        // frame_at(50) is below every body_start -> unresolved; it must not
+        // become the primary caret nor appear in the backtrace.
+        frames: Vector<Frame> = [frame_at(50, "rt_core__trap"), frame_at(110, "deeper")]
+        out := trace.render_trace(sample(), frames, "boom", plain())
+        try assert.str_contains(out, "--> main.tw:2:1")
+        try assert.str_contains(out, "at deeper (main.tw:2:1)")
+        try assert.is_false(out.contains("rt_core__trap"))
+        .Ok({})
+      },
+    )
+    .test(
+      "falls back to a note when no frame resolves to Twinkle source",
+      fn() {
+        out := trace.render_trace(sample(), [frame_at(50, "rt_core__trap")], "boom", plain())
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "no Twinkle stack trace available")
+        try assert.is_false(out.contains(" at "))
+        .Ok({})
+      },
+    )
+    .test(
+      "an empty frame list falls back to the note",
+      fn() {
+        empty: Vector<Frame> = []
+        out := trace.render_trace(sample(), empty, "boom", plain())
+        try assert.str_contains(out, "error: boom")
+        try assert.str_contains(out, "no Twinkle stack trace available")
+        .Ok({})
+      },
+    )
+}

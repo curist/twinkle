@@ -1,0 +1,78 @@
+//! Runtime trap trace renderer.
+//!
+//! `render_trace` turns a decoded `twinkle.debug` section plus the Wasm frames
+//! parsed from a trap's stack into the final terminal report: a severity
+//! headline + source snippet + caret for the innermost Twinkle frame (via the
+//! shared `render.tw`), followed by an ordered backtrace of the resolved
+//! frames. Frames that do not map to Twinkle source (prelude, imports, the host
+//! `error` shim) are dropped so the trace shows only user-meaningful frames.
+//!
+//! When no frame resolves — a truncated, missing, or all-host stack (the
+//! best-effort boundary) — it degrades to the headline plus a note rather than
+//! inventing a location.
+
+use lib.source.registry.{FileRegistry}
+use lib.source.render
+use lib.source.report.{RenderConfig, Report, SpanLabel}
+
+use .section.{DebugSection}
+use .stack.{Frame}
+use .symbolicate
+use .symbolicate.{ResolvedFrame}
+
+fn primary_label(resolved: Vector<ResolvedFrame>) SpanLabel? {
+  for rf in resolved {
+    case rf.span {
+      .Some(sp) => return .Some(.{ span: sp, label: .None, is_primary: true }),
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn backtrace_lines(resolved: Vector<ResolvedFrame>) Vector<String> {
+  out: Vector<String> = []
+
+  for rf in resolved {
+    case rf.location {
+      .Some(loc) => {
+        name := case rf.frame.name {
+          .Some(n) => n,
+          .None => "<anonymous>",
+        }
+        out = .append("  at ${name} (${loc.file}:${loc.line}:${loc.column})")
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
+
+/// Render a full runtime trap trace for `message`, mapping `frames` through the
+/// debug `section`. `config` controls ANSI color.
+pub fn render_trace(
+  section: DebugSection,
+  frames: Vector<Frame>,
+  message: String,
+  config: RenderConfig,
+) String {
+  reg: FileRegistry = symbolicate.reconstruct_registry(section)
+  resolved := symbolicate.symbolicate(section, frames)
+
+  labels := case primary_label(resolved) {
+    .Some(l) => [l],
+    .None => [],
+  }
+  report: Report = .{ severity: .Error, title: message, labels, help_lines: [] }
+  head := render.render(report, reg, config)
+
+  bt := backtrace_lines(resolved)
+
+  if bt.len() == 0 {
+    "${head}\n  (no Twinkle stack trace available)"
+  } else {
+    "${head}\n\n${bt.join("\n")}"
+  }
+}
