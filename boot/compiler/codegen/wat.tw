@@ -635,6 +635,8 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .F64Store(align, offset) => ["${pad}f64.store offset=${offset} align=${1 << align}"],
     .MemoryGrow => ["${pad}memory.grow"],
     .MemorySize => ["${pad}memory.size"],
+    // Debug-only pseudo-instruction: no textual output.
+    .SpanMark(_) => [],
   }
 }
 

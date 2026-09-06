@@ -1,6 +1,8 @@
 //! Wasm IR types — the output of codegen, input to WAT emission.
 //! Mirrors stage0's src/wasm/ir.rs.
 
+use lib.source.span.{Span}
+
 /// ── Heap types ──────────────────────────────────────────────────────
 pub type HeapType = { Named(String), Any, Eq, I31, Func, None_, Extern }
 
@@ -144,6 +146,10 @@ pub type Instr = {
   F64Store(Int, Int),
   MemoryGrow,
   MemorySize,
+  // Zero-byte pseudo-instruction: records that the following instructions
+  // originate at `Span`. `encode_instrs` emits no bytes for it and instead
+  // notes (current body offset -> span) in the function's debug line program.
+  SpanMark(Span),
 }
 
 // ── Function definitions ────────────────────────────────────────────

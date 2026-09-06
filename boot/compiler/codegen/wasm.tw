@@ -1394,6 +1394,9 @@ fn encode_instr_cached(
     .MemorySize => {
       .{ buf: buf.emit_u8(0x3F).emit_u8(0x00), cache } // memory.size mem=0
     },
+    // Debug pseudo-instruction: emits no bytes. The line-program capture reads
+    // the span in the body-encoding loop (see encode_instrs), not here.
+    .SpanMark(_) => .{ buf, cache },
   }
 }
 

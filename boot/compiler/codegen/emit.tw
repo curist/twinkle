@@ -64,6 +64,7 @@ use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.codegen.wasm_type_util.{val_type_eq}
 use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
 use compiler.elem_family.{ElemFamily, elem_family_of, pvec_family_of}
+use lib.source.span.{Span}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
@@ -1278,7 +1279,7 @@ fn collect_vector_builder_slots_op(
 // ── Expression emission ────────────────────────────────────────────────
 fn emit_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   case expr {
-    .Let(local, op, _, body) => emit_let(local, op, body, exp, ctx, buf),
+    .Let(local, op, sp, body) => emit_let(local, op, sp, body, exp, ctx, buf),
     .Atom(atom) => case exp.mono {
       .Void => {
         // In ANF, side effects happen in the enclosing Let op; a trailing
@@ -1376,7 +1377,7 @@ fn emit_atom_for_expected(atom: PreparedAtom, exp: Expected, ctx: EmitCtx, buf: 
 // This enables tail-call detection for calls inside if/case branches.
 fn emit_tail_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   case expr {
-    .Let(local, op, _, body) => emit_tail_let(local, op, body, exp, ctx, buf),
+    .Let(local, op, sp, body) => emit_tail_let(local, op, sp, body, exp, ctx, buf),
     .Atom(atom) => {
       buf2 := emit_return_coerce(atom, exp, ctx, buf)
       buf2.append(.Return)
@@ -1395,6 +1396,7 @@ fn emit_tail_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<I
 fn emit_tail_let(
   local: SlotId,
   op: PreparedOp,
+  sp: Span,
   body: PreparedExpr,
   exp: Expected,
   ctx: EmitCtx,
@@ -1402,11 +1404,13 @@ fn emit_tail_let(
 ) Vector<Instr> {
   cur_local := local
   cur_op := op
+  cur_sp := sp
   cur_body := body
 
   for true {
     entry := lookup_slot(ctx, cur_local)
     result_mono := entry.mono
+    buf = span_mark(buf, cur_sp)
 
     case result_mono {
       .Never => {
@@ -1417,9 +1421,10 @@ fn emit_tail_let(
         buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
-          .Let(next_local, next_op, _, next_body) => {
+          .Let(next_local, next_op, next_sp, next_body) => {
             cur_local = next_local
             cur_op = next_op
+            cur_sp = next_sp
             cur_body = next_body
           },
           _ => return emit_tail_expr(cur_body, exp, ctx, buf),
@@ -1437,9 +1442,10 @@ fn emit_tail_let(
         buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
-          .Let(next_local, next_op, _, next_body) => {
+          .Let(next_local, next_op, next_sp, next_body) => {
             cur_local = next_local
             cur_op = next_op
+            cur_sp = next_sp
             cur_body = next_body
           },
           _ => return emit_tail_expr(cur_body, exp, ctx, buf),
@@ -1742,9 +1748,20 @@ fn try_emit_tail_op(
 }
 
 // ── Let emission ───────────────────────────────────────────────────────
+// Append a zero-byte SpanMark so the encoder can map the following op's byte
+// offset back to source. Skip location-less (compiler-synthesized) spans.
+fn span_mark(buf: Vector<Instr>, sp: Span) Vector<Instr> {
+  if sp.is_unknown() {
+    buf
+  } else {
+    buf.append(.SpanMark(sp))
+  }
+}
+
 fn emit_let(
   local: SlotId,
   op: PreparedOp,
+  sp: Span,
   body: PreparedExpr,
   exp: Expected,
   ctx: EmitCtx,
@@ -1754,11 +1771,13 @@ fn emit_let(
   // rather than creating intermediate vectors and concating (O(N²) with PVec).
   cur_local := local
   cur_op := op
+  cur_sp := sp
   cur_body := body
 
   for true {
     entry := lookup_slot(ctx, cur_local)
     result_mono := entry.mono
+    buf = span_mark(buf, cur_sp)
 
     case result_mono {
       .Never => {
@@ -1769,9 +1788,10 @@ fn emit_let(
         buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
-          .Let(next_local, next_op, _, next_body) => {
+          .Let(next_local, next_op, next_sp, next_body) => {
             cur_local = next_local
             cur_op = next_op
+            cur_sp = next_sp
             cur_body = next_body
           },
           _ => return emit_expr(cur_body, exp, ctx, buf),
@@ -1789,9 +1809,10 @@ fn emit_let(
         buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
-          .Let(next_local, next_op, _, next_body) => {
+          .Let(next_local, next_op, next_sp, next_body) => {
             cur_local = next_local
             cur_op = next_op
+            cur_sp = next_sp
             cur_body = next_body
           },
           _ => return emit_expr(cur_body, exp, ctx, buf),
