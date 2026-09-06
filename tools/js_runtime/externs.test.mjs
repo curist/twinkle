@@ -89,9 +89,26 @@ test("compiler emits the twinkle.debug section with a versioned line program", a
     return v;
   };
 
+  const readStr = () => {
+    const n = uleb();
+    const s = Buffer.from(u.slice(p, p + n)).toString("utf8");
+    p += n;
+    return s;
+  };
+
   assert.equal(u[p++], 1, "version byte");
   const fileCount = uleb();
-  assert.equal(fileCount, 0, "file table not populated yet");
+  assert.ok(fileCount > 0, "file table carries the referenced files");
+  const fileIds = new Set();
+  for (let i = 0; i < fileCount; i++) {
+    const id = uleb();
+    p++; // flag byte
+    readStr(); // path
+    const src = readStr();
+    assert.ok(src.length > 0, "inline source is present");
+    fileIds.add(id);
+  }
+
   const funcCount = uleb();
   assert.ok(funcCount > 0, "at least one function has debug info");
 
@@ -99,13 +116,14 @@ test("compiler emits the twinkle.debug section with a versioned line program", a
   for (let i = 0; i < funcCount; i++) {
     uleb(); // func_idx
     const bodyStart = uleb();
-    assert.ok(bodyStart > 0 && bodyStart < u.length + wasm.length, "plausible body_start");
+    assert.ok(bodyStart > 0 && bodyStart < wasm.length, "plausible body_start");
     const lineCount = uleb();
     for (let j = 0; j < lineCount; j++) {
       uleb(); // delta offset
-      uleb(); // file_id
+      const fileId = uleb();
       uleb(); // span start
       uleb(); // span end
+      assert.ok(fileIds.has(fileId), "line-program file_id is present in the file table");
       sawLine = true;
     }
   }

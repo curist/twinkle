@@ -29,6 +29,7 @@ use compiler.codegen.emit.{emit_module}
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.linker_dce.{eliminate_dead_wasm}
+use lib.debug.section.{FileEntry}
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
 use compiler.codegen.mutvec_call_phase
@@ -270,14 +271,21 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
   }
 }
 
-pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
+pub fn link_program(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  debug_files: Vector<FileEntry>,
+) LinkedModule {
   prepared_codegen := prepare_codegen(anf, env, builtins)
   prepared := prepared_codegen.prepared
   backend_ctx := backend_context(env, prepared)
   registry := verify_and_plan(prepared, backend_ctx, builtins)
   user_module := emit_user_module(prepared, registry, builtins, backend_ctx)
   linked := link_with_runtime(user_module, registry)
-  finalize_linked_module(linked, anf)
+  result := finalize_linked_module(linked, anf)
+  result.debug_files = debug_files
+  result
 }
 
 fn verify_and_plan(prepared: PreparedModule, backend_ctx: BackendContext, builtins: BuiltinRegistry) WasmTypeRegistry {
@@ -489,11 +497,16 @@ fn collect_export_meta(anf: AnfModule) Vector<ExportMeta> {
 }
 
 pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) String {
-  emit_wat(link_program(anf, env, builtins))
+  emit_wat(link_program(anf, env, builtins, []))
 }
 
-pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<Byte> {
-  linked := link_program(anf, env, builtins)
+pub fn codegen_wasm(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  debug_files: Vector<FileEntry>,
+) Vector<Byte> {
+  linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()
   t0 := date.now()
   bytes := emit_linked_wasm(linked)
@@ -506,8 +519,13 @@ pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   bytes
 }
 
-pub fn codegen_wasm_buffer(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Buffer {
-  linked := link_program(anf, env, builtins)
+pub fn codegen_wasm_buffer(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  debug_files: Vector<FileEntry>,
+) Buffer {
+  linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()
   t0 := date.now()
   bytes := emit_linked_wasm_buffer(linked)

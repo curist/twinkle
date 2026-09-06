@@ -1786,7 +1786,7 @@ fn compile_fixture_to_linked_wat(path: String) Result<String, String> {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
-  linked := codegen.link_program(artifacts.opt, artifacts.env, artifacts.builtins)
+  linked := codegen.link_program(artifacts.opt, artifacts.env, artifacts.builtins, artifacts.debug_files)
   .Ok(emit_wat(linked))
 }
 

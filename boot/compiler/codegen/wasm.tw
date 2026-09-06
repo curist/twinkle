@@ -1470,6 +1470,7 @@ fn emit_wasm_module_buf(module: WasmModule) WasmBuf {
     module.memories,
     module.data,
     module.start,
+    [],
   )
 }
 
@@ -1494,6 +1495,7 @@ fn emit_linked_wasm_buf(linked: LinkedModule) WasmBuf {
     linked.memories,
     linked.data,
     linked.start,
+    linked.debug_files,
   )
 
   // Custom sections may appear anywhere; emit them last, and only when non-empty.
@@ -1582,6 +1584,7 @@ fn emit_wasm_parts(
   memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
+  debug_files: Vector<section.FileEntry>,
 ) WasmBuf {
   timed := case proc.env("TWINKLE_TIMINGS") {
     .Some(_) => true,
@@ -1718,7 +1721,18 @@ fn emit_wasm_parts(
   // table is populated once the source table is threaded here; for now the line
   // program's spans carry file ids that the renderer resolves via that table.
   if module_debug.len() > 0 {
-    dbg_bytes := section.encode(.{ files: [], funcs: module_debug })
+    // Only carry source for files the line program actually references, so a
+    // small program does not embed the whole prelude's source.
+    referenced: Dict<Int, Bool> = Dict.new()
+
+    for fd in module_debug {
+      for entry in fd.lines {
+        referenced[entry.span.file_id] = true
+      }
+    }
+
+    used_files := debug_files.filter(fn(fe) { referenced.has(fe.file_id) })
+    dbg_bytes := section.encode(.{ files: used_files, funcs: module_debug })
     dbg_payload := empty_wasm_buf().emit_name(section.section_name()).emit_bytes(dbg_bytes)
     buf = .emit_section_into(0x00, dbg_payload)
   }

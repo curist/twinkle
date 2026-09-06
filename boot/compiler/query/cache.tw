@@ -60,7 +60,14 @@ pub type Store = .{
   // since the store retains allocations outside the current dependency closure.
   file_ids: Dict<String, Int>,
   next_file_id: Int,
+  // Source records keyed by file_id, retained so the debug backend can build the
+  // twinkle.debug file table (path + inline source) without re-reading disk.
+  file_records: Dict<Int, DebugFileRecord>,
 }
+
+pub type DebugFileRecord = .{ path: String, source: String }
+
+pub type FileSourceRecord = .{ file_id: Int, path: String, source: String }
 
 pub type FileIdAlloc = .{ store: Store, file_id: Int }
 
@@ -76,6 +83,24 @@ pub fn file_id_for(store: Store, path: String) FileIdAlloc {
       .{ store, file_id: id }
     },
   }
+}
+
+// Retain a file's path and source text under its file_id for debug-info emission.
+pub fn record_file_source(store: Store, file_id: Int, path: String, source: String) Store {
+  store.file_records[file_id] = .{ path, source }
+  store
+}
+
+// All retained source records, as (file_id, path, source) — used to build the
+// twinkle.debug file table.
+pub fn file_records_list(store: Store) Vector<FileSourceRecord> {
+  out: Vector<FileSourceRecord> = []
+
+  for id, rec in store.file_records {
+    out = .append(.{ file_id: id, path: rec.path, source: rec.source })
+  }
+
+  out
 }
 
 pub type Lookup<T> = .{ store: Store, value: T?, cache_hit: Bool }
@@ -109,6 +134,7 @@ pub fn empty() Store {
     revision: 0,
     file_ids: Dict.new(),
     next_file_id: 0,
+    file_records: Dict.new(),
   }
 }
 

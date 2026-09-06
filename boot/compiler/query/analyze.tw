@@ -419,7 +419,7 @@ fn parse_cached(
   // Allocate a stable, compilation-wide file id per canonical path so spans
   // from distinct modules stay distinguishable (a cache hit reuses the id).
   id_alloc := state.cache.file_id_for(canonical)
-  state.cache = id_alloc.store
+  state.cache = id_alloc.store.record_file_source(id_alloc.file_id, canonical, source.text)
   parsed_out := parse_runner.parse(state.cache, source.text, id_alloc.file_id)
   state.cache = parsed_out.store
   parsed := parsed_out.value

@@ -15,6 +15,7 @@ use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, ExportMeta, ExternMeta, FieldDef, FuncDef, GlobalDef, HeapType,
   ImportDef, Instr, MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
+use lib.debug.section.{FileEntry}
 
 // ── Types ──────────────────────────────────────────────────────────────
 pub type LinkedModule = .{
@@ -31,6 +32,8 @@ pub type LinkedModule = .{
   start: String?,
   extern_meta: Vector<ExternMeta>,
   export_meta: Vector<ExportMeta>,
+  // File table for the twinkle.debug section, set by link_program.
+  debug_files: Vector<FileEntry>,
 }
 
 pub type LinkError = { MissingExport(String, String) }
@@ -453,6 +456,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       // Populated by link_program from the source extern_imports (post-DCE).
       extern_meta: [],
       export_meta: [],
+      debug_files: [],
     },
   )
 }

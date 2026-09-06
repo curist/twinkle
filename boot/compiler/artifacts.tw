@@ -8,6 +8,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CoreModule}
 use compiler.query.analyze.{AnalysisDiag}
 use compiler.resolver.{ResolvedEnv}
+use lib.debug.section.{FileEntry}
 
 /// Diagnostics payload bundled with the env needed to resolve type names.
 pub type DiagnosticsError = .{ diagnostics: Vector<AnalysisDiag>, env: ResolvedEnv }
@@ -24,4 +25,6 @@ pub type PipelineArtifacts = .{
   anf: AnfModule,
   opt: AnfModule,
   warnings: Vector<AnalysisDiag>,
+  // File table (file_id -> path + source) for the twinkle.debug section.
+  debug_files: Vector<FileEntry>,
 }

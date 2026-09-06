@@ -46,7 +46,7 @@ fn candidates_for(src: String) Vector<detect.RegionCandidate> {
 fn links_ok(src: String) Bool {
   case pipeline.compile_source(src) {
     .Ok(a) => {
-      link_program(a.opt, a.env, a.builtins)
+      link_program(a.opt, a.env, a.builtins, a.debug_files)
       true
     },
     .Err(e) => error("compile failed: ${e}"),

@@ -35,6 +35,7 @@ use compiler.resolver.{ResolvedEnv, record_info}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
+use lib.debug.section.{FileEntry}
 use lib.source.span.{Span}
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -297,7 +298,12 @@ pub fn compile_analyzed_graph(
     eprintln("[time] optimize: ${t4 - t3}ms")
   }
 
-  .Ok(.{ artifacts: .{ env, builtins, core, mono, anf, opt, warnings: compile_warnings } })
+  debug_files: Vector<FileEntry> = collect r in cur_cache.file_records_list() {
+    .{ file_id: r.file_id, path: r.path, source: r.source }
+  }
+  .Ok(
+    .{ artifacts: .{ env, builtins, core, mono, anf, opt, warnings: compile_warnings, debug_files } },
+  )
 }
 
 pub type LibSelection = .{ exports: Vector<LibExport>, warnings: Vector<analyze.AnalysisDiag> }
