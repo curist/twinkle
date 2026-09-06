@@ -1,0 +1,146 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.stack
+
+// A real Deno standalone trap stack for a three-frame `error(...)` fixture
+// (deeper -> middle -> __init). Deno prints wasm-function[0] for every frame
+// (the textual index is unusable) but the 0x offsets are correct — so PC ranges
+// are authoritative. Leading `Error:` header + the JS `error` import frame must
+// be skipped; the trailing JS `runWasmBytes` frame ends the wasm group.
+fn deno_stack() String {
+  lines: Vector<String> = [
+    "Error: host.error: boom from deeper",
+    "    at error (file:///repo/tools/js_runtime/runtime.mjs:424:13)",
+    "    at rt_core__trap (wasm://wasm/16d1f7aa:wasm-function[0]:0x23c)",
+    "    at user__$f353_error__String (wasm://wasm/16d1f7aa:wasm-function[0]:0x28e)",
+    "    at user__$f350_deeper (wasm://wasm/16d1f7aa:wasm-function[0]:0x246)",
+    "    at user__$f351_middle (wasm://wasm/16d1f7aa:wasm-function[0]:0x259)",
+    "    at user__$f352__init (wasm://wasm/16d1f7aa:wasm-function[0]:0x268)",
+    "    at runWasmBytes (file:///repo/tools/js_runtime/runtime.mjs:1245:24)",
+    "    at file:///repo/scratch/capture_stack.mjs:7:3",
+  ]
+  lines.join("\n")
+}
+
+// The same trap under Node, which prints the real textual function indices.
+fn node_stack() String {
+  lines: Vector<String> = [
+    "Error: host.error: boom from deeper",
+    "    at error (file:///repo/tools/js_runtime/runtime.mjs:424:13)",
+    "    at rt_core__trap (wasm://wasm/16d1f7aa:wasm-function[3]:0x23c)",
+    "    at user__$f353_error__String (wasm://wasm/16d1f7aa:wasm-function[7]:0x28e)",
+    "    at user__$f350_deeper (wasm://wasm/16d1f7aa:wasm-function[4]:0x246)",
+    "    at user__$f351_middle (wasm://wasm/16d1f7aa:wasm-function[5]:0x259)",
+    "    at user__$f352__init (wasm://wasm/16d1f7aa:wasm-function[6]:0x268)",
+    "    at runWasmBytes (file:///repo/tools/js_runtime/runtime.mjs:1245:24)",
+  ]
+  lines.join("\n")
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("v8 stack parse")
+    .test(
+      "retains the contiguous wasm group, skipping the leading and trailing JS frames",
+      fn() {
+        frames := stack.parse_v8_stack(deno_stack())
+        try assert.equal(frames.len(), 5)
+
+        first := frames[0]
+        first_name := try first.name.ok_or("expected a name on the innermost frame")
+        try assert.equal(first_name, "rt_core__trap")
+        try assert.equal(first.code_offset, 572)
+
+        last := frames[4]
+        last_name := try last.name.ok_or("expected a name on the outermost frame")
+        try assert.equal(last_name, "user__$f352__init")
+        try assert.equal(last.code_offset, 616)
+        .Ok({})
+      },
+    )
+    .test(
+      "reads hex offsets and the module token for every retained frame",
+      fn() {
+        frames := stack.parse_v8_stack(deno_stack())
+
+        // 0x23c, 0x28e, 0x246, 0x259, 0x268 in stack order.
+        try assert.equal(frames[0].code_offset, 572)
+        try assert.equal(frames[1].code_offset, 654)
+        try assert.equal(frames[2].code_offset, 582)
+        try assert.equal(frames[3].code_offset, 601)
+        try assert.equal(frames[4].code_offset, 616)
+
+        tok := try frames[2].module_token.ok_or("expected a module token")
+        try assert.equal(tok, "wasm://wasm/16d1f7aa")
+        .Ok({})
+      },
+    )
+    .test(
+      "captures Deno's unusable [0] index and Node's real indices",
+      fn() {
+        deno := stack.parse_v8_stack(deno_stack())
+        try assert.equal(try deno[2].func_index.ok_or("expected index"), 0)
+
+        node := stack.parse_v8_stack(node_stack())
+        try assert.equal(try node[0].func_index.ok_or("expected index"), 3)
+        try assert.equal(try node[2].func_index.ok_or("expected index"), 4)
+        try assert.equal(try node[4].func_index.ok_or("expected index"), 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "parses the bare (unnamed, module-less) frame form",
+      fn() {
+        bare_lines: Vector<String> = [
+          "    at rt_core__trap (file:///repo/x.mjs:1:1)",
+          "    at wasm-function[4]:0x246",
+          "    at wasm-function[5]:0x259",
+          "    at runWasmBytes (file:///repo/x.mjs:2:2)",
+        ]
+        frames := stack.parse_v8_stack(bare_lines.join("\n"))
+        try assert.equal(frames.len(), 2)
+        try assert.equal(frames[0].code_offset, 582)
+        try assert.is_none(frames[0].name)
+        try assert.is_none(frames[0].module_token)
+        .Ok({})
+      },
+    )
+    .test(
+      "stops at a different module token (does not read suspended boot frames)",
+      fn() {
+        mixed_lines: Vector<String> = [
+          "Error: boom",
+          "    at error (file:///repo/x.mjs:1:1)",
+          "    at child_a (wasm://wasm/aaaa:wasm-function[0]:0x10)",
+          "    at child_b (wasm://wasm/aaaa:wasm-function[0]:0x20)",
+          "    at boot_x (wasm://wasm/bbbb:wasm-function[0]:0x30)",
+          "    at boot_y (wasm://wasm/bbbb:wasm-function[0]:0x40)",
+        ]
+        frames := stack.parse_v8_stack(mixed_lines.join("\n"))
+        try assert.equal(frames.len(), 2)
+        try assert.equal(try frames[0].name.ok_or("name"), "child_a")
+        try assert.equal(try frames[1].name.ok_or("name"), "child_b")
+        .Ok({})
+      },
+    )
+    .test(
+      "an empty stack yields no frames",
+      fn() {
+        try assert.equal(stack.parse_v8_stack("").len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "an all-JS (unparseable-as-wasm) stack yields no frames",
+      fn() {
+        js_lines: Vector<String> = [
+          "Error: something",
+          "    at foo (file:///repo/a.mjs:1:1)",
+          "    at bar (file:///repo/b.mjs:2:2)",
+        ]
+        try assert.equal(stack.parse_v8_stack(js_lines.join("\n")).len(), 0)
+        .Ok({})
+      },
+    )
+}

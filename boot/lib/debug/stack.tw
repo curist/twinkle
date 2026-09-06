@@ -1,0 +1,158 @@
+//! V8/Deno stack-string parser for runtime trap traces.
+//!
+//! A trap surfaces to the host as a thrown `Error` whose `.stack` is a V8-shaped
+//! string: an `Error:` header, then `at ...` frames. The frames we care about
+//! are the child module's contiguous Wasm group, e.g.
+//!
+//!   at user__$f350_deeper (wasm://wasm/16d1f7aa:wasm-function[0]:0x246)
+//!
+//! Deno's standalone wrapper prints `wasm-function[0]` for every frame (the
+//! textual index is unusable), but the `0x` offset is a correct module-absolute
+//! PC — so downstream symbolication keys on the offset, not the index.
+//!
+//! `parse_v8_stack` skips leading JS/import frames (notably the host `error`
+//! frame), retains only the first contiguous same-module Wasm group, and stops
+//! at the next JS boundary or a different module token — so overlapping PCs in a
+//! suspended boot instance below the child are never misread as child frames.
+//! A missing/truncated/unparseable stack yields zero or partial frames; that is
+//! a normal input, never fatal.
+
+/// One retained Wasm stack frame. `module_token` and `func_index` are `None`
+/// for the bare `at wasm-function[i]:0xNN` form some engines emit; `name` is
+/// `None` when the engine omits a symbolic name.
+pub type Frame = .{ module_token: String?, code_offset: Int, func_index: Int?, name: String? }
+
+type LineKind = { Skip, JsFrame, Wasm(Frame) }
+
+fn hex_digit_val(c: Byte) Int? {
+  ci := c.to_int()
+
+  if ci >= 0x30 and ci <= 0x39 {
+    .Some(ci - 0x30)
+  } else if ci >= 0x61 and ci <= 0x66 {
+    .Some(ci - 0x61 + 10)
+  } else if ci >= 0x41 and ci <= 0x46 {
+    .Some(ci - 0x41 + 10)
+  } else {
+    .None
+  }
+}
+
+// Read the leading run of hex digits as an integer, stopping at the first
+// non-hex byte (e.g. the trailing ")" in a parenthesized frame).
+fn parse_hex_prefix(s: String) Int {
+  n := s.len()
+  acc := 0
+  i := 0
+
+  for i < n {
+    case hex_digit_val(s.at(i)) {
+      .Some(v) => {
+        acc = acc * 16 + v
+        i = i + 1
+      },
+      .None => {
+        i = n
+      },
+    }
+  }
+
+  acc
+}
+
+fn same_module(a: String?, b: String?) Bool {
+  case a {
+    .None => case b {
+      .None => true,
+      .Some(_) => false,
+    },
+    .Some(av) => case b {
+      .None => false,
+      .Some(bv) => av == bv,
+    },
+  }
+}
+
+fn parse_frame_line(raw: String) LineKind {
+  line := raw.trim()
+
+  if !line.starts_with("at ") {
+    return .Skip
+  }
+
+  rest := line.slice(3, line.len())
+
+  case rest.index_of("wasm-function[") {
+    .None => .JsFrame,
+    .Some(wf) => {
+      after_wf := rest.slice(wf + 14, rest.len()) // 14 == len("wasm-function[")
+
+      case after_wf.index_of("]") {
+        .None => .JsFrame,
+        .Some(idx_end) => {
+          rest_after_idx := after_wf.slice(idx_end, after_wf.len())
+
+          case rest_after_idx.index_of("0x") {
+            .None => .JsFrame,
+            .Some(ox) => {
+              func_index: Int? = Int.from_string(after_wf.slice(0, idx_end))
+              code_offset := parse_hex_prefix(rest_after_idx.slice(ox + 2, rest_after_idx.len()))
+              module_token: String? = case rest.index_of("wasm://") {
+                .Some(ws) => {
+                  tok := rest.slice(ws, wf)
+
+                  case tok.strip_suffix(":") {
+                    .Some(t) => .Some(t),
+                    .None => .Some(tok),
+                  }
+                },
+                .None => .None,
+              }
+              name: String? = if rest.starts_with("wasm-function[") {
+                .None
+              } else {
+                case rest.index_of(" (") {
+                  .Some(p) => .Some(rest.slice(0, p)),
+                  .None => .None,
+                }
+              }
+
+              .Wasm(.{ module_token, code_offset, func_index, name })
+            },
+          }
+        },
+      }
+    },
+  }
+}
+
+/// Parse a V8/Deno `.stack` string into the child module's contiguous Wasm
+/// frame group, in stack order (innermost first).
+pub fn parse_v8_stack(stack: String) Vector<Frame> {
+  frames: Vector<Frame> = []
+  started := false
+  done := false
+  group_token: String? = .None
+
+  for raw in stack.lines() {
+    if !done {
+      case parse_frame_line(raw) {
+        .Skip => {},
+        .JsFrame => if started {
+          done = true
+        },
+        .Wasm(fr) => if !started {
+          started = true
+          group_token = fr.module_token
+          frames = .append(fr)
+        } else if same_module(fr.module_token, group_token) {
+          frames = .append(fr)
+        } else {
+          done = true
+        },
+      }
+    }
+  }
+
+  frames
+}
