@@ -978,6 +978,7 @@ fn lib_type_native_tag(t: LibType) String {
     .Int => "i64",
     .Float => "f64",
     .Bool => "i32",
+    .Byte => "i32",
     .Void => "void",
     .Str => "str",
     _ => error("lib_type_native_tag: callback arg/return types must be leaves"),

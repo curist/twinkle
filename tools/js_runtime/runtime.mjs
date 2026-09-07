@@ -510,6 +510,9 @@ function makeHostImports(b, runtime) {
         stderr: runtime.stderr,
         imports: runtime.imports,
         host: runtime.host,
+        // Forward the renderer so a further-nested run_wasm renders its own
+        // child against the right module (each level scopes its own handler).
+        rendererWasm: runtime.rendererWasm,
         childTrapHandler: makeChildTrapHandler(runtime),
       });
       return BigInt(exitCode);
@@ -1695,6 +1698,9 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           stderr: runtime.stderr,
           imports: runtime.imports,
           host: runtime.host,
+          // Forward the renderer so a further-nested run_wasm renders its own
+          // child against the right module (each level scopes its own handler).
+          rendererWasm: runtime.rendererWasm,
           childTrapHandler: makeChildTrapHandler(runtime),
         });
         return BigInt(exitCode);

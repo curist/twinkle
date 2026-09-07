@@ -265,6 +265,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "callback lib export with a Byte leaf codegens (Byte is a valid cb tag)",
+      fn() {
+        // Byte is an eligible callback leaf; the native cb-signature tag must
+        // handle it (i32) rather than trap on a supposed non-leaf.
+        src := "pub fn feed(b: Byte, f: fn(Byte) Void) Void {\n  f(b)\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        wat := codegen.codegen(artifacts.opt, artifacts.env, artifacts.builtins)
+        try assert.str_contains(wat, "__lib_make_cb_i32__void")
+        try assert.str_contains(wat, "cb_i32__void")
+        .Ok({})
+      },
+    )
+    .test(
       "export_type_json nests fn descriptors, leaves stay bare strings",
       fn() {
         try assert.equal(codegen.export_type_json(.Str), "\"str\"")
