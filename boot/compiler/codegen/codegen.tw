@@ -29,7 +29,6 @@ use compiler.codegen.emit.{emit_module}
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.linker_dce.{eliminate_dead_wasm}
-use lib.debug.section.{FileEntry}
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
 use compiler.codegen.mutvec_call_phase
@@ -52,6 +51,7 @@ use compiler.core_ir.{LibType}
 use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
 use compiler.resolver.{ResolvedEnv, build_ref_field_table}
+use lib.debug.section.{FileEntry}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") {
@@ -457,6 +457,7 @@ pub fn export_type_json(t: LibType) String {
     .Int => "\"int\"",
     .Float => "\"float\"",
     .Bool => "\"bool\"",
+    .Byte => "\"byte\"",
     .Void => "\"void\"",
     .Str => "\"str\"",
     .Fn(ps, r) => {

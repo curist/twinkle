@@ -124,6 +124,7 @@ pub type LibType = {
   Int,
   Float,
   Bool,
+  Byte,
   Void,
   Str,
   Fn(Vector<LibType>, LibType),

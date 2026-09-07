@@ -45,6 +45,10 @@ fn lib_type_eq(p: LibType, want: LibType) Bool {
       .Bool => true,
       _ => false,
     },
+    .Byte => case want {
+      .Byte => true,
+      _ => false,
+    },
     .Void => case want {
       .Void => true,
       _ => false,
@@ -209,6 +213,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "Vector<Byte> param is eligible as a byte-element vector, not skipped",
+      fn() {
+        src := "pub fn size(bytes: Vector<Byte>) Int {\n  bytes.len()\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        e := try find_export(artifacts.anf.lib_exports, "size").ok_or("size missing")
+        try assert.equal(lib_type_eq(e.params[0], .Vec(.Byte)), true)
+        try assert.equal(warning_text(artifacts.warnings).contains("size"), false)
+        .Ok({})
+      },
+    )
+    .test(
       "fn with compound arg is skipped with a warning",
       fn() {
         src := "${eligible_src}\npub fn go(f: fn(Vector<Int>) Void) Void {\n  {}\n}\n"
@@ -262,9 +277,14 @@ pub fn suite() runner.Suite {
           codegen.export_type_json(.Fn([.Int], .Bool)),
           "{\"kind\":\"fn\",\"args\":[\"int\"],\"ret\":\"bool\"}",
         )
+        try assert.equal(codegen.export_type_json(.Byte), "\"byte\"")
         try assert.equal(
           codegen.export_type_json(.Vec(.Int)),
           "{\"kind\":\"vec\",\"elem\":\"int\"}",
+        )
+        try assert.equal(
+          codegen.export_type_json(.Vec(.Byte)),
+          "{\"kind\":\"vec\",\"elem\":\"byte\"}",
         )
         try assert.equal(
           codegen.export_type_json(.Dct(.Str, .Int)),

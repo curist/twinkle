@@ -148,6 +148,26 @@ test("loadLib round-trips Vector args and returns", async () => {
   assert.deepEqual(lib.shout(["a", "b"]), ["a!", "b!"]);
 });
 
+test("loadLib round-trips Vector<Byte> args and returns via bulk copy", async () => {
+  const src = [
+    "pub fn total(bytes: Vector<Byte>) Int {",
+    "  sum := 0",
+    "  for b in bytes { sum = sum + b.to_int() }",
+    "  sum",
+    "}",
+    "pub fn echo(bytes: Vector<Byte>) Vector<Byte> {",
+    "  bytes",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  // Accepts a Uint8Array as the Vector<Byte> argument.
+  assert.equal(lib.total(new Uint8Array([1, 2, 3, 250])), 256n);
+  // A returned Vector<Byte> decodes to a Uint8Array preserving the bytes.
+  const out = lib.echo(new Uint8Array([0, 127, 255]));
+  assert.ok(out instanceof Uint8Array);
+  assert.deepEqual(Array.from(out), [0, 127, 255]);
+});
+
 test("loadLib round-trips a record", async () => {
   const src = [
     "pub type Pt = .{ x: Int, y: Int }",

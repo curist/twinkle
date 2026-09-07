@@ -1269,6 +1269,7 @@ function libNativeTag(kind) {
     case "int": return "i64";
     case "float": return "f64";
     case "bool": return "i32";
+    case "byte": return "i32";
     case "str": return "str";
     case "void": return "void";
     default: return "any";
@@ -1299,6 +1300,7 @@ function coerceLibArg(value, kind, b, instance, registry, ids) {
     case "int": return typeof value === "bigint" ? value : BigInt(value);
     case "float": return Number(value);
     case "bool": return value ? 1 : 0;
+    case "byte": return Number(value) & 0xff;
     case "void": return undefined;
     case "str": return encodeString(b, String(value));
     default: return value;
@@ -1313,6 +1315,7 @@ function coerceLibReturn(value, kind, b, instance) {
     case "int": return value;
     case "float": return Number(value);
     case "bool": return !!value;
+    case "byte": return Number(value) & 0xff;
     case "void": return undefined;
     case "str": return decodeString(b, value);
     default: return value;
@@ -1327,6 +1330,7 @@ function boxedGuestToJs(ref, kind, b) {
     case "int": return b.boxed_int_get(ref);
     case "float": return b.boxed_float_get(ref);
     case "bool": return !!b.i31_get(ref);
+    case "byte": return b.i31_get(ref);
     case "str": return decodeString(b, ref);
     default: return ref;
   }
@@ -1337,6 +1341,7 @@ function boxedJsToGuest(value, kind, b) {
     case "int": return b.boxed_int_new(typeof value === "bigint" ? value : BigInt(value));
     case "float": return b.boxed_float_new(Number(value));
     case "bool": return b.i31_new(value ? 1 : 0);
+    case "byte": return b.i31_new(Number(value) & 0xff);
     case "str": return encodeString(b, String(value));
     default: return value;
   }
@@ -1360,6 +1365,9 @@ function jsElemToGuest(value, desc, b, instance) {
 function guestToJs(ref, desc, b, instance) {
   if (desc.kind === "vec") {
     const flat = instance.exports.__lib_vec_to_array(ref);
+    // A Vector<Byte> round-trips through linear memory in bulk rather than one
+    // i31 unbox per element.
+    if (desc.elem === "byte") return decodeByteArray(b, flat);
     const n = b.array_len(flat);
     const out = new Array(n);
     for (let i = 0; i < n; i++) {
@@ -1411,10 +1419,17 @@ function guestToJs(ref, desc, b, instance) {
 // Build a guest compound (its GC ref) from a plain JS value.
 function jsToGuest(value, desc, b, instance) {
   if (desc.kind === "vec") {
-    const flat = b.array_new(value.length);
-    for (let i = 0; i < value.length; i++) {
-      b.array_set(flat, i, jsElemToGuest(value[i], desc.elem, b, instance));
-    }
+    // A Vector<Byte> is bulk-copied through linear memory (childBytes can be
+    // multi-MB); other element types box one ref per element.
+    const flat = desc.elem === "byte"
+      ? makeByteArray(b, value)
+      : (() => {
+        const a = b.array_new(value.length);
+        for (let i = 0; i < value.length; i++) {
+          b.array_set(a, i, jsElemToGuest(value[i], desc.elem, b, instance));
+        }
+        return a;
+      })();
     return instance.exports.__lib_vec_from_array(flat);
   }
   if (desc.kind === "rec") {

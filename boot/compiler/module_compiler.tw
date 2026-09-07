@@ -32,10 +32,10 @@ use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
 use compiler.resolver.{ResolvedEnv, record_info}
+use lib.debug.section.{FileEntry}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
-use lib.debug.section.{FileEntry}
 use lib.source.span.{Span}
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -302,7 +302,9 @@ pub fn compile_analyzed_graph(
     .{ file_id: r.file_id, path: r.path, source: r.source }
   }
   .Ok(
-    .{ artifacts: .{ env, builtins, core, mono, anf, opt, warnings: compile_warnings, debug_files } },
+    .{
+      artifacts: .{ env, builtins, core, mono, anf, opt, warnings: compile_warnings, debug_files },
+    },
   )
 }
 
@@ -479,6 +481,7 @@ fn lib_type(ty: MonoType, env: ResolvedEnv) LibType? {
     .Int => .Some(.Int),
     .Float => .Some(.Float),
     .Bool => .Some(.Bool),
+    .Byte => .Some(.Byte),
     .Void => .Some(.Void),
     .Never => .Some(.Void),
     .String => .Some(.Str),
@@ -531,6 +534,7 @@ fn is_leaf_lib_type(t: LibType) Bool {
     .Int => true,
     .Float => true,
     .Bool => true,
+    .Byte => true,
     .Void => true,
     .Str => true,
     _ => false,

@@ -64,10 +64,10 @@ use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.codegen.wasm_type_util.{val_type_eq}
 use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
 use compiler.elem_family.{ElemFamily, elem_family_of, pvec_family_of}
-use lib.source.span.{Span}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
+use lib.source.span.{Span}
 
 // ── Extern boundary helpers ────────────────────────────────────────────
 // Map a MonoType to its Wasm ValType at an extern import boundary.
@@ -718,6 +718,7 @@ fn lib_boundary_val_type(t: LibType) ValType {
     .Int => .I64,
     .Float => .F64,
     .Bool => .I32,
+    .Byte => .I32,
     .Void => .Anyref,
     .Str => .Ref(true, .Named("rt_types__String")),
     .Fn(_, _) => .Ref(false, .Named("rt_types__Closure")),
@@ -817,6 +818,7 @@ fn emit_box_lib_field(ty: LibType, backend: BackendContext, buf: Vector<Instr>) 
     .Int => emit_box_to_anyref(.Int, backend, buf),
     .Float => emit_box_to_anyref(.Float, backend, buf),
     .Bool => emit_box_to_anyref(.Bool, backend, buf),
+    .Byte => emit_box_to_anyref(.Byte, backend, buf),
     _ => buf,
   }
 }
@@ -827,6 +829,7 @@ fn emit_unbox_lib_field(ty: LibType, backend: BackendContext, buf: Vector<Instr>
     .Int => emit_unbox_from_anyref(.Int, backend, buf),
     .Float => emit_unbox_from_anyref(.Float, backend, buf),
     .Bool => emit_unbox_from_anyref(.Bool, backend, buf),
+    .Byte => emit_unbox_from_anyref(.Byte, backend, buf),
     .Str => buf.append(.RefCast(false, .Named("rt_types__String"))),
     .Vec(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
     .Dct(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),
@@ -1001,6 +1004,7 @@ fn lib_type_to_mono(t: LibType) MonoType {
     .Int => .Int,
     .Float => .Float,
     .Bool => .Bool,
+    .Byte => .Byte,
     .Void => .Void,
     .Str => .String,
     .Fn(_, _) => .Anyref_,
