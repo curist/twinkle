@@ -512,6 +512,20 @@ already leaves room for.
   test in `externs.test.mjs`.
 
 ### Phase 2 — Boundary capture + rendering (end-to-end for `error()`)
+
+**Phase 2 COMPLETE (branch `feat/runtime-stack-traces`).** `twk run` renders a
+source-mapped trace at the `run_wasm` boundary, verified through the shipped
+`target/twk` for `error()`, div0, and OOB (each printed once, nonzero exit;
+normal programs and the embeddable/web re-throw path unchanged). The pure
+rendering pipeline (`decode_module → parse_v8_stack → symbolicate →
+render_trace`, exposed as `render_runtime_trace`) lives in the boot suite; the
+host wiring (opt-in `childTrapHandler`, the sync non-task lib loader, the
+renderer bundled beside `boot.wasm`, and the pre-print-suppressing `error`
+variant) lands in the JS runtime + CLI mains + build. A new `Byte` library-ABI
+leaf makes the `Vector<Byte>` module-bytes param eligible and marshals it in
+bulk through linear memory. Remaining polish (rich OOB/div0 messages,
+prelude-frame suppression, name demangling, `--strip-debug`) is Phase 3–4.
+
 - Add the optional internal `childTrapHandler(trapInfo, childBytes)` option
   (`childBytes` = the runner's `Uint8Array`) to `runWasmBytes{Async}`: invoke it
   on a child trap when provided, else re-throw as today (preserving
