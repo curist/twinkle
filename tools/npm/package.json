@@ -11,7 +11,7 @@
     "./node_host.mjs": "./node_host.mjs",
     "./boot.wasm": "./boot.wasm"
   },
-  "files": ["node.mjs", "index.mjs", "web.mjs", "runtime.mjs", "bridge_bytes.mjs", "node_host.mjs", "boot.wasm", "README.md"],
+  "files": ["node.mjs", "index.mjs", "web.mjs", "runtime.mjs", "bridge_bytes.mjs", "node_host.mjs", "boot.wasm", "renderer.wasm", "README.md"],
   "engines": { "node": ">=26" },
   "license": "MIT",
   "publishConfig": { "access": "public" },

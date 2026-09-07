@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 OUT_DIR="${OUT_DIR:-target/npm}"
 SRC="tools/js_runtime"
 BOOT_WASM="${BOOT_WASM:-target/boot.wasm}"
+RENDERER_WASM="${RENDERER_WASM:-target/renderer.wasm}"
 
 if [[ ! -f "$BOOT_WASM" ]]; then
   printf 'error: missing compiler payload: %s\n' "$BOOT_WASM" >&2
@@ -29,6 +30,13 @@ cp "$SRC/web.mjs"          "$OUT_DIR/web.mjs"
 cp "$SRC/node_main.mjs"    "$OUT_DIR/node.mjs"
 cp "$SRC/index.mjs"        "$OUT_DIR/index.mjs"
 cp "$BOOT_WASM"            "$OUT_DIR/boot.wasm"
+# The trap-trace renderer ships flat beside boot.wasm so `twk run` renders
+# source-mapped traces. Optional: absent it, child traps propagate untraced.
+if [[ -f "$RENDERER_WASM" ]]; then
+  cp "$RENDERER_WASM" "$OUT_DIR/renderer.wasm"
+else
+  printf 'note: %s not found; npm CLI will not render trap traces\n' "$RENDERER_WASM" >&2
+fi
 cp tools/npm/package.json "$OUT_DIR/package.json"
 cp tools/npm/README.md    "$OUT_DIR/README.md"
 

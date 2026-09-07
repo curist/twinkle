@@ -420,8 +420,13 @@ function makeHostImports(b, runtime) {
     println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
     error: (s) => {
       const msg = decodeString(b, s);
-      write(runtime.stderr, msg + "\n");
-      throw new Error("host.error: " + msg);
+      // When a child-trap renderer is active (the `twk run` path), the boundary
+      // handler is the sole printer, so skip the pre-print here to avoid
+      // double-printing the message. Otherwise keep today's write-then-throw.
+      if (!runtime.suppressErrorPrint) write(runtime.stderr, msg + "\n");
+      const err = new Error("host.error: " + msg);
+      err.twinkleMessage = msg; // raw message for the trap renderer
+      throw err;
     },
     eprint: (s) => write(runtime.stderr, decodeString(b, s)),
     eprintln: (s) => write(runtime.stderr, decodeString(b, s) + "\n"),
@@ -505,6 +510,7 @@ function makeHostImports(b, runtime) {
         stderr: runtime.stderr,
         imports: runtime.imports,
         host: runtime.host,
+        childTrapHandler: makeChildTrapHandler(runtime),
       });
       return BigInt(exitCode);
     },
@@ -1164,6 +1170,8 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stderr,
     host,
     imports = {},
+    rendererWasm,
+    childTrapHandler,
   } = opts;
 
   if (!host) {
@@ -1180,6 +1188,12 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stdinEof: false,
     host,
     imports,
+    // Renderer bytes let this instance's run_wasm import render a child trap
+    // (set by the CLI main for the boot instance).
+    rendererWasm,
+    // True for a child launched with a trap handler: its `error` import must not
+    // pre-print, leaving the boundary handler as the sole printer.
+    suppressErrorPrint: !!childTrapHandler,
   };
 
   const hostImports = makeHostImports(b, runtime);
@@ -1233,6 +1247,93 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 // Public API — synchronous
 // ---------------------------------------------------------------------------
 
+// Normalize a caught child error into the renderer's trap-info shape. The host
+// `error` import tags its throw with the raw `twinkleMessage`; native wasm traps
+// (div0, OOB, unreachable) only carry V8's `.message`. A missing `.stack` is a
+// normal input the renderer degrades on, not an error.
+function trapInfoFromError(e) {
+  return {
+    stack: (e && e.stack) ?? "",
+    message: (e && (e.twinkleMessage ?? e.message)) ?? "runtime error",
+  };
+}
+
+// The renderer library is pure and instance-independent, so one lazily-loaded
+// instance serves every child trap in a process.
+let cachedRendererLib = null;
+
+// Synchronous, non-task library loader — a sync core of `loadLibBytes` for the
+// renderer, which runs no tasks and suspends on nothing. Instantiation and
+// `__twinkle_start` are already synchronous; this just skips the JSPI/task
+// awaiting the async loader needs.
+function loadLibSync(wasmBytes, opts = {}) {
+  const { mainModule, hostImports, b, runtime, imports, externMeta, exportMeta, callbackRegistry, jspi, scheduler } = prepareWasm(wasmBytes, opts);
+  const registry = callbackRegistry;
+  const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
+  runtime.instance = instance;
+  if (instance.exports.__twinkle_start) {
+    instance.exports.__twinkle_start();
+  }
+
+  const lib = {};
+  for (const meta of exportMeta) {
+    const wasmName = meta.wasmName ?? meta.wasm_name ?? meta.name;
+    const fn = instance.exports[wasmName];
+    if (typeof fn !== "function") continue;
+    if (meta.kind === "value") {
+      lib[meta.name] = coerceLibReturn(fn(), meta.ret, b, instance);
+    } else {
+      lib[meta.name] = (...args) => {
+        const coerced = (meta.args ?? []).map(
+          (kind, i) => coerceLibArg(args[i], kind, b, instance, registry),
+        );
+        return coerceLibReturn(fn(...coerced), meta.ret, b, instance);
+      };
+    }
+  }
+  Object.defineProperty(lib, "instance", { value: instance, enumerable: false });
+  return lib;
+}
+
+// Render a child trap through the renderer library, loaded lazily from the
+// bytes the CLI main handed the boot instance.
+function renderChildTrace(runtime, childBytes, stack, message) {
+  if (!cachedRendererLib) {
+    cachedRendererLib = loadLibSync(runtime.rendererWasm, {
+      programPath: "<renderer>.wasm",
+      guestArgs: [],
+      cwd: runtime.cwd,
+      env: runtime.env,
+      stdout: runtime.stdout,
+      stderr: runtime.stderr,
+      host: runtime.host,
+      imports: {},
+    });
+  }
+  return cachedRendererLib.render_runtime_trace(childBytes, stack, message);
+}
+
+// Opt-in child-trap handler installed by the `run_wasm` import when a renderer
+// is available. It renders the trace, prints it once to stderr, and yields a
+// nonzero exit code. Without a renderer it returns undefined, so the runner
+// re-throws exactly as before (embeddable/web unaffected).
+function makeChildTrapHandler(runtime) {
+  if (!runtime.rendererWasm) return undefined;
+  return (trapInfo, childBytes) => {
+    let out;
+    try {
+      out = renderChildTrace(runtime, childBytes, trapInfo.stack, trapInfo.message);
+    } catch (_) {
+      // Best-effort boundary: if rendering itself fails, fall back to the raw
+      // message rather than losing the failure entirely.
+      write(runtime.stderr, (trapInfo.message || "runtime error") + "\n");
+      return 1;
+    }
+    write(runtime.stderr, out + "\n");
+    return 1;
+  };
+}
+
 export function runWasmBytes(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, scheduler } = prepareWasm(wasmBytes, opts);
   try {
@@ -1248,6 +1349,9 @@ export function runWasmBytes(wasmBytes, opts = {}) {
   } catch (e) {
     if (e instanceof HostExit) {
       return e.code;
+    }
+    if (opts.childTrapHandler) {
+      return opts.childTrapHandler(trapInfoFromError(e), wasmBytes);
     }
     throw e;
   }
@@ -1591,6 +1695,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           stderr: runtime.stderr,
           imports: runtime.imports,
           host: runtime.host,
+          childTrapHandler: makeChildTrapHandler(runtime),
         });
         return BigInt(exitCode);
       },
@@ -1622,6 +1727,9 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   } catch (e) {
     if (e instanceof HostExit) {
       return e.code;
+    }
+    if (opts.childTrapHandler) {
+      return opts.childTrapHandler(trapInfoFromError(e), wasmBytes);
     }
     throw e;
   }

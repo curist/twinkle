@@ -17,6 +17,50 @@ test("twk CLI runs a Twinkle program", () => {
   assert.match(out, /Fizz/);
 });
 
+test("twk run renders a source-mapped trace when a program traps", () => {
+  const root = mkdtempSync(join(tmpdir(), "twk-trace-"));
+  try {
+    // Build the renderer lib into the temp dir so the test does not depend on a
+    // stray target/renderer.wasm being present, and point the CLI at it.
+    const rendererPath = join(root, "renderer.wasm");
+    execFileSync(
+      "node",
+      [entry, "build", join(repoRoot, "boot", "runtime_trace_renderer.tw"), "--lib", "-o", rendererPath],
+      { encoding: "utf8" },
+    );
+
+    const trapPath = join(root, "trap.tw");
+    writeFileSync(
+      trapPath,
+      'fn boom(n: Int) Int {\n  if n <= 0 { error("kaboom") }\n  boom(n - 1)\n}\n\nx := boom(2)\nprintln("never ${x}")\n',
+    );
+
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync("node", [entry, "run", trapPath], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RENDERER_WASM: rendererPath },
+      });
+    } catch (e) {
+      status = e.status ?? 1;
+      stderr = e.stderr?.toString() ?? "";
+    }
+
+    assert.notEqual(status, 0);
+    // The trap message headline, a source location + caret into the user file,
+    // and a backtrace frame — printed exactly once.
+    assert.match(stderr, /error: kaboom/);
+    assert.match(stderr, /trap\.tw:2:\d+/);
+    assert.match(stderr, /\^\^/);
+    assert.match(stderr, /at .*\(.*trap\.tw:/);
+    assert.equal(stderr.match(/kaboom/g).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Run `twk <args...>` inside a project directory. Returns { status, stdout,
 // stderr } without throwing so rejection paths (nonzero exit) can be asserted.
 function twk(cwd, args) {

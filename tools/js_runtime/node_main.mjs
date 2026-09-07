@@ -59,6 +59,23 @@ function loadBootWasm() {
   }
 }
 
+// The runtime trap-trace renderer, built as a --lib beside boot.wasm. Optional:
+// if absent, child traps propagate as before (no source-mapped trace).
+function loadRendererWasm() {
+  const override = process.env.RENDERER_WASM;
+  if (override) {
+    try { return new Uint8Array(readFileSync(resolve(override))); } catch { return undefined; }
+  }
+  try {
+    return new Uint8Array(readFirst([
+      `${here}/renderer.wasm`,              // packaged (flat layout)
+      `${here}/../../target/renderer.wasm`, // dev fallback
+    ]));
+  } catch {
+    return undefined;
+  }
+}
+
 function loadPackageVersion() {
   if (process.env.TWK_VERSION) return process.env.TWK_VERSION;
   try {
@@ -90,6 +107,7 @@ async function main() {
     stdout: nodeStream(1),
     stderr: nodeStream(2),
     host: nodeHost,
+    rendererWasm: loadRendererWasm(),
   });
   process.exit(exitCode);
 }

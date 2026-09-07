@@ -84,8 +84,15 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 		|| { printf 'error: fixed point mismatch; compare files: $(STAGE2_WASM) $(STAGE4_WASM)\n' >&2; exit 1; }
 	@printf '\nSelf-host loop completed successfully.\n'
 
+# Build the runtime trap-trace renderer library beside the boot compiler. It is
+# a --lib artifact loaded on demand by the run_wasm boundary to render a child
+# trap's source-mapped stack (see docs/plans/runtime-stack-traces.md).
+target/renderer.wasm: $(STAGE2_WASM) boot/runtime_trace_renderer.tw $(wildcard boot/lib/debug/*.tw) $(wildcard boot/lib/source/*.tw)
+	@printf '\n==> Build runtime trap-trace renderer -> $@\n'
+	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build boot/runtime_trace_renderer.tw --lib -o $@
+
 # Build the Deno standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs tools/js_runtime/node_host.mjs
+target/twk: $(STAGE2_WASM) target/renderer.wasm tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs tools/js_runtime/node_host.mjs
 	DENO_BIN="$(DENO_BIN)" tools/build_deno_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Deno compile.

@@ -85,6 +85,23 @@ function loadBootWasm() {
   }
 }
 
+// The runtime trap-trace renderer, built as a --lib beside boot.wasm. Optional:
+// if absent, child traps propagate as before (no source-mapped trace).
+function loadRendererWasm() {
+  const override = Deno.env.get("RENDERER_WASM");
+  if (override) {
+    try { return new Uint8Array(readFileSync(resolve(override))); } catch { return undefined; }
+  }
+  try {
+    return new Uint8Array(readFirst([
+      `${import.meta.dirname}/../../target/deno-assets/renderer.wasm.bin`,
+      `${rootDir}/target/renderer.wasm`,
+    ]));
+  } catch {
+    return undefined;
+  }
+}
+
 function loadPackageVersion() {
   const override = Deno.env.get("TWK_VERSION");
   if (override) return override;
@@ -117,6 +134,7 @@ async function main() {
     stdout: denoStream(Deno.stdout),
     stderr: denoStream(Deno.stderr),
     host: nodeHost,
+    rendererWasm: loadRendererWasm(),
   });
   Deno.exit(exitCode);
 }
