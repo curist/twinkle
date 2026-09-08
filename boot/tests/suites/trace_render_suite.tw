@@ -1,3 +1,4 @@
+use @std.fs
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -6,15 +7,38 @@ use lib.debug.stack.{Frame}
 use lib.debug.trace
 use lib.source.report.{RenderConfig}
 
+fn write_fixture(path: String, content: String) Result<Void, String> {
+  case fs.write_text(path, content) {
+    .Ok(_) => .Ok({}),
+    .Err(_) => .Err("failed to write fixture: ${path}"),
+  }
+}
+
+main_tw_path: String = "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_main.tw"
+
 fn sample() DebugSection {
-  files: Vector<FileEntry> = [.{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" }]
+  files: Vector<FileEntry> = [.{ file_id: 0, path: main_tw_path }]
   funcs: Vector<FuncDebug> = [
     .{
       func_idx: 6,
       body_start: 100,
       lines: [
-        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
-        .{ offset: 8, span: .{ file_id: 0, start: 7, end: 17 } },
+        .{
+          offset: 0,
+          span: .{ file_id: 0, start: 0, end: 6 },
+          start_line: 1,
+          start_col: 1,
+          end_line: 1,
+          end_col: 7,
+        },
+        .{
+          offset: 8,
+          span: .{ file_id: 0, start: 7, end: 17 },
+          start_line: 2,
+          start_col: 1,
+          end_line: 2,
+          end_col: 11,
+        },
       ],
     },
   ]
@@ -40,10 +64,12 @@ pub fn suite() runner.Suite {
     .test(
       "renders the innermost frame with a snippet and caret",
       fn() {
+        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+
         // frame_at(110) -> body-rel 10 -> `b := a + 2` on line 2.
         out := trace.render_trace(sample(), [frame_at(110, "deeper")], "boom", plain())
         try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "--> main.tw:2:1")
+        try assert.str_contains(out, "--> ${main_tw_path}:2:1")
         try assert.str_contains(out, "b := a + 2")
         try assert.str_contains(out, "^^^^^^^^^^")
         .Ok({})
@@ -52,10 +78,12 @@ pub fn suite() runner.Suite {
     .test(
       "appends an ordered backtrace of resolved frames",
       fn() {
+        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+
         frames: Vector<Frame> = [frame_at(110, "deeper"), frame_at(100, "main")]
         out := trace.render_trace(sample(), frames, "boom", plain())
-        try assert.str_contains(out, "at deeper (main.tw:2:1)")
-        try assert.str_contains(out, "at main (main.tw:1:1)")
+        try assert.str_contains(out, "at deeper (${main_tw_path}:2:1)")
+        try assert.str_contains(out, "at main (${main_tw_path}:1:1)")
 
         // deeper (innermost) must appear before main (its caller).
         deeper_at := try out.index_of("at deeper").ok_or("deeper missing")
@@ -67,12 +95,14 @@ pub fn suite() runner.Suite {
     .test(
       "drops unresolved (prelude/import) frames from the backtrace and caret",
       fn() {
+        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+
         // frame_at(50) is below every body_start -> unresolved; it must not
         // become the primary caret nor appear in the backtrace.
         frames: Vector<Frame> = [frame_at(50, "rt_core__trap"), frame_at(110, "deeper")]
         out := trace.render_trace(sample(), frames, "boom", plain())
-        try assert.str_contains(out, "--> main.tw:2:1")
-        try assert.str_contains(out, "at deeper (main.tw:2:1)")
+        try assert.str_contains(out, "--> ${main_tw_path}:2:1")
+        try assert.str_contains(out, "at deeper (${main_tw_path}:2:1)")
         try assert.is_false(out.contains("rt_core__trap"))
         .Ok({})
       },
@@ -94,6 +124,44 @@ pub fn suite() runner.Suite {
         out := trace.render_trace(sample(), empty, "boom", plain())
         try assert.str_contains(out, "error: boom")
         try assert.str_contains(out, "no Twinkle stack trace available")
+        .Ok({})
+      },
+    )
+    .test(
+      "degrades to location-only with a source-unavailable note when the file cannot be read",
+      fn() {
+        missing: DebugSection = .{
+          files: [
+            .{
+              file_id: 0,
+              path: "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_missing_no_such_file.tw",
+            },
+          ],
+          funcs: [
+            .{
+              func_idx: 6,
+              body_start: 100,
+              lines: [
+                .{
+                  offset: 0,
+                  span: .{ file_id: 0, start: 7, end: 17 },
+                  start_line: 2,
+                  start_col: 1,
+                  end_line: 2,
+                  end_col: 11,
+                },
+              ],
+            },
+          ],
+        }
+        out := trace.render_trace(missing, [frame_at(100, "deeper")], "boom", plain())
+        try assert.str_contains(out, "error: boom")
+        try assert.is_false(out.contains("-->"))
+        try assert.str_contains(
+          out,
+          "at deeper (/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_missing_no_such_file.tw:2:1)",
+        )
+        try assert.str_contains(out, "source unavailable")
         .Ok({})
       },
     )

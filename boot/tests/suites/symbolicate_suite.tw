@@ -1,3 +1,4 @@
+use @std.fs
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -6,30 +7,58 @@ use lib.debug.stack.{Frame}
 use lib.debug.symbolicate
 
 // A debug section with two files (sparse ids 0 and 3) and two functions whose
-// line programs map body-relative offsets to source spans. body_start values are
-// absolute module PCs, matching what the encoder records — so a frame's parsed
+// line programs map body-relative offsets to source spans (with precomputed
+// line/col, as the producer now embeds them). body_start values are absolute
+// module PCs, matching what the encoder records — so a frame's parsed
 // code_offset can be looked up directly with no translation.
 fn sample() DebugSection {
-  files: Vector<FileEntry> = [
-    .{ file_id: 0, path: "main.tw", source: "a := 1\nb := a + 2\n" },
-    .{ file_id: 3, path: "util.tw", source: "pub fn f() Int {\n  0\n}\n" },
-  ]
+  files: Vector<FileEntry> = [.{ file_id: 0, path: "main.tw" }, .{ file_id: 3, path: "util.tw" }]
   funcs: Vector<FuncDebug> = [
     .{
       func_idx: 6,
       body_start: 100,
       lines: [
-        .{ offset: 0, span: .{ file_id: 0, start: 0, end: 6 } },
-        .{ offset: 8, span: .{ file_id: 0, start: 7, end: 17 } },
+        .{
+          offset: 0,
+          span: .{ file_id: 0, start: 0, end: 6 },
+          start_line: 1,
+          start_col: 1,
+          end_line: 1,
+          end_col: 7,
+        },
+        .{
+          offset: 8,
+          span: .{ file_id: 0, start: 7, end: 17 },
+          start_line: 2,
+          start_col: 1,
+          end_line: 2,
+          end_col: 11,
+        },
       ],
     },
     .{
       func_idx: 9,
       body_start: 200,
-      lines: [.{ offset: 0, span: .{ file_id: 3, start: 19, end: 20 } }],
+      lines: [
+        .{
+          offset: 0,
+          span: .{ file_id: 3, start: 19, end: 20 },
+          start_line: 2,
+          start_col: 3,
+          end_line: 2,
+          end_col: 4,
+        },
+      ],
     },
   ]
   .{ files, funcs }
+}
+
+fn write_fixture(path: String, content: String) Result<Void, String> {
+  case fs.write_text(path, content) {
+    .Ok(_) => .Ok({}),
+    .Err(_) => .Err("failed to write fixture: ${path}"),
+  }
 }
 
 fn frame_at(offset: Int) Frame {
@@ -45,17 +74,33 @@ pub fn suite() runner.Suite {
   runner
     .suite("symbolicate")
     .test(
-      "reconstructs a sparse-id registry with working line/col and file names",
+      "build_disk_registry reads referenced files by sparse id, skipping unreadable ones",
       fn() {
-        reg := symbolicate.reconstruct_registry(sample())
+        util_path := "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/symbolicate_suite_util.tw"
+        try write_fixture(util_path, "pub fn f() Int {\n  0\n}\n")
 
-        // util.tw is at sparse id 3; the "0" body is at byte 19 (line 2, col 3).
+        sec: DebugSection = .{
+          files: [
+            .{
+              file_id: 0,
+              path: "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/symbolicate_suite_missing.tw",
+            },
+            .{ file_id: 3, path: util_path },
+          ],
+          funcs: [],
+        }
+        reg := symbolicate.build_disk_registry(sec)
+
+        // util.tw's "0" body is at byte 19 (line 2, col 3).
         lc := try reg.line_col(.{ file_id: 3, start: 19, end: 20 }).ok_or("no line_col")
         try assert.equal(lc.line, 2)
         try assert.equal(lc.column, 3)
 
         name := try reg.file_name(3).ok_or("no file name")
-        try assert.equal(name, "util.tw")
+        try assert.equal(name, util_path)
+
+        // The missing file (sparse id 0) never made it into the registry.
+        try assert.is_none(reg.file_name(0))
         .Ok({})
       },
     )
