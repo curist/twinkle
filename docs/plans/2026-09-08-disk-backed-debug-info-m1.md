@@ -23,6 +23,10 @@
 - Line/col are **codepoint** columns produced by `registry.line_col`; the producer must reuse that exact function so producer and renderer never disagree on a column.
 - All line/col fields are stored **absolute** (only `offset` stays delta-encoded); source positions are non-monotonic across entries and `push_uleb` is unsigned-only.
 
+## Execution note (task boundaries)
+
+Tasks 2 (A), 3 (B), and 4 (C) form **one atomic compile unit** and are dispatched to a single implementer. Reason: the boot test entry (`boot/tests/main.tw`) transitively compiles `compiler.codegen.wasm` and the renderer suites, so `wasm.tw`/`module_compiler.tw` (which *construct* the section types) and `symbolicate.tw`/`trace.tw` (which *consume* them) must migrate in the same change or the tree won't compile — Twinkle records have no field defaults, so there is no green-at-each-step path. The per-step "run suite to confirm it fails/passes" gates inside Tasks 2–4 therefore apply **after the whole A+B+C migration**, not between them. Task 1 (C0) already landed (gate PASS). Task 5 (D) remains a separate verify task.
+
 ## File Structure
 
 - `boot/lib/debug/section.tw` — **modify.** Format v2: `FileEntry` loses `source`; `LineEntry` gains `start_line/start_col/end_line/end_col`; `encode`/`decode`/`decode_module` updated; `span_at`→`entry_at` and `lookup` return `LineEntry?`; drop `file_source`; add `file_path(section, file_id) String?`.
