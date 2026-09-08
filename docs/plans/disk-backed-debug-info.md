@@ -1,6 +1,6 @@
 # Disk-Backed Runtime Debug Info
 
-Status: Planned
+Status: Milestone 1 complete (Milestone 2 deferred — see Non-goals)
 Date: 2026-09-08
 
 Follow-on to `docs/plans/runtime-stack-traces.md` (Phases 0–2 complete). That
@@ -213,6 +213,24 @@ Bump `version()` to 2. Changes:
 - `make stage2` fixed point; `make bundle-cli`; confirm `boot.wasm` drops back
   toward its pre-debug size. Re-run the boot + JS suites and the `twk run`
   trap fixtures (error / div0 / OOB).
+
+**Done (2026-09-08):** self-host reached its fixed point on the first attempt
+(stage3 == stage4) and `boot.wasm` dropped from 9,471,586 bytes (v1,
+embedded-source) to 6,660,151 bytes (v2, disk-backed) — a ~30% cut. That is
+short of the pre-debug ~4.5 MB baseline; the residual is the file table
+(absolute paths, one entry per referenced module — the boot compiler
+references nearly all of them) plus the per-entry precomputed line/col, both
+of which v2 still carries by design. Boot suite (3538/3538) and the JS suite
+are green (one unrelated, pre-existing Deno-environment failure in
+`web.test.mjs` reproduces identically on a clean checkout). `twk run` on
+error/div0/OOB fixtures each print one source-mapped trace and exit 1; a
+normal program exits 0 with no trace. One nuance surfaced during CLI e2e
+verification: `error(...)` traps resolve their primary frame inside the
+prelude (a `/__twinkle_core/...` logical path that never reads from disk), so
+they degrade to location-only even with the user's file present — this is the
+documented behavior for this milestone (see Non-goals: "prelude-frame
+suppression" is separate, deferred polish), not a defect in the disk-read
+path itself, which div0/OOB fixtures confirm works.
 
 ## Non-goals (deferred)
 
