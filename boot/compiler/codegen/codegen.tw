@@ -18,6 +18,7 @@ use @std.date
 use @std.proc
 
 use compiler.anf.{AnfModule}
+use compiler.artifacts.{DebugFile}
 use compiler.backend.closure_convert.{ClosureConversion, convert_closures}
 use compiler.backend.context.{BackendContext}
 use compiler.backend.mutvec_repr
@@ -51,7 +52,6 @@ use compiler.core_ir.{LibType}
 use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
 use compiler.resolver.{ResolvedEnv, build_ref_field_table}
-use lib.debug.section.{FileEntry}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") {
@@ -275,7 +275,7 @@ pub fn link_program(
   anf: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-  debug_files: Vector<FileEntry>,
+  debug_files: Vector<DebugFile>,
 ) LinkedModule {
   prepared_codegen := prepare_codegen(anf, env, builtins)
   prepared := prepared_codegen.prepared
@@ -505,7 +505,7 @@ pub fn codegen_wasm(
   anf: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-  debug_files: Vector<FileEntry>,
+  debug_files: Vector<DebugFile>,
 ) Vector<Byte> {
   linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()
@@ -524,7 +524,7 @@ pub fn codegen_wasm_buffer(
   anf: AnfModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-  debug_files: Vector<FileEntry>,
+  debug_files: Vector<DebugFile>,
 ) Buffer {
   linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()

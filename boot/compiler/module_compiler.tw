@@ -11,7 +11,7 @@ use @std.date
 use @std.path
 use @std.proc
 
-use compiler.artifacts.{CompileError, PipelineArtifacts}
+use compiler.artifacts.{CompileError, DebugFile, PipelineArtifacts}
 use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
@@ -32,7 +32,6 @@ use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
 use compiler.resolver.{ResolvedEnv, record_info}
-use lib.debug.section.{FileEntry}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
@@ -298,7 +297,7 @@ pub fn compile_analyzed_graph(
     eprintln("[time] optimize: ${t4 - t3}ms")
   }
 
-  debug_files: Vector<FileEntry> = collect r in cur_cache.file_records_list() {
+  debug_files: Vector<DebugFile> = collect r in cur_cache.file_records_list() {
     .{ file_id: r.file_id, path: r.path, source: r.source }
   }
   .Ok(

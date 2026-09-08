@@ -9,6 +9,7 @@ use @std.buffer.{Buffer}
 use @std.date
 use @std.proc
 
+use compiler.artifacts.{DebugFile}
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.type_order.{compute_type_order, type_def_has_self_edge, type_def_name}
 use compiler.codegen.wasm_ir.{
@@ -17,6 +18,8 @@ use compiler.codegen.wasm_ir.{
 }
 use compiler.codegen.wasm_type_util.{val_type_eq}
 use lib.debug.section
+use lib.source.registry
+use lib.source.span as span
 use lib.source.span.{Span}
 
 // ── Byte buffer primitives ─────────────────────────────────────────────
@@ -795,6 +798,19 @@ fn encode_elem_section_payload_with_refs(
 
 type LocalGroup = .{ count: Int, ty: ValType }
 
+// One captured line-program entry before line/col enrichment: instructions
+// starting at `offset` (bytes from the function body content's first byte)
+// originate at `span`. Enriched into `section.LineEntry` (with precomputed
+// line/col) only at section-emit time, once a registry over the referenced
+// source is available.
+type RawLine = .{ offset: Int, span: Span }
+
+// A function's raw debug info gathered as its body is encoded, before
+// line/col enrichment. `body_start` is payload-relative while captured by
+// `encode_code_section_payload`; the caller translates it to a module-absolute
+// offset once the code section's own module offset is known.
+type RawFunc = .{ func_idx: Int, body_start: Int, lines: Vector<RawLine> }
+
 type CodeSectionCache = .{
   type_idx_cache: Dict<String, Int>,
   func_idx_cache: Dict<String, Int>,
@@ -802,7 +818,7 @@ type CodeSectionCache = .{
   data_idx_cache: Dict<String, Int>,
   // Debug line program for the function currently being encoded: each SpanMark
   // records (byte offset within the function body -> span). Reset per function.
-  lines: Vector<section.LineEntry>,
+  lines: Vector<RawLine>,
 }
 
 fn record_line(cache: CodeSectionCache, offset: Int, span: Span) CodeSectionCache {
@@ -966,17 +982,12 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
   groups
 }
 
-// A function's debug info gathered as its body is encoded. `body_start` is the
-// byte offset (relative to the code-section payload) of the body content's first
-// byte; emit_wasm_parts adds the payload's module offset to make it absolute.
-type CapturedFunc = .{ func_idx: Int, body_start: Int, lines: Vector<section.LineEntry> }
-
-type CodeSectionResult = .{ payload: WasmBuf, funcs: Vector<CapturedFunc> }
+type CodeSectionResult = .{ payload: WasmBuf, funcs: Vector<RawFunc> }
 
 fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) CodeSectionResult {
   payload := empty_wasm_buf().emit_u32_leb(funcs.len())
   cache := empty_code_section_cache()
-  captured: Vector<CapturedFunc> = []
+  captured: Vector<RawFunc> = []
 
   for f in funcs {
     // Encode function body into a temporary buffer to measure its size.
@@ -989,7 +1000,7 @@ fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) CodeSection
       body_buf = .encode_val_type_into(g.ty, ctx)
     }
 
-    cache = clear_lines(cache)
+    cache = .clear_lines()
     instr_result := body_buf.encode_instrs_cached(f.body, empty_label_ctx(), ctx, cache)
     body_buf = instr_result.buf
     cache = instr_result.cache
@@ -1444,7 +1455,7 @@ fn encode_instr_cached(
     // Debug pseudo-instruction: emits no bytes, but records the current byte
     // offset within the function body so the twinkle.debug line program can map
     // it back to source. `buf.len` is body-relative here (the body buffer).
-    .SpanMark(sp) => .{ buf, cache: record_line(cache, buf.len, sp) },
+    .SpanMark(sp) => .{ buf, cache: cache.record_line(buf.len, sp) },
   }
 }
 
@@ -1584,7 +1595,7 @@ fn emit_wasm_parts(
   memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
-  debug_files: Vector<section.FileEntry>,
+  debug_files: Vector<DebugFile>,
 ) WasmBuf {
   timed := case proc.env("TWINKLE_TIMINGS") {
     .Some(_) => true,
@@ -1688,7 +1699,7 @@ fn emit_wasm_parts(
   // 10. Code section (id=10). Capture per-function debug info and translate the
   // payload-relative body offsets into absolute module offsets (V8 reports PCs
   // in module-absolute space — pinned in Phase 0).
-  module_debug: Vector<section.FuncDebug> = []
+  module_debug: Vector<RawFunc> = []
 
   if funcs.len() > 0 {
     code := encode_code_section_payload(funcs, ctx)
@@ -1697,7 +1708,11 @@ fn emit_wasm_parts(
 
     for cf in code.funcs {
       module_debug = .append(
-        .{ func_idx: cf.func_idx, body_start: payload_module_offset + cf.body_start, lines: cf.lines },
+        .{
+          func_idx: cf.func_idx,
+          body_start: payload_module_offset + cf.body_start,
+          lines: cf.lines,
+        },
       )
     }
   }
@@ -1717,22 +1732,56 @@ fn emit_wasm_parts(
     buf = .emit_section_into(0x00, encode_name_section_payload(imports, funcs, ctx))
   }
 
-  // twinkle.debug custom section (id=0): source-mapped line program. The file
-  // table is populated once the source table is threaded here; for now the line
-  // program's spans carry file ids that the renderer resolves via that table.
+  // twinkle.debug custom section (id=0): source-mapped line program with
+  // precomputed line/col and a source-less file table. Line/col is computed
+  // here, once, from a throwaway registry built over the threaded source —
+  // the emitted section itself never carries source text; the disk-backed
+  // renderer re-reads files by path when it wants a snippet.
   if module_debug.len() > 0 {
-    // Only carry source for files the line program actually references, so a
-    // small program does not embed the whole prelude's source.
+    reg := registry.empty()
+
+    for df in debug_files {
+      reg = .add_file_with_id(df.file_id, df.path, df.source)
+    }
+
+    enriched: Vector<section.FuncDebug> = collect rf in module_debug {
+      lines: Vector<section.LineEntry> = collect e in rf.lines {
+        sc := case reg.line_col(span.new(e.span.file_id, e.span.start, e.span.start)) {
+          .Some(lc) => lc,
+          .None => .{ line: 0, column: 0 },
+        }
+        ec := case reg.line_col(span.new(e.span.file_id, e.span.end, e.span.end)) {
+          .Some(lc) => lc,
+          .None => .{ line: 0, column: 0 },
+        }
+        .{
+          offset: e.offset,
+          span: e.span,
+          start_line: sc.line,
+          start_col: sc.column,
+          end_line: ec.line,
+          end_col: ec.column,
+        }
+      }
+      .{ func_idx: rf.func_idx, body_start: rf.body_start, lines }
+    }
+
+    // Only carry files the line program actually references, so a small
+    // program does not embed the whole prelude's file table.
     referenced: Dict<Int, Bool> = Dict.new()
 
-    for fd in module_debug {
+    for fd in enriched {
       for entry in fd.lines {
         referenced[entry.span.file_id] = true
       }
     }
 
-    used_files := debug_files.filter(fn(fe) { referenced.has(fe.file_id) })
-    dbg_bytes := section.encode(.{ files: used_files, funcs: module_debug })
+    used_files: Vector<section.FileEntry> = collect df in debug_files.filter(fn(d) { referenced.has(
+      d.file_id,
+    ) }) {
+      .{ file_id: df.file_id, path: df.path }
+    }
+    dbg_bytes := section.encode(.{ files: used_files, funcs: enriched })
     dbg_payload := empty_wasm_buf().emit_name(section.section_name()).emit_bytes(dbg_bytes)
     buf = .emit_section_into(0x00, dbg_payload)
   }

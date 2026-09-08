@@ -8,7 +8,6 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CoreModule}
 use compiler.query.analyze.{AnalysisDiag}
 use compiler.resolver.{ResolvedEnv}
-use lib.debug.section.{FileEntry}
 
 /// Diagnostics payload bundled with the env needed to resolve type names.
 pub type DiagnosticsError = .{ diagnostics: Vector<AnalysisDiag>, env: ResolvedEnv }
@@ -16,6 +15,12 @@ pub type DiagnosticsError = .{ diagnostics: Vector<AnalysisDiag>, env: ResolvedE
 /// Structured compile error returned from the compiler library.
 /// CLI commands format these for display; tooling can inspect them directly.
 pub type CompileError = { Diagnostics(DiagnosticsError), Internal(String) }
+
+// A source file referenced by the compiled program, carried with its full text
+// through the codegen pipeline (unlike `lib.debug.section.FileEntry`, which is
+// source-less). Codegen precomputes line/col from this and drops the source
+// text before it reaches the emitted `twinkle.debug` section.
+pub type DebugFile = .{ file_id: Int, path: String, source: String }
 
 pub type PipelineArtifacts = .{
   env: ResolvedEnv,
@@ -25,6 +30,7 @@ pub type PipelineArtifacts = .{
   anf: AnfModule,
   opt: AnfModule,
   warnings: Vector<AnalysisDiag>,
-  // File table (file_id -> path + source) for the twinkle.debug section.
-  debug_files: Vector<FileEntry>,
+  // File table (file_id -> path + source) threaded to codegen for the
+  // twinkle.debug section.
+  debug_files: Vector<DebugFile>,
 }
