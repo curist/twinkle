@@ -96,16 +96,18 @@ test("compiler emits the twinkle.debug section with a versioned line program", a
     return s;
   };
 
-  assert.equal(u[p++], 1, "version byte");
+  // Format v2 (disk-backed debug info): the file table carries only
+  // `file_id` + absolute `path` — no inline source text — and each
+  // line-program entry additionally precomputes absolute start/end
+  // line/col so the renderer never needs source to print a location.
+  assert.equal(u[p++], 2, "version byte");
   const fileCount = uleb();
   assert.ok(fileCount > 0, "file table carries the referenced files");
   const fileIds = new Set();
   for (let i = 0; i < fileCount; i++) {
     const id = uleb();
-    p++; // flag byte
-    readStr(); // path
-    const src = readStr();
-    assert.ok(src.length > 0, "inline source is present");
+    const path = readStr();
+    assert.ok(path.length > 0, "file entry carries an absolute path");
     fileIds.add(id);
   }
 
@@ -123,7 +125,12 @@ test("compiler emits the twinkle.debug section with a versioned line program", a
       const fileId = uleb();
       uleb(); // span start
       uleb(); // span end
+      const startLine = uleb();
+      const startCol = uleb();
+      const endLine = uleb();
+      const endCol = uleb();
       assert.ok(fileIds.has(fileId), "line-program file_id is present in the file table");
+      assert.ok(startLine > 0 && startCol > 0 && endLine > 0 && endCol > 0, "absolute 1-based line/col");
       sawLine = true;
     }
   }
