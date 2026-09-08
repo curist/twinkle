@@ -1,26 +1,39 @@
 //! `twinkle.debug` custom-section format: encode, decode, and PC lookup.
 //!
-//! The section is self-contained — a reader needs only the module bytes. It
-//! carries a file table (id -> path + source text), a per-function table, and a
-//! per-function line program mapping a byte offset within the function body to
-//! the `Span` the instructions at that offset originate from. Runtime stack
-//! traces decode this to turn a wasm PC into a source `file:line:col`.
+//! The section is self-contained modulo source text — a reader needs only the
+//! module bytes to recover file paths, spans, and precomputed line/col. It
+//! carries a file table (id -> path), a per-function table, and a per-function
+//! line program mapping a byte offset within the function body to the `Span`
+//! (plus absolute start/end line/col) the instructions at that offset
+//! originate from. Runtime stack traces decode this to turn a wasm PC into a
+//! source `file:line:col`; reading the actual source snippet is the disk-backed
+//! renderer's job.
 
 use lib.source.span as span
 use lib.source.span.{Span}
 
 // ── Model ───────────────────────────────────────────────────────────
 // One line-program entry: instructions starting at `offset` (bytes from the
-// function body content's first byte) originate at `span`.
-pub type LineEntry = .{ offset: Int, span: Span }
+// function body content's first byte) originate at `span`. `start_line`/
+// `start_col`/`end_line`/`end_col` are precomputed absolute (1-based)
+// positions for `span.start`/`span.end`, so the renderer never needs source
+// text to print a location.
+pub type LineEntry = .{
+  offset: Int,
+  span: Span,
+  start_line: Int,
+  start_col: Int,
+  end_line: Int,
+  end_col: Int,
+}
 
 // Per-function debug record. `body_start` is the function body content's first
 // byte as an absolute module offset, so a V8 PC maps in via `pc - body_start`.
 pub type FuncDebug = .{ func_idx: Int, body_start: Int, lines: Vector<LineEntry> }
 
-// A source file referenced by some span, carried inline so the trace renderer
-// can reconstruct source without the compiler's ephemeral registry.
-pub type FileEntry = .{ file_id: Int, path: String, source: String }
+// A source file referenced by some span, identified by path only — no source
+// text. The trace renderer reads the file from disk when it needs a snippet.
+pub type FileEntry = .{ file_id: Int, path: String }
 
 pub type DebugSection = .{ files: Vector<FileEntry>, funcs: Vector<FuncDebug> }
 
@@ -29,9 +42,7 @@ pub fn section_name() String {
   "twinkle.debug"
 }
 
-fn version() Int {
-  1
-}
+version: Int = 2
 
 // ── Byte writing ────────────────────────────────────────────────────
 fn byte_of(n: Int) Byte {
@@ -81,7 +92,7 @@ fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
   p := pos
 
   for true {
-    byte := Byte.to_int(bytes[p])
+    byte := bytes[p].to_int()
     p = p + 1
     result = result | (byte & 0x7f) << shift
 
@@ -117,15 +128,13 @@ fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
 
 // ── Encode ──────────────────────────────────────────────────────────
 pub fn encode(section: DebugSection) Vector<Byte> {
-  out: Vector<Byte> = [byte_of(version())]
+  out: Vector<Byte> = [byte_of(version)]
 
   out = push_uleb(out, section.files.len())
 
   for f in section.files {
     out = push_uleb(out, f.file_id)
-    out = .append(byte_of(0)) // flag: 0 = inline source
     out = push_str(out, f.path)
-    out = push_str(out, f.source)
   }
 
   out = push_uleb(out, section.funcs.len())
@@ -141,6 +150,10 @@ pub fn encode(section: DebugSection) Vector<Byte> {
       out = push_uleb(out, entry.span.file_id)
       out = push_uleb(out, entry.span.start)
       out = push_uleb(out, entry.span.end)
+      out = push_uleb(out, entry.start_line)
+      out = push_uleb(out, entry.start_col)
+      out = push_uleb(out, entry.end_line)
+      out = push_uleb(out, entry.end_col)
       prev = entry.offset
     }
   }
@@ -151,7 +164,7 @@ pub fn encode(section: DebugSection) Vector<Byte> {
 // ── Decode ──────────────────────────────────────────────────────────
 // Returns .None when the payload version is not understood.
 pub fn decode(bytes: Vector<Byte>) DebugSection? {
-  if bytes.len() == 0 or Byte.to_int(bytes[0]) != version() {
+  if bytes.len() == 0 or bytes[0].to_int() != version {
     return .None
   }
 
@@ -165,12 +178,10 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
   for fi < file_count {
     idr := read_uleb(bytes, pos)
     file_id := idr.value
-    pos = idr.pos + 1 // skip flag byte
+    pos = idr.pos
     pr := read_str(bytes, pos)
     pos = pr.pos
-    sr := read_str(bytes, pos)
-    pos = sr.pos
-    files = .append(.{ file_id, path: pr.value, source: sr.value })
+    files = .append(.{ file_id, path: pr.value })
     fi = fi + 1
   }
 
@@ -204,7 +215,24 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
       pos = startr.pos
       endr := read_uleb(bytes, pos)
       pos = endr.pos
-      lines = .append(.{ offset, span: span.new(fidr.value, startr.value, endr.value) })
+      slr := read_uleb(bytes, pos)
+      pos = slr.pos
+      scr := read_uleb(bytes, pos)
+      pos = scr.pos
+      elr := read_uleb(bytes, pos)
+      pos = elr.pos
+      ecr := read_uleb(bytes, pos)
+      pos = ecr.pos
+      lines = .append(
+        .{
+          offset,
+          span: span.new(fidr.value, startr.value, endr.value),
+          start_line: slr.value,
+          start_col: scr.value,
+          end_line: elr.value,
+          end_col: ecr.value,
+        },
+      )
       prev = offset
       li = li + 1
     }
@@ -227,10 +255,10 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
 
   // 8-byte header: magic "\0asm" then version. Only the magic is checked.
   if n < 8
-    or Byte.to_int(module_bytes[0]) != 0x00
-    or Byte.to_int(module_bytes[1]) != 0x61
-    or Byte.to_int(module_bytes[2]) != 0x73
-    or Byte.to_int(module_bytes[3]) != 0x6d {
+    or module_bytes[0].to_int() != 0x00
+    or module_bytes[1].to_int() != 0x61
+    or module_bytes[2].to_int() != 0x73
+    or module_bytes[3].to_int() != 0x6d {
     return .None
   }
 
@@ -238,7 +266,7 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
   pos := 8
 
   for pos < n {
-    id := Byte.to_int(module_bytes[pos])
+    id := module_bytes[pos].to_int()
     pos = pos + 1
     lr := read_uleb(module_bytes, pos)
     content_start := lr.pos
@@ -267,9 +295,9 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
 }
 
 // ── Lookup ──────────────────────────────────────────────────────────
-// The span whose instructions enclose `body_rel` (bytes from the function body
-// content start): the last entry with offset <= body_rel.
-pub fn span_at(fn_dbg: FuncDebug, body_rel: Int) Span? {
+// The entry whose instructions enclose `body_rel` (bytes from the function
+// body content start): the last entry with offset <= body_rel.
+pub fn entry_at(fn_dbg: FuncDebug, body_rel: Int) LineEntry? {
   lines := fn_dbg.lines
   n := lines.len()
 
@@ -290,12 +318,12 @@ pub fn span_at(fn_dbg: FuncDebug, body_rel: Int) Span? {
     }
   }
 
-  .Some(lines[lo - 1].span)
+  .Some(lines[lo - 1])
 }
 
-// Map an absolute module PC to its source span: pick the function whose body
-// content starts at the greatest body_start <= pc, then locate the line entry.
-pub fn lookup(section: DebugSection, pc: Int) Span? {
+// Map an absolute module PC to its source line entry: pick the function whose
+// body content starts at the greatest body_start <= pc, then locate the entry.
+pub fn lookup(section: DebugSection, pc: Int) LineEntry? {
   best: FuncDebug? = .None
 
   for f in section.funcs {
@@ -310,14 +338,14 @@ pub fn lookup(section: DebugSection, pc: Int) Span? {
   }
 
   chosen := try best
-  chosen.span_at(pc - chosen.body_start)
+  chosen.entry_at(pc - chosen.body_start)
 }
 
-// Look up a file's inline source by id (renderer reconstructs a registry).
-pub fn file_source(section: DebugSection, file_id: Int) FileEntry? {
+// Look up a file's path by id.
+pub fn file_path(section: DebugSection, file_id: Int) String? {
   for f in section.files {
     if f.file_id == file_id {
-      return .Some(f)
+      return .Some(f.path)
     }
   }
 
