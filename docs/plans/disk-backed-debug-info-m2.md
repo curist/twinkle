@@ -60,21 +60,40 @@ shipped/relocatable artifacts, which is why it was split out.
   meaning of `path` changes (absolute → relative/logical). Bumping the version
   keeps `decode` honest rather than silently reinterpreting the path semantics,
   and lets a reader tell a v2 (absolute) section from a v3 (relative) one.
-- **`source_root` is threaded, not recomputed.** The compiler computes
-  `project_root` once (`module_compiler.tw:58`,
-  `find_project_root(dirname(entry))`); M2 carries it on `PipelineArtifacts` so
-  the producer relativizes with it and the `twk run` command hands the same
-  value to the renderer. The JS host never re-derives path logic (avoids a
-  second, drift-prone `find_project_root`).
+- **The root is absolute end-to-end.** This is the load-bearing decision.
+  `find_project_root` returns `"."` in the *normal* case (`cd myproject &&
+  twk run src/main.tw`: the manifest is at the launch CWD). A `"."` root breaks
+  both `strip_root` (normalized canonicals like `src/main.tw` do not start with
+  `"./"`, so every file would misclassify as `@extern` → location-only —
+  *worse* than M1) and the renderer's containment check (`safe_join(".", …)`).
+  So M2 **absolutizes the entry path first** (`run_file` joins a relative entry
+  against `proc.cwd()` and normalizes) before anything else. From an absolute
+  entry: `find_project_root` walks from an absolute dir and its fallback yields
+  an absolute dir; `project_root` is absolute; the producer absolutizes each
+  canonical before `strip_root` so in-root files strip to a clean relative path;
+  and the renderer safe-joins against the same absolute root. One absolute root,
+  used identically by producer and renderer.
+- **`source_root` is threaded, not recomputed.** The compiler computes the
+  absolute `project_root` once (`module_compiler.tw:58`,
+  `find_project_root(dirname(absolute_entry))`); M2 carries it on
+  `PipelineArtifacts` so the producer relativizes with it and the `twk run`
+  command hands the same value to the renderer. The JS host never re-derives
+  path logic (avoids a second, drift-prone `find_project_root`).
 - **No `source_root` ⇒ location-only for every frame.** A renderer holding
   relative paths but no root must **never** join them against the process CWD —
   that could surface an unrelated file that happens to share the relative path.
   Absence of a root is an unconditional location-only signal.
 - **`find_project_root` no-manifest fallback returns the entry's own
-  directory**, not `path.normalize(".")` (the launching CWD). Every real caller
-  already passes the entry directory (`find_project_root(path.dirname(file))`),
-  so this fixes the single-file `twk run /tmp/foo.tw` case at the source and
-  matches what Rust stage0 already does (`find_project_root(parent)`).
+  directory**, not `path.normalize(".")` (the launching CWD). This is necessary
+  but *not sufficient* on its own: it only helps when the start dir is absolute,
+  which is why the entry-path absolutization above is the real fix for
+  manifest-less runs. (A bare `twk run foo.tw` still has `dir == "."` until the
+  entry is absolutized.) Rust stage0's `find_project_root` is left unchanged —
+  only the boot compiler emits `twinkle.debug`, and boot always has a manifest.
+  Behavior note: `boot/commands/test.tw` deliberately passes `proc.cwd()` (see
+  its comment) and `pipeline.tw`/`base_env.tw` pass `"."`; the new fallback
+  leaves the `"."` callers unchanged and makes `test.tw`'s no-manifest result
+  the absolute CWD (an improvement, not a regression).
 - **Nearest `twinkle.toml` wins.** `find_project_root` already walks up and
   stops at the first manifest, so a file inside a nested project relativizes to
   the nested root. No change; called out for reviewer clarity.
@@ -89,18 +108,18 @@ shipped/relocatable artifacts, which is why it was split out.
 ```
 COMPILE (twk run / twk build)                 RENDER (twk run only)
 ─────────────────────────────                ─────────────────────────────
-dir = dirname(entry)                          child traps → childTrapHandler(info, bytes)
-project_root = find_project_root(dir)                 │
-canonical_roots (already computed)            render_runtime_trace(bytes, stack,
-                                                              message, source_root)
-producer classifies each file path:                   │
+entry = abspath(entry, cwd)   ← absolutize    child traps → childTrapHandler(info, bytes)
+dir = dirname(entry)                                  │
+project_root = find_project_root(dir)         render_runtime_trace(bytes, stack,
+  (absolute; nearest twinkle.toml)                            message, source_root)
+producer classifies abspath(canonical):               │
   under project_root  → "src/grid.tw"         decode v3 twinkle.debug
   stdlib / prelude    → "@std/…"  (logical)   parse stack → frames → symbolicate
   outside all roots   → "@extern/<base>"              │
   → store in twinkle.debug (v3)               per frame:
                                                 source_root present AND path not "@…"?
 run_file:                                       ├ yes → safe_join(source_root, path)
-  source_root = artifacts.project_root                │    ├ under root & readable → snippet
+  source_root = artifacts.project_root (abs)          │    ├ under root & readable → snippet
   proc.run_wasm(bytes, argv, source_root)             │    └ escapes / unreadable → location-only
                                                 └ no  → location-only
                                                             │
@@ -109,11 +128,13 @@ run_file:                                       ├ yes → safe_join(source_roo
                                               omitted + "source unavailable"; print once; exit 1
 ```
 
-`source_root` flows: `PipelineArtifacts.project_root` → `run_file` →
-`proc.run_wasm(bytes, argv, source_root)` extern → host stores it on the run
-opts → `childTrapHandler` passes it to `render_runtime_trace`'s 4th argument.
-Only top-level `twk run` sets it; nested `proc.run_wasm` calls and pre-built
-artifacts leave it empty.
+`source_root` flows: the boot `run` command holds the absolute
+`project_root` (from `PipelineArtifacts`) and passes it as the new 3rd argument
+of `proc.run_wasm(bytes, argv, source_root)`. That reaches the **`run_wasm` host
+import** (the point where the child is executed), which decodes the string and
+captures it in the child's `childTrapHandler` closure, which passes it to
+`render_runtime_trace`'s 4th argument. Only top-level `twk run` sets it; nested
+`proc.run_wasm` calls and pre-built artifacts pass `""` (location-only).
 
 ## Components
 
@@ -139,11 +160,18 @@ pub fn find_project_root(start: String) String {
 }
 ```
 
-Only manifest-less runs change behavior, and only to resolve from the entry
-directory instead of `.`. `module_loader_suite` gains a no-manifest case
-asserting the entry-dir fallback. (Rust stage0's `find_project_root` is left
-as-is: only the boot compiler emits `twinkle.debug`, and boot always has a
-manifest, so self-host is unaffected.)
+Only manifest-less runs change behavior, and only to return the (now absolute)
+start dir instead of `"."`. This fix alone does **not** rescue a bare
+`twk run foo.tw` — that still enters with `dir == "."` — which is why
+`run_file` absolutizes the entry path *before* calling the compiler (Component
+3); from an absolute entry, `dir` is absolute and the fallback yields the
+absolute entry directory. Callers that pass `"."` (`pipeline.tw:46`,
+`base_env.tw:315`) are unchanged; `test.tw:22` (which passes `proc.cwd()` with a
+comment about `dirname(".")`) now gets an absolute CWD on the no-manifest path —
+an improvement, and it keeps its own `proc.cwd()` call regardless.
+`module_loader_suite` gains a no-manifest case asserting the entry-dir fallback.
+(Rust stage0's `find_project_root` is left as-is: only the boot compiler emits
+`twinkle.debug`, and boot always has a manifest, so self-host is unaffected.)
 
 ### 2. Producer relativization (`boot/compiler/…`)
 
@@ -161,28 +189,54 @@ manifest, so self-host is unaffected.)
   `Extern(base) → "@extern/${base}"`. One classification definition, two
   formatters — so the prelude bare-vs-`@std` difference is a formatting choice,
   not a fork in the path logic.
-- **Carry the root.** Add `project_root: String` (and, if convenient, the
-  `canonical_roots`) to `PipelineArtifacts` so both the producer and `run_file`
-  read the single computed value.
-- **Relativize at emit.** Where the file table is built
-  (`boot/compiler/codegen/wasm.tw`, from the threaded `DebugFile` records), map
-  each `DebugFile.path` (canonical/absolute) through the shared classifier
-  before storing it. No absolute path reaches the section. Line/col precompute
-  is unchanged from M1.
+- **Carry the root.** Add the absolute `project_root: String` to
+  `PipelineArtifacts` so `run_file` reads the single computed value for
+  `source_root`.
+- **Relativize where the root is in scope, not at emit.** `debug_files` are
+  assembled in `module_compiler.tw:300-302`, exactly where `project_root`
+  (`:58`) and `canonical_roots` (`:59`) already exist. Classify each
+  `DebugFile.path` there — **absolutizing it first** (join `proc.cwd()` if the
+  canonical is relative, then normalize) so it shares a real prefix with the
+  absolute `project_root` and `strip_root` matches. This is strictly smaller
+  than threading `project_root`/`canonical_roots` down through `LinkedModule` →
+  `emit_wasm_parts`. `DebugFile.path` is the canonical form `analyze.tw`
+  produced (`analyze.tw:421` → `module_compiler.tw:301`), which is what
+  `strip_root` consumes. The stored `DebugFile.path` becomes the
+  relative/logical string; `wasm.tw`'s file-table emit and line/col precompute
+  are unchanged from M1 (they just serialize whatever `path` now holds). No
+  absolute path reaches the section.
 
 ### 3. Root plumbing (`boot/commands/run.tw`, `proc`, host)
 
-- **Extern + wrapper.** Widen `run_wasm` to carry the root:
-  `run_wasm(bytes, argv, source_root: String) Int` (extern
-  `twinkle_runtime.run_wasm`; `proc.run_wasm` wrapper). Empty string means "no
-  root" (location-only).
-- **`run_file`.** Pass `artifacts.project_root` (absolutized — see safe-join) as
-  `source_root`; existing non-`run` callers (`test.tw`, nested runs) pass `""`.
-- **Host.** `runWasmBytes{Async}` / `prepareWasm` store the passed
-  `source_root` on `runtime`; `makeChildTrapHandler` forwards it to
-  `render_runtime_trace(childBytes, stack, message, source_root)`. Nested
-  `run_wasm` launches forward `""` (they carry no root), preserving M1's
-  location-only behavior for `proc.run_wasm(bytes)`.
+- **Extern + wrapper + ABI.** Widen `run_wasm` to carry the root:
+  `run_wasm(bytes, argv, source_root: String) Int`. Touch points:
+  - `boot/stdlib/proc.tw` — the real source of the `extern twinkle_runtime {
+    fn run_wasm(bytes, argv) Int }` decl and the `proc.run_wasm` wrapper (add
+    the `source_root` param to both). `boot/lib/module/core_lib.tw` embeds this
+    as a generated string literal — regenerate it, don't hand-edit.
+  - `boot/compiler/builtins.tw:371` — `"host_run_wasm" => abi([arr_n(),
+    arr_n()], [.I64])` becomes `abi([arr_n(), arr_n(), str_n()], [.I64])`
+    (String host args use `str_n()`, cf. `host_env`/`host_read_file`).
+  - `boot/compiler/codegen/emit/runtime_abi.tw:21` needs **no** change — the new
+    arg is a `String`, not a `Vector`, so it crosses no PVec→Array boundary.
+  Empty string means "no root" (location-only).
+- **`run_file` (`boot/commands/run.tw`).** Absolutize the entry path against
+  `proc.cwd()` first (Component 1); pass `artifacts.project_root` (absolute) as
+  `source_root`. Other `proc.run_wasm` callers — `test.tw:100`, any nested run —
+  pass `""`.
+- **Host (`tools/js_runtime/runtime.mjs`).** `source_root` arrives as the new
+  3rd wasm arg of the **`run_wasm` host import** — the sync binding (~`:500`)
+  and the async `suspendHost` binding (~`:1687`, an arity change). Each
+  `decodeString`s it and captures it in the child's trap handler closure —
+  `makeChildTrapHandler(runtime, sourceRoot)` (~`:516`/`:1704`) →
+  `renderChildTrace` → `render_runtime_trace(childBytes, stack, message,
+  source_root)` (~`:1316`). It does **not** flow through `prepareWasm`/`runtime`
+  opts of the outer boot instance. Nested `run_wasm` launches inside a guest
+  pass `""`, preserving M1's location-only behavior for `proc.run_wasm(bytes)`.
+- **Bootstrap caveat.** Because `run.tw` uses `proc.run_wasm`, the emitted
+  `boot.wasm` import arity and the bundled `runtime.mjs` binding must change
+  together in the same `make bundle-cli`. Stage0 needs no change (generic extern
+  support; the JS host implements the import).
 
 ### 4. Renderer (`boot/runtime_trace_renderer.tw`, `boot/lib/debug/*`)
 
@@ -219,9 +273,10 @@ fn safe_join(source_root: String, rel: String) String? {
 ```
 
 - `source_root` must be **absolute** for the containment check to be sound. It
-  is absolutized before reaching the renderer: `run_file` resolves
-  `project_root` against `proc.cwd()` (or the host absolutizes) and normalizes,
-  so `twk run ./foo.tw` yields an absolute root.
+  is absolute by construction: `run_file` absolutizes the entry path against
+  `proc.cwd()` before compilation, so `project_root` (and thus `source_root`) is
+  absolute even for `twk run ./foo.tw`. No re-absolutization is needed at the
+  renderer.
 - `path.normalize` collapses `..`, so a `rel` of `../../etc/passwd` normalizes
   to a path outside `prefix` and is refused. An absolute `rel` (shouldn't occur
   in a well-formed v3 section, but a hostile one could) fails the containment
@@ -243,24 +298,35 @@ snippet, the report omits the source block and appends `source unavailable`
 (identical to M1). No path is ever read outside the safe-joined root, and a
 malformed section can at worst force location-only.
 
+**Cross-version note (M1 v2 artifact under a v3 renderer).** `decode` rejects a
+mismatched version byte (returns `.None`), so a stale v2 artifact rendered by a
+v3 renderer falls to the no-debug-section fallback — headline + "(no Twinkle
+stack trace available)", losing even the embedded line/col. This is acceptable
+because the branch is unreleased (no shipped v2 artifacts exist), and it is the
+safe failure. It is called out only so the degradation surface is complete.
+
 ## Testing
 
 - **`find_project_root`** — `module_loader_suite`: no-manifest start returns the
   entry directory (not `.`); nearest-manifest behavior unchanged.
 - **Producer classification** — a unit test over the shared classifier:
   in-root → relative, stdlib/prelude → `@std/…`, outside-root → `@extern/…`.
-  A compiled-section check (as in M1) asserts stored paths are relative/logical,
-  never absolute.
+  Include the **`project_root == "."` regression case** (B1): a project whose
+  manifest is at the launch CWD must still classify its files as in-root
+  relative (`src/main.tw`), not `@extern` — this is the case the absolutization
+  fixes. A compiled-section check (as in M1) asserts stored paths are
+  relative/logical, never absolute.
 - **safe-join** — table tests: normal relative resolves under root; `..`-escape
   refused; absolute `rel` refused; `@…` refused; empty root refused.
 - **Renderer** (boot suite): with a temp-dir root and a real file under it,
   present ⇒ snippet; file removed ⇒ location-only + `source unavailable`;
   empty `source_root` ⇒ location-only even though the file exists; a `@std/…`
   frame ⇒ location-only. Reuse the M1 stable-`/tmp` fixture approach.
-- **CLI e2e** (`cli.test.mjs`): `twk run` on a project with a `twinkle.toml`
-  shows a relative-path snippet; the same artifact run later without a root
-  shows location-only; a `twk run` of a single file with no manifest resolves
-  its snippet via the entry-dir fallback.
+- **CLI e2e** (`cli.test.mjs`): `twk run src/main.tw` launched *from* a project
+  root (so `project_root == "."` before absolutization) shows a relative-path
+  snippet; the same artifact run later without a root shows location-only; a
+  `twk run ./foo.tw` of a single relative-path file with no manifest resolves
+  its snippet via entry-path absolutization + the entry-dir fallback.
 - **Self-host / size** — `make stage2` + `bundle-cli`; boot + JS suites green;
   confirm boot.wasm size is unchanged from M1 (paths are shorter, if anything)
   and no absolute build paths appear in its section.
@@ -281,7 +347,9 @@ malformed section can at worst force location-only.
    `@` prefix so the path string self-describes joinability and no flag byte is
    added. An explicit one-byte kind (0=relative, 1=logical) is unambiguous even
    for pathological `@`-named project dirs, at the cost of a per-file byte.
-   Recommendation: `@` prefix.
-2. **Absolutizing `source_root`:** do it in `run_file` (via `proc.cwd()`) so the
-   value on the wire is already absolute, or in the JS host. Recommendation:
-   `run_file`, so the one authoritative root is absolute everywhere downstream.
+   Recommendation: `@` prefix (decided, pending objection).
+
+Resolved during design review: `source_root`/root absolutization happens in
+`run_file` via `proc.cwd()` (one authoritative absolute root used by producer
+classification and renderer safe-join), which is also the fix for the `"."`-root
+regression and for relative single-file runs.
