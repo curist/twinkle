@@ -14,7 +14,11 @@ fn write_fixture(path: String, content: String) Result<Void, String> {
   }
 }
 
-main_tw_path: String = "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_main.tw"
+// Stable `/tmp` paths (not the session scratchpad) so the fixtures work on
+// any machine/session, matching lsp_definition_suite.tw's precedent.
+main_tw_path: String = "/tmp/twk_traceview_suite_main.tw"
+
+missing_tw_path: String = "/tmp/twk_traceview_suite_no_such_file.tw"
 
 fn sample() DebugSection {
   files: Vector<FileEntry> = [.{ file_id: 0, path: main_tw_path }]
@@ -131,12 +135,7 @@ pub fn suite() runner.Suite {
       "degrades to location-only with a source-unavailable note when the file cannot be read",
       fn() {
         missing: DebugSection = .{
-          files: [
-            .{
-              file_id: 0,
-              path: "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_missing_no_such_file.tw",
-            },
-          ],
+          files: [.{ file_id: 0, path: missing_tw_path }],
           funcs: [
             .{
               func_idx: 6,
@@ -157,10 +156,7 @@ pub fn suite() runner.Suite {
         out := trace.render_trace(missing, [frame_at(100, "deeper")], "boom", plain())
         try assert.str_contains(out, "error: boom")
         try assert.is_false(out.contains("-->"))
-        try assert.str_contains(
-          out,
-          "at deeper (/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/trace_render_suite_missing_no_such_file.tw:2:1)",
-        )
+        try assert.str_contains(out, "at deeper (${missing_tw_path}:2:1)")
         try assert.str_contains(out, "source unavailable")
         .Ok({})
       },

@@ -63,8 +63,9 @@ pub fn render_trace(
 ) String {
   reg := symbolicate.build_disk_registry(section)
   resolved := symbolicate.symbolicate(section, frames)
+  primary := primary_label(resolved)
 
-  labels := case primary_label(resolved) {
+  labels := case primary {
     .Some(l) => [l],
     .None => [],
   }
@@ -72,7 +73,7 @@ pub fn render_trace(
   head := render.render(report, reg, config)
   bt := backtrace_lines(resolved)
 
-  snippet_ok := case primary_label(resolved) {
+  snippet_ok := case primary {
     .Some(l) => case reg.line_col(l.span) {
       .Some(_) => true,
       .None => false,

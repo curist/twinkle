@@ -76,17 +76,15 @@ pub fn suite() runner.Suite {
     .test(
       "build_disk_registry reads referenced files by sparse id, skipping unreadable ones",
       fn() {
-        util_path := "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/symbolicate_suite_util.tw"
+        // Stable `/tmp` paths (not the session scratchpad) so the fixture
+        // works on any machine/session, matching lsp_definition_suite.tw's
+        // precedent.
+        util_path := "/tmp/twk_symbolicate_suite_util.tw"
+        missing_path := "/tmp/twk_symbolicate_suite_missing.tw"
         try write_fixture(util_path, "pub fn f() Int {\n  0\n}\n")
 
         sec: DebugSection = .{
-          files: [
-            .{
-              file_id: 0,
-              path: "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/symbolicate_suite_missing.tw",
-            },
-            .{ file_id: 3, path: util_path },
-          ],
+          files: [.{ file_id: 0, path: missing_path }, .{ file_id: 3, path: util_path }],
           funcs: [],
         }
         reg := symbolicate.build_disk_registry(sec)

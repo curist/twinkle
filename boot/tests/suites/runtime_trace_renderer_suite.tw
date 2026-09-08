@@ -61,10 +61,12 @@ fn wrap_module(dbg_bytes: Vector<Byte>) Vector<Byte> {
 
 // Absolute path to a real on-disk fixture (unlike a bare "main.tw" placeholder,
 // the disk-backed renderer must actually read this file to render a snippet).
-main_tw_path: String = "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/runtime_trace_renderer_suite_main.tw"
+// A stable `/tmp` path (not the session scratchpad) so the fixture works on
+// any machine/session, matching lsp_definition_suite.tw's precedent.
+main_tw_path: String = "/tmp/twk_rttrace_suite_main.tw"
 
 // A path that is guaranteed not to exist, for the source-unavailable case.
-missing_tw_path: String = "/private/tmp/claude-501/-Users-curist-playground-rust-twinkle/4e32709b-320e-4b0e-ba82-53f506a1ed63/scratchpad/runtime_trace_renderer_suite_no_such_file.tw"
+missing_tw_path: String = "/tmp/twk_rttrace_suite_no_such_file.tw"
 
 // Write the fixture source `main_tw_path()` points at and return the path.
 fn write_main_tw() String {
