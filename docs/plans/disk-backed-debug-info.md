@@ -1,14 +1,14 @@
 # Disk-Backed Runtime Debug Info
 
 Status: Planned
-Date: 2026-09-07
+Date: 2026-09-08
 
 Follow-on to `docs/plans/runtime-stack-traces.md` (Phases 0–2 complete). That
 work embeds each program's source text inline in the `twinkle.debug` section so
 the trace renderer is self-contained. This detour replaces inline source with
 **disk-backed** recovery: the section carries only paths and locations, and the
 renderer reads snippets from the source tree at render time — but only on
-`twk run`, where the source is guaranteed present and fresh.
+`twk run`, where the source is present and (in practice) fresh.
 
 ## Motivation
 
@@ -18,7 +18,34 @@ references nearly every module, its own `twinkle.debug` roughly doubles
 the bulk of the section. Removing it — while keeping full source-mapped traces
 for the common `twk run` workflow — is the lever.
 
-## Goal
+## Decomposition (two milestones)
+
+The original single plan bundled the safe, high-value win (drop source text)
+with its riskiest part (relativize paths to a project root, safe-join under a
+render-time root, fix `find_project_root`). The size win — the whole point —
+comes entirely from *dropping source text*, which is independent of path
+relativization. So this splits into:
+
+- **Milestone 1 (this plan): drop source, keep absolute paths, read from disk.**
+  The section stores each source file's **absolute** path plus per-entry line/col
+  and byte spans, and no source text. On `twk run`, the renderer reads that
+  absolute path straight from disk and reuses the existing snippet path. This
+  delivers the ~2× size cut **and** working `twk run` snippets, with none of the
+  root-computation, relativization, or traversal-guard machinery — and, because
+  the path is read directly, no `source_root` argument and no change to the host
+  boundary. Unreadable files, `@std`/prelude frames, and any non-`twk run`
+  context degrade to `file:line:col` + backtrace.
+
+- **Milestone 2 (deferred — see Non-goals): portability / hardening.** Project-
+  relative paths, a render-time `source_root`, safe-join with traversal
+  rejection, fixing `find_project_root`'s no-manifest fallback, and threading the
+  project root through the pipeline. This layer only matters for **shipped
+  artifacts** (don't leak build-machine paths; tolerate untrusted sections) —
+  i.e. the standalone-restore scope already deferred in
+  `runtime-stack-traces.md`. It is written up here so the format leaves room for
+  it, but it is not built in this plan.
+
+## Goal (Milestone 1)
 
 Unchanged rendering target for `twk run`:
 
@@ -54,132 +81,133 @@ runtime error: index out of bounds
   empty section — is a separate future enhancement, not in scope.)
 - **Source restore is scoped to `twk run`.** Only the compile-and-run path
   enriches frames with snippets, because that is the one context where the
-  source tree is present, unchanged, and rooted at a root the compiler just
-  computed. A `twk build` artifact executed later, or a `proc.run_wasm(bytes)`
-  call, renders location-only. This removes every cross-machine, stale-source,
-  and render-time-root-rederivation concern.
-- **No hashes.** Their only job was detecting stale on-disk source; in the
-  `twk run` path source cannot be stale. Deferred behind the format version byte
-  for a future standalone-restore path.
-- **Locations carry both byte span and line/col.** Line/col is mandatory (the
-  only way a source-less artifact can print `file:line:col`). The byte span is
-  retained so the `twk run` snippet path stays the *existing* `render.tw` /
-  `FileRegistry` code, with source coming from disk instead of the section. The
-  cost is a couple of delta-encoded ints per entry.
-- **Project-relative paths.** The section stores paths relative to the run's
-  project root (`find_project_root(entry)`; single file with no manifest ⇒ the
-  entry's directory, so the path is the basename). Absolute build-machine paths
-  are never embedded. Logical `@std`/prelude paths resolve outside any user root
-  and therefore fall to location-only.
-- **Trust boundary in the renderer, in Twinkle.** Debug-section decoding and
-  source recovery stay entirely in the renderer; the host does not grow a second
-  implementation. The renderer safe-joins each relative path beneath the passed
-  `source_root` and rejects traversal, so even a malformed section cannot turn
-  trace rendering into arbitrary file access.
+  source tree is present. A `twk build` artifact executed later, or a
+  `proc.run_wasm(bytes)` call, renders location-only.
+- **Milestone 1 stores absolute paths and reads them directly.** No project-root
+  computation at compile time and no `source_root` at render time. This keeps
+  the renderer signature at the just-shipped 3 args
+  (`render_runtime_trace(bytes, stack, message)`) and leaves the `run_wasm` host
+  boundary untouched. Relativization (and the portability it buys) is
+  Milestone 2.
+- **No hashes.** Their only job was detecting stale on-disk source. Deferred
+  behind the format version byte.
+- **Staleness is a documented limitation, not a detected error.** A long-running
+  program that traps after its source was edited on disk may render a snippet
+  from the edited bytes against compile-time spans — i.e. a wrong snippet. There
+  is no tripwire (consistent with "no hash"): the byte offsets still point
+  somewhere in the file, the caret may just be off. Documented, not guarded.
+- **Locations carry both byte span and line/col, both absolute.** Line/col is
+  mandatory (the only way a source-less frame can print `file:line:col`). The
+  byte span is retained so the snippet path stays the *existing* `render.tw` /
+  `FileRegistry` code, with source coming from disk. **All four line/col fields
+  are stored absolute, not delta-encoded** — the optimizer reorders and inlines
+  code, so source positions are non-monotonic across line-program entries, and
+  the `push_uleb` encoder is unsigned-only; a negative delta would corrupt output
+  or hang. This matches how `span.file_id/start/end` are already stored (absolute,
+  for the same reason). Only `offset` (monotonic) stays delta-encoded.
 
-## Architecture
+## Architecture (Milestone 1)
 
 ```
 COMPILE (twk run / twk build)              RENDER (twk run only, at run_wasm boundary)
 ──────────────────────────────            ─────────────────────────────────────────────
-find_project_root(entry) = R              child traps → childTrapHandler(info, bytes)
+serialize twinkle.debug:                  child traps → childTrapHandler(info, bytes)
+  file_id → absolute path                          │
+  line program per fn:                     render_runtime_trace(bytes, stack, message)
+    (pc → byte span + abs line/col)                │
+  NO source text, NO hash                  decode twinkle.debug (no source inside)
+                                           parse stack → frames → symbolicate
                                                     │
-serialize twinkle.debug:                  render_runtime_trace(bytes, stack, message,
-  file_id → path relative to R                                  source_root = R)
-  line program per fn:                            │
-    (pc → byte span + line/col)           decode twinkle.debug (no source inside)
-  NO source text, NO hash                 parse stack → frames → symbolicate
+                                           per frame:
+                                             ├─ read absolute path via @std.fs
+                                             │    readable → FileRegistry from disk
+                                             │    source → render.tw snippet
+                                             └─ unreadable / logical (@std) → location-only
                                                     │
-                                          per frame: safe-join(path, source_root)
-                                            ├─ under root + readable → FileRegistry
-                                            │    from disk source → render.tw snippet
-                                            └─ missing / escapes / logical → location-only
-                                                    │
-                                          print once to stderr; nonzero exit
+                                           print once to stderr; nonzero exit
 ```
 
-The host passes `source_root` only on the `twk run` path; every other run
-context passes none, yielding location-only traces.
+The host boundary is unchanged from Phase 2: `childTrapHandler` already forwards
+`rendererWasm`; no `source_root` is threaded.
 
-## Components
+## Components (Milestone 1)
 
 ### 1. Format (`boot/lib/debug/section.tw`)
 
 Bump `version()` to 2. Changes:
 
 - **File table entry:** `{ file_id, path }` — drop the inline-source flag byte
-  and the source string.
+  and the source string. `path` is the absolute path the compiler already holds.
 - **Line-program entry:** `{ offset, file_id, start, end, start_line, start_col,
-  end_line, end_col }`, delta-encoded (offset already is; line/col deltas from
-  the previous entry). Today's entry is `{ offset, span{file_id,start,end} }`;
-  the four line/col fields are added.
+  end_line, end_col }`. `offset` stays delta-encoded; `file_id/start/end` stay
+  absolute (as today); the four new line/col fields are **absolute** too.
 - `decode`/`encode`, `span_at`, `lookup`, and `decode_module` update to the new
   shape. `file_source` (inline-source lookup) is removed.
 
 ### 2. Compile-time producer
 
-- **Path relativization.** Where the file table is built
+- **Drop source text.** Where the file table is built
   (`boot/compiler/codegen/wasm.tw`, from `cache.Store` records threaded via
-  `PipelineArtifacts.debug_files`), store each path relative to the compilation's
-  project root instead of the canonical/absolute path. The root is
-  `find_project_root(entry)` (`lib.module.loader`), already computed during
-  `compile_entry`; thread it to the serializer.
-- **Line/col precompute.** For every line-program span, compute
-  `(line, col)` for `start` and `end` using a line index over the source the
-  compiler already holds (`cache.Store.file_records` /
-  `PipelineArtifacts.debug_files`). `boot/lib/source` already has line/col
-  machinery (`FileRegistry.line_col`); reuse or factor a small line-index helper.
-- No source bytes are written into the section.
+  `PipelineArtifacts.debug_files`), stop writing the source string; keep the
+  absolute path unchanged. No project-root computation, no relativization.
+- **Line/col precompute.** For every line-program span, compute `(line, col)` for
+  `start` and `end` using the source the compiler already holds
+  (`cache.Store.file_records` / `PipelineArtifacts.debug_files`). Reuse
+  `FileRegistry.line_col` (`boot/lib/source`) exactly, so the precomputed columns
+  are codepoint columns identical to what the renderer would have produced from
+  the same source — no UTF-8/byte drift between producer and renderer.
 
 ### 3. Render-time renderer (`boot/runtime_trace_renderer.tw` + `boot/lib/debug/*`)
 
-- **Signature:** `render_runtime_trace(bytes: Vector<Byte>, stack: String,
-  message: String, source_root: String) String`. An empty `source_root` means
-  "no source lookup" (location-only for every frame).
+- **Signature unchanged:** `render_runtime_trace(bytes: Vector<Byte>, stack:
+  String, message: String) String`.
 - **`symbolicate` / registry:** stop reconstructing a `FileRegistry` from
-  embedded source. Instead, for a frame whose file resolves under `source_root`,
-  read the file via `@std.fs` and build the registry from disk source; feed the
-  existing byte-`Span` path through `render.tw` for the snippet + caret.
-- **Location-only path:** when there is no `source_root`, the path escapes the
-  root, or the file is unreadable, render the headline + `file:line:col` (from
-  embedded line/col) + backtrace + a `source unavailable` note. No snippet.
-- **Safe join:** normalize `join(source_root, rel_path)` and require the result
-  to remain under `source_root`; otherwise location-only. Never read absolute or
-  `..`-escaping paths.
+  embedded source. For a frame whose absolute path is readable, read it via
+  `@std.fs` and build the registry from disk source; feed the existing
+  byte-`Span` through `render.tw` for the snippet + caret.
+- **Location-only path:** when the file is unreadable or the path is logical
+  (`@std`/prelude, which never resolves to a real file), render the headline +
+  `file:line:col` (from embedded absolute line/col) + backtrace + a
+  `source unavailable` note. No snippet, never a crash.
 
 ### 4. Host plumbing (`tools/js_runtime/*`)
 
-- The `run_wasm` import already builds the child `childTrapHandler`. Extend the
-  handler to pass `source_root` to `render_runtime_trace`. The boot CLI computes
-  it from the entry path it launched the child with (same `find_project_root`
-  rule); it is threaded onto `runtime` like `rendererWasm` and forwarded to
-  nested `run_wasm` calls.
+- No change to the `run_wasm` boundary or `childTrapHandler` — it already
+  forwards `rendererWasm`, and Milestone 1 adds no `source_root`.
 - The renderer lib now imports `@std.fs`; the sync lib loader (`loadLibSync`)
-  already instantiates it with a host adapter, so file reads resolve through the
-  same host. Confirm the loader/bridge provide the fs imports the renderer needs.
-- `twk build` artifacts and raw `proc.run_wasm(bytes)` continue to pass no
-  `source_root` ⇒ location-only.
+  instantiates it with a host adapter, so file reads resolve through the same
+  host. **Gate C0 below confirms this actually works** before the renderer is
+  rewritten.
 
-## Plan
+## Plan (Milestone 1)
+
+### Phase C0 — `@std.fs`-in-lib spike (gate)
+- Before any format change: confirm a `--lib` artifact can import `@std.fs` and
+  read a file through `loadLibSync`'s host adapter. The current renderer lib
+  imports no externs; this is the one unproven capability the whole milestone
+  rests on. A throwaway lib that reads a known file and returns its length is
+  enough. If the sync loader can't supply the fs imports, resolve that here
+  (extend the adapter) before proceeding.
 
 ### Phase A — Format v2
-- Rewrite the `section.tw` codec for the new file-table and line-program shape;
-  bump the version; drop `file_source` and the inline-source flag.
+- Rewrite the `section.tw` codec for the new file-table and line-program shape
+  (absolute line/col, no source string); bump the version; drop `file_source`
+  and the inline-source flag.
 - Update `debug_section_suite` round-trip/boundary/lookup tests.
 
 ### Phase B — Producer
-- Thread the project root to the serializer; relativize paths.
-- Precompute line/col for every line-program span from in-memory source.
+- Stop writing source text into the section.
+- Precompute absolute line/col for every line-program span via
+  `FileRegistry.line_col`.
 - Update codegen/wasm tests and any fixtures asserting the old section shape.
 
-### Phase C — Renderer + host
-- Add the `source_root` parameter; switch source recovery to disk with safe-join
-  and location-only degradation; keep the `render.tw` snippet path.
-- Thread `source_root` through the `run_wasm` boundary; give the renderer lib
-  `@std.fs`.
-- Boot suite: renderer against a temp-dir root (present / missing / traversal),
-  location-only path. CLI e2e: `twk run` shows a snippet; a pre-built artifact
-  shows location-only.
+### Phase C — Renderer
+- Switch source recovery to disk (`@std.fs`) keyed on the embedded absolute path;
+  keep the `render.tw` snippet path; degrade to location-only on unreadable /
+  logical paths.
+- Boot suite: renderer against a temp-dir file (present / missing), location-only
+  path. CLI e2e: `twk run` shows a snippet; a pre-built artifact run later shows
+  location-only.
 
 ### Phase D — Verify
 - `make stage2` fixed point; `make bundle-cli`; confirm `boot.wasm` drops back
@@ -188,6 +216,17 @@ Bump `version()` to 2. Changes:
 
 ## Non-goals (deferred)
 
+- **Milestone 2: project-relative paths + `source_root` + safe-join + portability.**
+  Store paths relative to `find_project_root(entry)`; add a render-time
+  `source_root` parameter (this breaks the 3-arg format-of-record and re-widens
+  the `run_wasm` boundary); safe-join each relative path beneath `source_root`
+  and reject traversal; fix `find_project_root`'s no-manifest fallback (today it
+  returns `path.normalize(".")` — the launching CWD — **not** the entry's
+  directory, so a bare `twk run /tmp/trap.tw` can't relativize the entry file);
+  thread the project root through `PipelineArtifacts` → pipeline → codegen →
+  linker → wasm. Reuse the private `strip_root` helper (analyze.tw) rather than a
+  second implementation. This is what makes shipped artifacts safe to relocate
+  and share; Milestone 1 deliberately does not need it.
 - `--strip-debug` (empty section for production).
 - Content hashes / staleness detection.
 - Standalone-artifact source restore with an explicitly supplied root, and
