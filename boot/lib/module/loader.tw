@@ -9,27 +9,23 @@ use @std.path
 use .core_lib
 
 /// Walk up from `start` looking for `twinkle.toml`.
-/// Falls back to the current working directory when no project file is found.
+/// Falls back to the start directory when no project file is found.
 /// This keeps relative entry paths rooted at the caller's workspace instead of
 /// treating the entry file's directory as an isolated project root.
 pub fn find_project_root(start: String) String {
-  dir := path.normalize(start)
-
+  origin := path.normalize(start)
+  dir := origin
   for true {
     if fs.exists(path.join(dir, "twinkle.toml")) {
       return dir
     }
-
     parent := path.dirname(dir)
-
     if parent == dir {
-      return path.normalize(".")
+      return origin
     }
-
     dir = parent
   }
-
-  path.normalize(".")
+  origin
 }
 
 /// Resolve module path segments to a `.tw` file path.

@@ -1,3 +1,4 @@
+use @std.fs
 use @std.path
 use @std.testing.assert as assert
 use @std.testing as runner
@@ -200,6 +201,20 @@ pub fn suite() runner.Suite {
       fn() {
         result := loader.list_prelude_modules("/no/such/directory")
         try assert.vec_len(result, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "find_project_root falls back to start directory when no manifest found",
+      fn() {
+        temp_dir := "/tmp/twk_m2_nomanifest_test"
+        case fs.mkdirp(temp_dir) {
+          .Ok(_) => {},
+          .Err(_) => return .Err("Failed to create temp directory"),
+        }
+        normalized := path.normalize(temp_dir)
+        result := loader.find_project_root(temp_dir)
+        try assert.equal(result, normalized)
         .Ok({})
       },
     )
