@@ -2,7 +2,7 @@
 //!
 //! `render_trace` turns a decoded `twinkle.debug` section plus the Wasm frames
 //! parsed from a trap's stack into the final terminal report: a severity
-//! headline + source snippet + caret for the innermost Twinkle frame (via the
+//! headline + source snippet + caret for the innermost user frame (via the
 //! shared `render.tw`), followed by an ordered backtrace of the resolved
 //! frames. It renders only the user-meaningful frames: the primary
 //! snippet/caret and the backtrace are taken from the frames that resolve to a
