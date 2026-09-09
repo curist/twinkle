@@ -1,0 +1,53 @@
+//! Classifies an absolute canonical source path against the project, stdlib,
+//! and prelude roots, so callers (progress display, debug-info emission) can
+//! render a stable relative path without duplicating root-stripping logic.
+
+use @std.path
+
+pub type PathClass = { Project(String), Std(String), Prelude(String), Extern(String) }
+
+pub fn to_string(pc: PathClass) String {
+  case pc {
+    .Project(rel) => "Project(${rel})",
+    .Std(rel) => "Std(${rel})",
+    .Prelude(rel) => "Prelude(${rel})",
+    .Extern(base) => "Extern(${base})",
+  }
+}
+
+/// Return `canonical` relative to `root` (without the leading separator), or
+/// `.None` when it does not live under `root`.
+pub fn strip_root(canonical: String, root: String) String? {
+  if root == "" {
+    return .None
+  }
+  prefix := if root.ends_with("/") {
+    root
+  } else {
+    "${root}/"
+  }
+
+  if canonical.starts_with(prefix) {
+    .Some(canonical.substring(prefix.len(), canonical.len()))
+  } else {
+    .None
+  }
+}
+
+/// Classify `canonical` against the stdlib, prelude, and project roots (checked
+/// in that order), falling back to `Extern(basename)` when none match.
+pub fn classify(canonical: String, project_root: String, stdlib_root: String, prelude_root: String) PathClass {
+  case strip_root(canonical, stdlib_root) {
+    .Some(rel) => return .Std(rel),
+    .None => {},
+  }
+  case strip_root(canonical, prelude_root) {
+    .Some(rel) => return .Prelude(rel),
+    .None => {},
+  }
+  case strip_root(canonical, project_root) {
+    .Some(rel) => return .Project(rel),
+    .None => {},
+  }
+  .Extern(path.basename(canonical))
+}

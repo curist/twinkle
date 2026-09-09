@@ -32,6 +32,7 @@ use lib.query.keys
 use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
+use lib.source.pathclass
 use lib.source.report as report
 use lib.source.rewrite as rewrites_mod
 use lib.source.span
@@ -314,39 +315,16 @@ fn note_progress(state: AnalysisState, stage: progress.AnalysisStage, canonical:
 /// project / stdlib / prelude root it belongs to. Stdlib modules are marked with
 /// an `@std/` prefix; anything outside the known roots falls back to its filename.
 fn display_module_name(state: AnalysisState, canonical: String) String {
-  case strip_root(canonical, state.canonical_roots.stdlib_root) {
-    .Some(rel) => return "@std/${rel}",
-    .None => {},
-  }
-
-  case strip_root(canonical, state.canonical_roots.prelude_root) {
-    .Some(rel) => return rel,
-    .None => {},
-  }
-
-  case strip_root(canonical, path.normalize(state.project_root)) {
-    .Some(rel) => return rel,
-    .None => {},
-  }
-  path.basename(canonical)
-}
-
-/// Return `canonical` relative to `root` (without the leading separator), or
-/// `.None` when it does not live under `root`.
-fn strip_root(canonical: String, root: String) String? {
-  if root == "" {
-    return .None
-  }
-  prefix := if root.ends_with("/") {
-    root
-  } else {
-    "${root}/"
-  }
-
-  if canonical.starts_with(prefix) {
-    .Some(canonical.substring(prefix.len(), canonical.len()))
-  } else {
-    .None
+  case pathclass.classify(
+    canonical,
+    path.normalize(state.project_root),
+    state.canonical_roots.stdlib_root,
+    state.canonical_roots.prelude_root,
+  ) {
+    .Std(rel) => "@std/${rel}",
+    .Prelude(rel) => rel,
+    .Project(rel) => rel,
+    .Extern(base) => base,
   }
 }
 
@@ -416,6 +394,7 @@ fn parse_cached(
   source_hash: Int,
 ) ParseLoad!AnalysisError {
   parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
+
   // Allocate a stable, compilation-wide file id per canonical path so spans
   // from distinct modules stay distinguishable (a cache hit reuses the id).
   id_alloc := state.cache.file_id_for(canonical)

@@ -104,6 +104,7 @@ use .suites.opt_defer_elim_suite
 use .suites.opt_pipeline_suite
 use .suites.opt_semantics_suite
 use .suites.parser_suite
+use .suites.pathclass_suite
 use .suites.phys_plan_suite
 use .suites.project_config_suite
 use .suites.project_context_suite
@@ -241,6 +242,7 @@ runner.run_all([
   linker_suite.suite(),
   runtime_suite.suite(),
   module_loader_suite.suite(),
+  pathclass_suite.suite(),
   project_config_suite.suite(),
   project_context_suite.suite(),
   project_scaffold_suite.suite(),

@@ -1,0 +1,50 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.source.pathclass
+use lib.source.pathclass.{PathClass}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("pathclass")
+    .test(
+      "classify project path",
+      fn() {
+        try assert.equal(
+          pathclass.classify("/p/src/a.tw", "/p", "/std", "/prel"),
+          PathClass.Project("src/a.tw"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "classify stdlib path",
+      fn() {
+        try assert.equal(
+          pathclass.classify("/std/vector.tw", "/p", "/std", "/prel"),
+          PathClass.Std("vector.tw"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "classify prelude path",
+      fn() {
+        try assert.equal(
+          pathclass.classify("/prel/io.tw", "/p", "/std", "/prel"),
+          PathClass.Prelude("io.tw"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "classify extern path",
+      fn() {
+        try assert.equal(
+          pathclass.classify("/other/x.tw", "/p", "/std", "/prel"),
+          PathClass.Extern("x.tw"),
+        )
+        .Ok({})
+      },
+    )
+}
