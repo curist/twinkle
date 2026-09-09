@@ -83,6 +83,8 @@ t_BOXED_FLOAT := "rt_types__BoxedFloat"
 
 t_VARIANT := "rt_types__Variant"
 
+t_STRING := "rt_types__String"
+
 // ── Ref type helpers ────────────────────────────────────────────────
 fn arr_null() ValType {
   .Ref(true, .Named(t_ARRAY))
@@ -239,6 +241,7 @@ fn mutvec_fns(f: PVecFamily) Vector<FuncDef> {
 
 pub fn module() WasmModule {
   funcs := [
+    panic_oob_fn(),
     tailoff_fn(),
     vi_nav_fn(),
     child_count_fn(),
@@ -1564,6 +1567,85 @@ fn family_byte() PVecFamily {
     leaf_store: [.RefCast(false, .I31), .I31GetU],
     elem_box: [.RefI31],
     mutvec_ty: t_MUTVEC_BYTE,
+  }
+}
+
+// __panic_oob(index: i32, len: i32) -> (never)
+//
+// The hidden out-of-bounds panic helper for user `xs[i]` access. Formats
+// "index {index} out of bounds for length {len}" and traps through the same
+// string-sink-then-throw path as `error(...)`, so the host tags the throw with
+// `twinkleMessage` and the renderer shows the formatted string as the trace
+// headline (no renderer/host change needed). Reached from bounds guards in the
+// pvec get/set family via `.Call("__panic_oob")`.
+//
+// Wiring mechanism (spike-decided): a self-contained runtime FuncDef that calls
+// the cross-module string ops by their already-qualified `rt_*` linked names —
+// `rt_str__from_i64` (Int→String), `rt_str__concat`, and `rt_core__trap` (the
+// `__error_string` sink). `rename_func` (linker.tw) leaves `rt_`-prefixed
+// symbols unchanged, so no FuncId reservation, builtin registration, or stage0
+// parity change is required. Indices widen signed so a negative index renders
+// as `-N`.
+fn panic_oob_fn() FuncDef {
+  ts := t_STRING
+
+  .{
+    name: "__panic_oob",
+    params: [.I32, .I32],
+    results: [],
+    locals: [],
+    body: [
+      // "index "
+      .I32Const(105),
+      .I32Const(110),
+      .I32Const(100),
+      .I32Const(101),
+      .I32Const(120),
+      .I32Const(32),
+      .ArrayNewFixed(ts, 6),
+      // + int_to_string(index)
+      .LocalGet(0),
+      .I64ExtendI32S,
+      .Call("rt_str__from_i64"),
+      .Call("rt_str__concat"),
+      // + " out of bounds for length "
+      .I32Const(32),
+      .I32Const(111),
+      .I32Const(117),
+      .I32Const(116),
+      .I32Const(32),
+      .I32Const(111),
+      .I32Const(102),
+      .I32Const(32),
+      .I32Const(98),
+      .I32Const(111),
+      .I32Const(117),
+      .I32Const(110),
+      .I32Const(100),
+      .I32Const(115),
+      .I32Const(32),
+      .I32Const(102),
+      .I32Const(111),
+      .I32Const(114),
+      .I32Const(32),
+      .I32Const(108),
+      .I32Const(101),
+      .I32Const(110),
+      .I32Const(103),
+      .I32Const(116),
+      .I32Const(104),
+      .I32Const(32),
+      .ArrayNewFixed(ts, 26),
+      .Call("rt_str__concat"),
+      // + int_to_string(len)
+      .LocalGet(1),
+      .I64ExtendI32S,
+      .Call("rt_str__from_i64"),
+      .Call("rt_str__concat"),
+      // trap with the formatted message (host tags twinkleMessage)
+      .Call("rt_core__trap"),
+      .Unreachable,
+    ],
   }
 }
 

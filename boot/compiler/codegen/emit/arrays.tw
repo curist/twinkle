@@ -102,12 +102,22 @@ pub fn emit_index_op(
 
       case pvec_family_of(base_vt) {
         .Some(fam) => {
+          // OOB arm: format a rich "index N out of bounds for length L" trap via
+          // the hidden rt.arr __panic_oob helper (index i32, len i32), instead of
+          // a bare `unreachable`. Reloads index/len inside the cold branch. A raw
+          // `i32.wrap_i64` (not the checked narrow) keeps a negative index intact
+          // so it renders as `-N` rather than re-trapping in the narrow guard.
+          panic_body: Vector<Instr> = fns.emit_atom(index, ctx, []).append(.I32WrapI64)
+          panic_body = fns.emit_atom(base, ctx, panic_body)
+          panic_body = .append(.RefAsNonNull).append(.StructGet(fam.pvec_type, 0)).append(
+            .Call("rt_arr____panic_oob"),
+          ).append(.Unreachable)
           out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
           out = fns.emit_atom(index, ctx, out)
           out = fns.emit_atom(base, ctx, out)
           out = .append(.RefAsNonNull).append(.StructGet(fam.pvec_type, 0)).append(.I64ExtendI32U).append(
             .I64LtS,
-          ).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+          ).append(.I32And).append(.I32Eqz).append(.If(.None, panic_body, []))
           out = fns.emit_atom(base, ctx, out)
           out = fns.emit_checked_i32_narrow(index, ctx, out)
           out = .append(.Call(fam.get_call))
@@ -126,13 +136,22 @@ pub fn emit_index_op(
       // Vector indexing returns erased anyref from rt_arr__get. Cast/unbox here
       // when the destination slot is already typed; leave raw anyref alone when
       // boundary insertion requested an intermediate anyref local.
-      // Bounds check in i64 domain
+      // Bounds check in i64 domain. OOB arm formats a rich
+      // "index N out of bounds for length L" trap via the hidden rt.arr
+      // __panic_oob helper (index i32, len i32) instead of a bare `unreachable`.
+      // A raw `i32.wrap_i64` (not the checked narrow) keeps a negative index
+      // intact so it renders as `-N` rather than re-trapping in the narrow guard.
+      panic_body: Vector<Instr> = fns.emit_atom(index, ctx, []).append(.I32WrapI64)
+      panic_body = fns.emit_atom(base, ctx, panic_body)
+      panic_body = .append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(
+        .Call("rt_arr____panic_oob"),
+      ).append(.Unreachable)
       out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
       out = fns.emit_atom(index, ctx, out)
       out = fns.emit_atom(base, ctx, out)
       out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
         .I64LtS,
-      ).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+      ).append(.I32And).append(.I32Eqz).append(.If(.None, panic_body, []))
 
       // Get element
       out = fns.emit_atom(base, ctx, out)

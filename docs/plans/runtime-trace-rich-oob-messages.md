@@ -94,6 +94,64 @@ error: index 5 out of bounds for length 3
   formatting as needed). The comparison is **unsigned** (`i32.ge_u`) so a
   negative index (which arrives as a large unsigned `i32`) is caught too.
 
+## Spike outcome (Task 1) — mechanism decided + key correction
+
+**Mechanism chosen: (ii) — a self-contained runtime `FuncDef` in `rt.arr`.**
+`__panic_oob` is emitted by `panic_oob_fn()` in
+`boot/compiler/codegen/runtime/arr.tw` (registered first in `module()`), with
+signature `(index: i32, len: i32) -> ()` ending in `unreachable`. Its body
+builds the two constant strings inline (`array.new_fixed` of code points into
+`rt_types__String`) and formats the message by calling the **already-qualified
+`rt_`-prefixed** cross-module ops:
+
+- `rt_str__from_i64` — `Int→String` (index/len widened `i64.extend_i32_s`, so a
+  negative index renders as `-N`),
+- `rt_str__concat` — string concatenation,
+- `rt_core__trap` — the `__error_string` sink (`host_error` throw → host tags
+  `twinkleMessage`).
+
+**Why (ii) over (i):** `rename_func` (`linker.tw`) leaves any symbol starting
+with `rt_` unchanged, so a runtime `FuncDef` reaches the string/error ops by
+name with **zero** FuncId reservation, `builtins.tw` registration, or stage0
+parity change. Mechanism (i) (a Twinkle function reached via a reserved FuncId)
+had no precedent for resolving a mangled prelude name from a raw runtime
+`FuncDef` and would have forced FuncId + stage0 churn for no benefit — string
+interpolation's convenience does not outweigh that. `make stage2` converged to a
+byte-identical fixpoint with no `src/` change, confirming (ii) needs no stage0
+work.
+
+**Exact call form (consumed verbatim by Task 2):**
+`__panic_oob`'s linked name is `rt_arr____panic_oob` (prefix `rt_arr` + `__` +
+`__panic_oob`). Call it as:
+```tw
+.Call("rt_arr____panic_oob")   // from the user module (emit/*.tw)
+.Call("__panic_oob")           // from another rt.arr FuncDef (linker adds the prefix)
+```
+with `index (i32), len (i32)` pushed in that order immediately before the call.
+
+**KEY CORRECTION to Component 2 (verified against emitted WAT):** the OOB trap
+for a user `xs[i]` **read** is *not* inside the `rt.arr` `pvec_get` family. It is
+emitted at the **call site** by `emit_index_op` in
+`boot/compiler/codegen/emit/arrays.tw` (the `.Array` case), which already emits
+an explicit `index >= 0 && index < len` check whose false arm was a bare
+`.If(.None, [.Unreachable], [])`. The spike replaced that `[.Unreachable]` (in
+**both** the PVecI64 fast path and the boxed fallback) with a `panic_body` that
+pushes `index (i32.wrap_i64, un-checked so negatives survive)` and
+`len (StructGet pvec 0)` then `.Call("rt_arr____panic_oob")`. So the guard for
+reads lives in `emit/arrays.tw`, and the `pvec_get_fn` builder is left untouched
+(any guard there is dead code — the call-site check traps first). The e2e test
+`xs := [10,20,30]; xs[5]` takes the **boxed** path (a small `Vector<Int>` literal
+stays boxed; PVecI64 read routing needs `pvec_family_of(base_vt)` to be `.Some`),
+which is why both arms were wired.
+
+**Task 2 scope adjustment:** the indexed **read** is now fully done for
+`Vector<Int>` (both boxed + PVecI64 arms) via the call-site edit — and, because
+the boxed arm is element-type-agnostic, for other vector reads too. Task 2 should
+focus on the indexed **write** (`xs[i] = v`): find its call-site bounds
+check/`unreachable` (likely another `emit_*` site and/or `set_in_place`) and the
+`mutvec_get`/`mutvec_set` cold `.Unreachable` arms, and route them to
+`__panic_oob` using the exact call form above.
+
 ## Components
 
 ### 1. `__panic_oob(index, len)` — the hidden panic helper (spike-decided)
