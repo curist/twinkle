@@ -1,6 +1,6 @@
 # Disk-Backed Debug Info — Milestone 2 (Portability / Hardening)
 
-Status: Design (brainstorming)
+Status: Complete (landed on feat/runtime-stack-traces)
 Date: 2026-09-08
 
 Follow-on to Milestone 1 (`docs/plans/disk-backed-debug-info.md`, landed on
@@ -276,6 +276,14 @@ fn safe_join(source_root: String, rel: String) String? {
   }
 }
 ```
+
+Shipped implementation note: this snippet's absolute-`rel` case relies on
+`path.join`'s handling of an absolute second segment; this codebase's
+`path.join` is Node-style (concatenates rather than letting an absolute
+second segment override the first), so the shipped `safe_join`
+(`boot/lib/debug/symbolicate.tw`) additionally guards `path.is_absolute(rel)`
+up front — otherwise `join("/p", "/abs/x")` normalizes to `"/p/abs/x"`, which
+would still pass the prefix check below.
 
 - `source_root` must be **absolute** for the containment check to be sound. It
   is absolute by construction: the producer layer absolutizes `project_root`
