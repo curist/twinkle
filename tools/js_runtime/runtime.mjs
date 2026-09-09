@@ -497,10 +497,11 @@ function makeHostImports(b, runtime) {
     sleep: (_ms) => {
       throw new Error("twinkle_runtime.sleep requires the async JSPI runtime");
     },
-    run_wasm: (bytesRef, argvRef) => {
+    run_wasm: (bytesRef, argvRef, srcRootRef) => {
       const childBytes = decodeByteArray(b, bytesRef);
       const childArgv = decodeStringArray(b, argvRef);
       const [programPath, ...guestArgs] = childArgv;
+      const sourceRoot = srcRootRef === undefined ? "" : decodeString(b, srcRootRef);
       const exitCode = runWasmBytes(childBytes, {
         programPath: programPath ?? "<memory>.wasm",
         guestArgs,
@@ -513,7 +514,7 @@ function makeHostImports(b, runtime) {
         // Forward the renderer so a further-nested run_wasm renders its own
         // child against the right module (each level scopes its own handler).
         rendererWasm: runtime.rendererWasm,
-        childTrapHandler: makeChildTrapHandler(runtime),
+        childTrapHandler: makeChildTrapHandler(runtime, sourceRoot),
       });
       return BigInt(exitCode);
     },
@@ -1300,7 +1301,7 @@ function loadLibSync(wasmBytes, opts = {}) {
 
 // Render a child trap through the renderer library, loaded lazily from the
 // bytes the CLI main handed the boot instance.
-function renderChildTrace(runtime, childBytes, stack, message) {
+function renderChildTrace(runtime, childBytes, stack, message, sourceRoot) {
   if (!cachedRendererLib) {
     cachedRendererLib = loadLibSync(runtime.rendererWasm, {
       programPath: "<renderer>.wasm",
@@ -1313,19 +1314,19 @@ function renderChildTrace(runtime, childBytes, stack, message) {
       imports: {},
     });
   }
-  return cachedRendererLib.render_runtime_trace(childBytes, stack, message);
+  return cachedRendererLib.render_runtime_trace(childBytes, stack, message, sourceRoot);
 }
 
 // Opt-in child-trap handler installed by the `run_wasm` import when a renderer
 // is available. It renders the trace, prints it once to stderr, and yields a
 // nonzero exit code. Without a renderer it returns undefined, so the runner
 // re-throws exactly as before (embeddable/web unaffected).
-function makeChildTrapHandler(runtime) {
+function makeChildTrapHandler(runtime, sourceRoot) {
   if (!runtime.rendererWasm) return undefined;
   return (trapInfo, childBytes) => {
     let out;
     try {
-      out = renderChildTrace(runtime, childBytes, trapInfo.stack, trapInfo.message);
+      out = renderChildTrace(runtime, childBytes, trapInfo.stack, trapInfo.message, sourceRoot);
     } catch (_) {
       // Best-effort boundary: if rendering itself fails, fall back to the raw
       // message rather than losing the failure entirely.
@@ -1685,10 +1686,11 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     // JSPI suspending imports. In task-enabled programs this also preserves the
     // scheduler's single-resume discipline.
     rt.run_wasm = suspendHost(
-      async (bytesRef, argvRef) => {
+      async (bytesRef, argvRef, srcRootRef) => {
         const childBytes = decodeByteArray(b, bytesRef);
         const childArgv = decodeStringArray(b, argvRef);
         const [programPath, ...guestArgs] = childArgv;
+        const sourceRoot = srcRootRef === undefined ? "" : decodeString(b, srcRootRef);
         const exitCode = await runWasmBytesAsync(childBytes, {
           programPath: programPath ?? "<memory>.wasm",
           guestArgs,
@@ -1701,7 +1703,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           // Forward the renderer so a further-nested run_wasm renders its own
           // child against the right module (each level scopes its own handler).
           rendererWasm: runtime.rendererWasm,
-          childTrapHandler: makeChildTrapHandler(runtime),
+          childTrapHandler: makeChildTrapHandler(runtime, sourceRoot),
         });
         return BigInt(exitCode);
       },

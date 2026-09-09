@@ -96,18 +96,19 @@ test("compiler emits the twinkle.debug section with a versioned line program", a
     return s;
   };
 
-  // Format v2 (disk-backed debug info): the file table carries only
-  // `file_id` + absolute `path` — no inline source text — and each
-  // line-program entry additionally precomputes absolute start/end
-  // line/col so the renderer never needs source to print a location.
-  assert.equal(u[p++], 2, "version byte");
+  // Format v3 (portable disk-backed debug info): the file table carries only
+  // `file_id` + a project-relative or `@`-logical `path` — no inline source
+  // text and no absolute build path — and each line-program entry additionally
+  // precomputes absolute start/end line/col so the renderer never needs source
+  // to print a location.
+  assert.equal(u[p++], 3, "version byte");
   const fileCount = uleb();
   assert.ok(fileCount > 0, "file table carries the referenced files");
   const fileIds = new Set();
   for (let i = 0; i < fileCount; i++) {
     const id = uleb();
     const path = readStr();
-    assert.ok(path.length > 0, "file entry carries an absolute path");
+    assert.ok(path.length > 0, "file entry carries a relative/logical path");
     fileIds.add(id);
   }
 

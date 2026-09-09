@@ -368,7 +368,7 @@ fn builtin_abi(name: String) AbiContract {
     "host_exit" => abi([.I64], []),
     "host_now" => abi([], [.F64]),
     "host_sleep" => abi([.I64], []),
-    "host_run_wasm" => abi([arr_n(), arr_n()], [.I64]),
+    "host_run_wasm" => abi([arr_n(), arr_n(), str_n()], [.I64]),
     "host_stdin_read_chunk" => abi([.I32], [arr_()]),
     "host_stdin_read_timeout" => abi([.I32, .I32], [arr_()]),
     "host_stdin_eof" => abi([], [.I32]),
