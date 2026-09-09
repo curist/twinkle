@@ -37,17 +37,25 @@ fn no_debug_fallback(message: String, config: RenderConfig) String {
 
 /// Render a source-mapped trap trace for a child module that just trapped.
 /// `bytes` is the child module's own wasm (carrying its `twinkle.debug`
-/// section), `stack` is the host's captured `.stack`, and `message` is the trap
-/// message. Falls back to a headline-only note when no debug section or no
-/// Twinkle frame is available.
-pub fn render_runtime_trace(bytes: Vector<Byte>, stack: String, message: String) String {
+/// section), `stack` is the host's captured `.stack`, `message` is the trap
+/// message, and `source_root` is the absolute directory the section's
+/// relative file paths are safe-joined against for reading source snippets.
+/// Falls back to a headline-only note when no debug section or no Twinkle
+/// frame is available, and degrades to location-only output for any file that
+/// can't be safely read under `source_root`.
+pub fn render_runtime_trace(
+  bytes: Vector<Byte>,
+  stack: String,
+  message: String,
+  source_root: String,
+) String {
   config := render_config()
 
   case section.decode_module(bytes) {
     .None => no_debug_fallback(message, config),
     .Some(sec) => {
       frames := parse_v8_stack(stack)
-      trace.render_trace(sec, frames, message, config)
+      trace.render_trace(sec, frames, message, config, source_root)
     },
   }
 }

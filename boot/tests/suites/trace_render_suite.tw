@@ -14,14 +14,28 @@ fn write_fixture(path: String, content: String) Result<Void, String> {
   }
 }
 
-// Stable `/tmp` paths (not the session scratchpad) so the fixtures work on
-// any machine/session, matching lsp_definition_suite.tw's precedent.
-main_tw_path: String = "/tmp/twk_traceview_suite_main.tw"
+// Stable `/tmp` root (not the session scratchpad) so the fixture works on any
+// machine/session, matching lsp_definition_suite.tw's precedent. `rel_path`
+// mirrors a real project-relative path (as Task 3's producer now emits),
+// joined under `root` by `render_trace`/`build_disk_registry`.
+root: String = "/tmp/twk_m2_trace_render_root"
 
-missing_tw_path: String = "/tmp/twk_traceview_suite_no_such_file.tw"
+rel_path: String = "src/a.tw"
 
-fn sample() DebugSection {
-  files: Vector<FileEntry> = [.{ file_id: 0, path: main_tw_path }]
+// A relative path never written under `root` — proves the file-not-present
+// degradation without needing a filesystem delete API (none exists in
+// `@std.fs`).
+missing_rel_path: String = "src/missing.tw"
+
+fn ensure_root() Result<Void, String> {
+  case fs.mkdirp("${root}/src") {
+    .Ok(_) => .Ok({}),
+    .Err(_) => .Err("failed to create fixture root"),
+  }
+}
+
+fn sample_at(path: String) DebugSection {
+  files: Vector<FileEntry> = [.{ file_id: 0, path }]
   funcs: Vector<FuncDebug> = [
     .{
       func_idx: 6,
@@ -49,6 +63,10 @@ fn sample() DebugSection {
   .{ files, funcs }
 }
 
+fn sample() DebugSection {
+  sample_at(rel_path)
+}
+
 fn frame_at(offset: Int, name: String) Frame {
   .{
     module_token: .Some("wasm://wasm/abcd"),
@@ -66,14 +84,15 @@ pub fn suite() runner.Suite {
   runner
     .suite("trace render")
     .test(
-      "renders the innermost frame with a snippet and caret",
+      "renders the innermost frame with a snippet and caret when the file is present under source_root",
       fn() {
-        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
 
         // frame_at(110) -> body-rel 10 -> `b := a + 2` on line 2.
-        out := trace.render_trace(sample(), [frame_at(110, "deeper")], "boom", plain())
+        out := trace.render_trace(sample(), [frame_at(110, "deeper")], "boom", plain(), root)
         try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "--> ${main_tw_path}:2:1")
+        try assert.str_contains(out, "--> ${rel_path}:2:1")
         try assert.str_contains(out, "b := a + 2")
         try assert.str_contains(out, "^^^^^^^^^^")
         .Ok({})
@@ -82,12 +101,13 @@ pub fn suite() runner.Suite {
     .test(
       "appends an ordered backtrace of resolved frames",
       fn() {
-        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
 
         frames: Vector<Frame> = [frame_at(110, "deeper"), frame_at(100, "main")]
-        out := trace.render_trace(sample(), frames, "boom", plain())
-        try assert.str_contains(out, "at deeper (${main_tw_path}:2:1)")
-        try assert.str_contains(out, "at main (${main_tw_path}:1:1)")
+        out := trace.render_trace(sample(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "at deeper (${rel_path}:2:1)")
+        try assert.str_contains(out, "at main (${rel_path}:1:1)")
 
         // deeper (innermost) must appear before main (its caller).
         deeper_at := try out.index_of("at deeper").ok_or("deeper missing")
@@ -99,14 +119,15 @@ pub fn suite() runner.Suite {
     .test(
       "drops unresolved (prelude/import) frames from the backtrace and caret",
       fn() {
-        try write_fixture(main_tw_path, "a := 1\nb := a + 2\n")
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
 
         // frame_at(50) is below every body_start -> unresolved; it must not
         // become the primary caret nor appear in the backtrace.
         frames: Vector<Frame> = [frame_at(50, "rt_core__trap"), frame_at(110, "deeper")]
-        out := trace.render_trace(sample(), frames, "boom", plain())
-        try assert.str_contains(out, "--> ${main_tw_path}:2:1")
-        try assert.str_contains(out, "at deeper (${main_tw_path}:2:1)")
+        out := trace.render_trace(sample(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "--> ${rel_path}:2:1")
+        try assert.str_contains(out, "at deeper (${rel_path}:2:1)")
         try assert.is_false(out.contains("rt_core__trap"))
         .Ok({})
       },
@@ -114,7 +135,7 @@ pub fn suite() runner.Suite {
     .test(
       "falls back to a note when no frame resolves to Twinkle source",
       fn() {
-        out := trace.render_trace(sample(), [frame_at(50, "rt_core__trap")], "boom", plain())
+        out := trace.render_trace(sample(), [frame_at(50, "rt_core__trap")], "boom", plain(), root)
         try assert.str_contains(out, "error: boom")
         try assert.str_contains(out, "no Twinkle stack trace available")
         try assert.is_false(out.contains(" at "))
@@ -125,38 +146,56 @@ pub fn suite() runner.Suite {
       "an empty frame list falls back to the note",
       fn() {
         empty: Vector<Frame> = []
-        out := trace.render_trace(sample(), empty, "boom", plain())
+        out := trace.render_trace(sample(), empty, "boom", plain(), root)
         try assert.str_contains(out, "error: boom")
         try assert.str_contains(out, "no Twinkle stack trace available")
         .Ok({})
       },
     )
     .test(
-      "degrades to location-only with a source-unavailable note when the file cannot be read",
+      "degrades to location-only when the referenced file is not present under source_root",
       fn() {
-        missing: DebugSection = .{
-          files: [.{ file_id: 0, path: missing_tw_path }],
-          funcs: [
-            .{
-              func_idx: 6,
-              body_start: 100,
-              lines: [
-                .{
-                  offset: 0,
-                  span: .{ file_id: 0, start: 7, end: 17 },
-                  start_line: 2,
-                  start_col: 1,
-                  end_line: 2,
-                  end_col: 11,
-                },
-              ],
-            },
-          ],
-        }
-        out := trace.render_trace(missing, [frame_at(100, "deeper")], "boom", plain())
+        out := trace.render_trace(
+          sample_at(missing_rel_path),
+          [frame_at(100, "deeper")],
+          "boom",
+          plain(),
+          root,
+        )
         try assert.str_contains(out, "error: boom")
         try assert.is_false(out.contains("-->"))
-        try assert.str_contains(out, "at deeper (${missing_tw_path}:2:1)")
+        try assert.str_contains(out, "at deeper (${missing_rel_path}:1:1)")
+        try assert.str_contains(out, "source unavailable")
+        .Ok({})
+      },
+    )
+    .test(
+      "degrades to location-only when source_root is empty even though the file exists on disk",
+      fn() {
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
+
+        out := trace.render_trace(sample(), [frame_at(110, "deeper")], "boom", plain(), "")
+        try assert.str_contains(out, "error: boom")
+        try assert.is_false(out.contains("-->"))
+        try assert.str_contains(out, "at deeper (${rel_path}:2:1)")
+        try assert.str_contains(out, "source unavailable")
+        .Ok({})
+      },
+    )
+    .test(
+      "degrades to location-only for an @-logical FileEntry.path regardless of source_root",
+      fn() {
+        out := trace.render_trace(
+          sample_at("@std/vector.tw"),
+          [frame_at(100, "deeper")],
+          "boom",
+          plain(),
+          root,
+        )
+        try assert.str_contains(out, "error: boom")
+        try assert.is_false(out.contains("-->"))
+        try assert.str_contains(out, "at deeper (@std/vector.tw:1:1)")
         try assert.str_contains(out, "source unavailable")
         .Ok({})
       },

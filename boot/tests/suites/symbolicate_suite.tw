@@ -70,32 +70,49 @@ fn frame_at(offset: Int) Frame {
   }
 }
 
+// Stable `/tmp` root (not the session scratchpad) so the fixture works on
+// any machine/session, matching lsp_definition_suite.tw's precedent.
+disk_registry_root: String = "/tmp/twk_m2_symbolicate_root"
+
 pub fn suite() runner.Suite {
   runner
     .suite("symbolicate")
     .test(
-      "build_disk_registry reads referenced files by sparse id, skipping unreadable ones",
+      "safe_join keeps relative paths under source_root, rejects escapes/logical/absolute/empty-root",
       fn() {
-        // Stable `/tmp` paths (not the session scratchpad) so the fixture
-        // works on any machine/session, matching lsp_definition_suite.tw's
-        // precedent.
-        util_path := "/tmp/twk_symbolicate_suite_util.tw"
-        missing_path := "/tmp/twk_symbolicate_suite_missing.tw"
-        try write_fixture(util_path, "pub fn f() Int {\n  0\n}\n")
+        joined := try symbolicate.safe_join("/p", "src/a.tw").ok_or("expected Some")
+        try assert.equal(joined, "/p/src/a.tw")
+        try assert.is_none(symbolicate.safe_join("/p", "../etc/passwd"))
+        try assert.is_none(symbolicate.safe_join("/p", "@std/x.tw"))
+        try assert.is_none(symbolicate.safe_join("", "src/a.tw"))
+        try assert.is_none(symbolicate.safe_join("/p", "/abs/x"))
+        .Ok({})
+      },
+    )
+    .test(
+      "build_disk_registry reads referenced files under source_root by sparse id, skipping unreadable ones",
+      fn() {
+        case fs.mkdirp(disk_registry_root) {
+          .Ok(_) => {},
+          .Err(_) => return .Err("failed to create fixture root"),
+        }
+        try write_fixture("${disk_registry_root}/util.tw", "pub fn f() Int {\n  0\n}\n")
 
         sec: DebugSection = .{
-          files: [.{ file_id: 0, path: missing_path }, .{ file_id: 3, path: util_path }],
+          files: [.{ file_id: 0, path: "missing.tw" }, .{ file_id: 3, path: "util.tw" }],
           funcs: [],
         }
-        reg := symbolicate.build_disk_registry(sec)
+        reg := symbolicate.build_disk_registry(sec, disk_registry_root)
 
         // util.tw's "0" body is at byte 19 (line 2, col 3).
         lc := try reg.line_col(.{ file_id: 3, start: 19, end: 20 }).ok_or("no line_col")
         try assert.equal(lc.line, 2)
         try assert.equal(lc.column, 3)
 
+        // The registry displays the relative path as-is (not the joined
+        // absolute path the disk read used).
         name := try reg.file_name(3).ok_or("no file name")
-        try assert.equal(name, util_path)
+        try assert.equal(name, "util.tw")
 
         // The missing file (sparse id 0) never made it into the registry.
         try assert.is_none(reg.file_name(0))

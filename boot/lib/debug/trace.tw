@@ -54,14 +54,18 @@ fn backtrace_lines(resolved: Vector<ResolvedFrame>) Vector<String> {
 }
 
 /// Render a full runtime trap trace for `message`, mapping `frames` through the
-/// debug `section`. `config` controls ANSI color.
+/// debug `section`. `config` controls ANSI color; `source_root` is the
+/// absolute directory the section's relative file paths are safe-joined
+/// against for reading source snippets (empty root, `@`-logical paths, or an
+/// escaping join all degrade to location-only output).
 pub fn render_trace(
   section: DebugSection,
   frames: Vector<Frame>,
   message: String,
   config: RenderConfig,
+  source_root: String,
 ) String {
-  reg := symbolicate.build_disk_registry(section)
+  reg := symbolicate.build_disk_registry(section, source_root)
   resolved := symbolicate.symbolicate(section, frames)
   primary := primary_label(resolved)
 

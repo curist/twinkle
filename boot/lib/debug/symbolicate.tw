@@ -14,6 +14,7 @@
 //! and are carried through unchanged rather than dropped.
 
 use @std.fs
+use @std.path
 
 use lib.source.registry
 use lib.source.registry.{FileRegistry}
@@ -56,17 +57,57 @@ pub fn symbolicate(sec: DebugSection, frames: Vector<Frame>) Vector<ResolvedFram
   resolved
 }
 
+/// Safely join a project-relative debug path under `source_root`, refusing
+/// anything that would read outside the root.
+///
+/// Returns `.None` when `source_root` is empty, `rel` is `@`-logical (an
+/// stdlib/prelude path with no on-disk counterpart under the root), or the
+/// normalized join escapes `source_root` (e.g. `rel` is absolute or starts
+/// with `../`). Otherwise returns the normalized absolute path to read.
+pub fn safe_join(source_root: String, rel: String) String? {
+  // `path.join` concatenates its two segments (Node's `path.join` semantics)
+  // rather than letting an absolute second segment override the first (as
+  // e.g. Python's `os.path.join` does), so an absolute `rel` must be refused
+  // up front — otherwise `join("/p", "/abs/x")` produces `"/p/abs/x"`, which
+  // still normalizes under `source_root` and would slip past the prefix
+  // check below.
+  if source_root == "" or rel.starts_with("@") or path.is_absolute(rel) {
+    return .None
+  }
+
+  joined := path.normalize(path.join(source_root, rel))
+  root := path.normalize(source_root)
+  prefix := if root.ends_with("/") {
+    root
+  } else {
+    "${root}/"
+  }
+
+  if joined == root or joined.starts_with(prefix) {
+    .Some(joined)
+  } else {
+    .None
+  }
+}
+
 /// Build a best-effort `FileRegistry` over the section's files that are
-/// actually readable on disk, for the renderer's source-snippet block. Files
-/// that fail to read (moved, deleted, sandboxed) are silently skipped — the
-/// renderer falls back to location-only output for those.
-pub fn build_disk_registry(sec: DebugSection) FileRegistry {
+/// actually readable on disk under `source_root`, for the renderer's
+/// source-snippet block. Files whose path can't be safely joined under the
+/// root (empty root, `@`-logical path, escaping join) or that fail to read
+/// (moved, deleted, sandboxed) are silently skipped — the renderer falls back
+/// to location-only output for those. The registry stores each file under its
+/// original (relative/logical) `f.path` for display; only the disk read uses
+/// the joined absolute path.
+pub fn build_disk_registry(sec: DebugSection, source_root: String) FileRegistry {
   reg := registry.empty()
 
   for f in sec.files {
-    case fs.read_text(f.path) {
-      .Ok(src) => reg = .add_file_with_id(f.file_id, f.path, src),
-      .Err(_) => {},
+    case safe_join(source_root, f.path) {
+      .Some(abs) => case fs.read_text(abs) {
+        .Ok(src) => reg = .add_file_with_id(f.file_id, f.path, src),
+        .Err(_) => {},
+      },
+      .None => {},
     }
   }
 

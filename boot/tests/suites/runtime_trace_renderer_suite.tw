@@ -59,29 +59,36 @@ fn wrap_module(dbg_bytes: Vector<Byte>) Vector<Byte> {
   out
 }
 
-// Absolute path to a real on-disk fixture (unlike a bare "main.tw" placeholder,
-// the disk-backed renderer must actually read this file to render a snippet).
-// A stable `/tmp` path (not the session scratchpad) so the fixture works on
-// any machine/session, matching lsp_definition_suite.tw's precedent.
-main_tw_path: String = "/tmp/twk_rttrace_suite_main.tw"
+// A stable `/tmp` root (not the session scratchpad) so the fixture works on
+// any machine/session, matching lsp_definition_suite.tw's precedent. The
+// debug section stores the project-relative path `rel_path`; the renderer
+// safe-joins it under `root` to read the on-disk fixture.
+root: String = "/tmp/twk_m2_rttrace_suite_root"
 
-// A path that is guaranteed not to exist, for the source-unavailable case.
-missing_tw_path: String = "/tmp/twk_rttrace_suite_no_such_file.tw"
+rel_path: String = "src/main.tw"
 
-// Write the fixture source `main_tw_path()` points at and return the path.
+// A relative path never written under `root`, for the source-unavailable case
+// (no filesystem delete API exists in `@std.fs` to remove a written fixture).
+missing_rel_path: String = "src/no_such_file.tw"
+
+// Write the fixture source `root/rel_path` points at and return the relative
+// path stored in the debug section.
 fn write_main_tw() String {
-  path := main_tw_path
+  case fs.mkdirp("${root}/src") {
+    .Ok(_) => {},
+    .Err(_) => error("runtime_trace_renderer_suite: failed to create fixture root"),
+  }
 
-  case fs.write_text(path, "a := 1\nb := a + 2\n") {
-    .Ok(_) => path,
+  case fs.write_text("${root}/${rel_path}", "a := 1\nb := a + 2\n") {
+    .Ok(_) => rel_path,
     .Err(_) => error("runtime_trace_renderer_suite: failed to write fixture"),
   }
 }
 
 // A one-file, one-function section: body_start 100 (0x64), body-rel 10 (PC
 // 0x6e) is `b := a + 2` on line 2. `path` selects between the real on-disk
-// fixture and a known-missing path so the same shape drives both the
-// snippet-present and source-unavailable cases.
+// fixture's relative path and a known-missing relative path so the same shape
+// drives both the snippet-present and source-unavailable cases.
 fn sample_at(path: String) DebugSection {
   files: Vector<FileEntry> = [.{ file_id: 0, path }]
   funcs: Vector<FuncDebug> = [
@@ -120,7 +127,7 @@ fn module_bytes() Vector<Byte> {
 }
 
 fn missing_module_bytes() Vector<Byte> {
-  wrap_module(sample_at(missing_tw_path).encode())
+  wrap_module(sample_at(missing_rel_path).encode())
 }
 
 // A Deno-shaped stack: a leading host frame (the `error` shim), the two child
@@ -144,15 +151,15 @@ pub fn suite() runner.Suite {
     .test(
       "renders a source-mapped trace from full module bytes and a captured stack",
       fn() {
-        out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom")
+        out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom", root)
         try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "--> ${main_tw_path}:2:1")
+        try assert.str_contains(out, "--> ${rel_path}:2:1")
         try assert.str_contains(out, "b := a + 2")
         try assert.str_contains(out, "^^^^^^^^^^")
 
         // Both child frames appear in the backtrace, innermost first.
-        try assert.str_contains(out, "at user__deeper (${main_tw_path}:2:1)")
-        try assert.str_contains(out, "at user__main (${main_tw_path}:1:1)")
+        try assert.str_contains(out, "at user__deeper (${rel_path}:2:1)")
+        try assert.str_contains(out, "at user__main (${rel_path}:1:1)")
         deeper_at := try out.index_of("user__deeper").ok_or("deeper missing")
         main_at := try out.index_of("user__main").ok_or("main missing")
         try assert.is_true(deeper_at < main_at)
@@ -163,15 +170,28 @@ pub fn suite() runner.Suite {
       "degrades to location-only with a source-unavailable note when the file is not on disk",
       fn() {
         // Same span/line-col shape as `sample()`, but the file table points at
-        // a path that does not exist — the backtrace must still resolve
-        // file:line:col from the embedded line/col (no disk read needed for
-        // locations), while the snippet block is dropped.
-        out := renderer.render_runtime_trace(missing_module_bytes(), deno_stack(), "boom")
+        // a relative path never written under `root` — the backtrace must
+        // still resolve file:line:col from the embedded line/col (no disk
+        // read needed for locations), while the snippet block is dropped.
+        out := renderer.render_runtime_trace(missing_module_bytes(), deno_stack(), "boom", root)
         try assert.str_contains(out, "error: boom")
         try assert.is_false(out.contains("-->"))
         try assert.is_false(out.contains("b := a + 2"))
-        try assert.str_contains(out, "at user__deeper (${missing_tw_path}:2:1)")
-        try assert.str_contains(out, "at user__main (${missing_tw_path}:1:1)")
+        try assert.str_contains(out, "at user__deeper (${missing_rel_path}:2:1)")
+        try assert.str_contains(out, "at user__main (${missing_rel_path}:1:1)")
+        try assert.str_contains(out, "source unavailable")
+        .Ok({})
+      },
+    )
+    .test(
+      "degrades to location-only when source_root is empty even though the file exists on disk",
+      fn() {
+        // Proves the empty-root case never disk-reads, even for a path that
+        // does exist under `root`.
+        out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom", "")
+        try assert.str_contains(out, "error: boom")
+        try assert.is_false(out.contains("-->"))
+        try assert.str_contains(out, "at user__deeper (${rel_path}:2:1)")
         try assert.str_contains(out, "source unavailable")
         .Ok({})
       },
@@ -193,7 +213,7 @@ pub fn suite() runner.Suite {
       fn() {
         // Bytes that are not a wasm module at all.
         garbage: Vector<Byte> = [b(1), b(2), b(3)]
-        out := renderer.render_runtime_trace(garbage, deno_stack(), "boom")
+        out := renderer.render_runtime_trace(garbage, deno_stack(), "boom", root)
         try assert.str_contains(out, "error: boom")
         try assert.str_contains(out, "no Twinkle stack trace available")
         .Ok({})
@@ -203,7 +223,7 @@ pub fn suite() runner.Suite {
       "falls back to a note when the stack carries no Twinkle frames",
       fn() {
         host_only := "Error: boom\n    at run (file:///host.js:20:3)"
-        out := renderer.render_runtime_trace(module_bytes(), host_only, "boom")
+        out := renderer.render_runtime_trace(module_bytes(), host_only, "boom", root)
         try assert.str_contains(out, "error: boom")
         try assert.str_contains(out, "no Twinkle stack trace available")
         .Ok({})
