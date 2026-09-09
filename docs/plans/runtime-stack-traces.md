@@ -1,12 +1,11 @@
 # Runtime Stack Traces (source-mapped trap reporting)
 
-Status: Phases 0–2 complete (end-to-end for `error`/div0/OOB on `twk run`);
+Status: Phases 0–3 complete (end-to-end for `error` and OOB with rich messages on `twk run`);
 disk-backed debug info Milestones 1 & 2 complete (source-less v3 section with
 portable project-relative / `@`-logical paths, snippets read from disk under a
 render-time `source_root`); Phase 4.1 complete (primary snippet/caret and
 backtrace point at the innermost **user** frame, not the prelude shim).
-Remaining: Phase 3 (rich `rt.panic` messages for OOB/div0), and Phase 4.2–4.6
-(name demangling, ANSI parity, `twk build --strip-debug`, docs).
+Remaining: Phase 4.2–4.6 (name demangling, ANSI parity, `twk build --strip-debug`, docs).
 Date: 2026-09-05 (updated 2026-09-09)
 
 > **Format superseded (2026-09-07):** the `twinkle.debug` section described below
@@ -570,11 +569,29 @@ prelude-frame suppression, name demangling, `--strip-debug`) is Phase 3–4.
   trace exactly once; nonzero exit code.
 
 ### Phase 3 — Rich messages via `rt.panic`
-- Add the `rt.panic(msg)` prelude helper (an ordinary function calling the
-  existing `error` import — no new extern).
-- Route OOB fail-arms through `rt.panic` with len/index messages.
-- Add the div0/rem0 guard (benchmark first). The renderer infers the headline
-  kind from the message text.
+
+**Phase 3 COMPLETE (2026-09-09, branch `feat/runtime-trace-rich-oob`).**
+Array/vector out-of-bounds traps now produce rich, source-mapped messages
+reading `index N out of bounds for length L` via a hidden `__panic_oob` runtime
+helper. The helper is a self-contained `FuncDef` in `boot/compiler/codegen/runtime/arr.tw`
+(mechanism (ii) from the design doc), reachable by `rt_`-prefixed name without
+requiring new FuncId reservation or stage0 changes. It formats the message by
+calling `rt_str__from_i64`, `rt_str__concat`, and `rt_core__trap` (the existing
+`__error_string` sink), and the message flows through the existing
+`error`/`twinkleMessage` capture to render on `twk run` — no renderer/host
+change needed. Indexed **read** (`xs[i]`) gains a guard in `emit_index_op` in
+`boot/compiler/codegen/emit/arrays.tw` (both PVecI64 fast-path and boxed
+fallback); indexed **write** (`xs[i] = v`) gains entry guards in the
+`set_in_place` family via the `PVecFamily` builder, plus replacement of cold
+`.Unreachable` arms in `mutvec_get_i64`/`mutvec_set_i64`. Guards use unsigned
+compare (`i32.ge_u`), so negative indices are caught too. All vectors (boxed and
+unboxed families) are covered by the e2e test suite (read, write, negative index,
+in-bounds baseline). `make stage2` converges byte-identical.
+
+Deliberately skipped: div0/rem0 guard. Native `divide by zero` trap is retained,
+still source-mapped by Phase 4.1; a guard would add a compare on every division
+(a real hot-path cost on a single-instruction op) and remains a documented
+future option, not part of this phase.
 
 ### Phase 4 — Polish
 - Trap-kind headlines and any kind-specific hints; snippet+caret for the

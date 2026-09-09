@@ -1,6 +1,6 @@
 # Runtime Trace: Rich Out-of-Bounds Messages (Phase 3)
 
-Status: Design (approved)
+Status: Complete (landed on feat/runtime-stack-traces)
 Date: 2026-09-09
 
 Phase 3 of the runtime source-mapped stack-trace feature
