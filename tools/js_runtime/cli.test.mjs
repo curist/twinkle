@@ -74,15 +74,13 @@ test("twk run renders a full source snippet for a trap in user code (file presen
   }
 });
 
-test("twk run degrades to a location-only trace when the trap surfaces through the prelude error() shim", () => {
-  // `error(...)` is itself a prelude function (@std prelude/io.tw), so the
-  // innermost resolved frame is a `/__twinkle_core/...` logical path that
-  // never exists on disk — the renderer's documented degrade path (choosing
-  // the first resolved frame as primary, `@std`/prelude paths "never resolve
-  // to a real file" per docs/plans/disk-backed-debug-info.md). Preferring the
-  // nearest *user* frame instead is explicitly deferred rendering polish
-  // (runtime-stack-traces.md Phase 4, "prelude-frame suppression") — a
-  // separate, later change, not part of this milestone.
+test("twk run points the caret at the user's error() call site (not the prelude shim)", () => {
+  // `error(...)` traps through the prelude `error` frame (an @std/... logical
+  // path with no on-disk file), but its caller is user code. Phase 4.1 makes
+  // the primary snippet/caret land on the first USER frame — the user's
+  // `error("kaboom")` call site (trap.tw line 2) — with a full snippet, and
+  // suppresses the stdlib frame from the backtrace. (This replaces the earlier
+  // test that asserted the deferred location-only-on-prelude behavior.)
   const root = mkdtempSync(join(tmpdir(), "twk-trace-"));
   try {
     const rendererPath = buildRenderer(root);
@@ -108,9 +106,14 @@ test("twk run degrades to a location-only trace when the trap surfaces through t
 
     assert.notEqual(status, 0);
     assert.match(stderr, /error: kaboom/);
-    assert.match(stderr, /at .*\(.*trap\.tw:/);
-    assert.match(stderr, /source unavailable/);
-    assert.equal(stderr.includes("^^"), false);
+    // Primary snippet + caret on the user's error() call line (line 2), a real
+    // file readable under the (no-manifest, entry-dir) project root.
+    assert.match(stderr, /-->[^\n]*trap\.tw:2:/);
+    assert.equal(stderr.includes("^^"), true);
+    assert.doesNotMatch(stderr, /source unavailable/);
+    // The prelude/stdlib frame is suppressed from the backtrace.
+    assert.equal(stderr.includes("@std"), false);
+    // Printed exactly once.
     assert.equal(stderr.match(/error: kaboom/g).length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
