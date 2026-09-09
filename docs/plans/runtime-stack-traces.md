@@ -1,7 +1,13 @@
 # Runtime Stack Traces (source-mapped trap reporting)
 
-Status: Phases 0–2 complete (end-to-end for `error`/div0/OOB on `twk run`)
-Date: 2026-09-05
+Status: Phases 0–2 complete (end-to-end for `error`/div0/OOB on `twk run`);
+disk-backed debug info Milestones 1 & 2 complete (source-less v3 section with
+portable project-relative / `@`-logical paths, snippets read from disk under a
+render-time `source_root`); Phase 4.1 complete (primary snippet/caret and
+backtrace point at the innermost **user** frame, not the prelude shim).
+Remaining: Phase 3 (rich `rt.panic` messages for OOB/div0), and Phase 4.2–4.6
+(name demangling, ANSI parity, `twk build --strip-debug`, docs).
+Date: 2026-09-05 (updated 2026-09-09)
 
 > **Format superseded (2026-09-07):** the `twinkle.debug` section described below
 > embeds source **text** inline (Component 1's file table, the "self-contained
