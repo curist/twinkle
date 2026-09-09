@@ -30,6 +30,9 @@ pub type PipelineArtifacts = .{
   anf: AnfModule,
   opt: AnfModule,
   warnings: Vector<AnalysisDiag>,
+  // Absolute project root, so downstream consumers (e.g. the renderer) can
+  // resolve `debug_files` paths without re-deriving it.
+  project_root: String,
   // File table (file_id -> path + source) threaded to codegen for the
   // twinkle.debug section.
   debug_files: Vector<DebugFile>,

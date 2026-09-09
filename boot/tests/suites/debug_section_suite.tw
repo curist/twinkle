@@ -1,8 +1,12 @@
+use @std.proc
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.common.{format_compile_error}
+use compiler.module_compiler
 use lib.debug.section
 use lib.debug.section.{DebugSection, FileEntry, FuncDebug}
+use lib.module.loader
 
 fn sample() DebugSection {
   files: Vector<FileEntry> = [.{ file_id: 0, path: "main.tw" }, .{ file_id: 3, path: "util.tw" }]
@@ -130,6 +134,47 @@ pub fn suite() runner.Suite {
         try assert.is_none(section.decode([b99]))
         empty: Vector<Byte> = []
         try assert.is_none(section.decode(empty))
+        .Ok({})
+      },
+    )
+    .test(
+      "producer: nested-manifest project stores relative debug paths",
+      fn() {
+        root := loader.find_project_root("boot")
+        abs_root := "${proc.cwd()}/${root}"
+        entry := "${abs_root}/tests/fixtures/project_reachable/main.tw"
+        artifacts := try case module_compiler.compile_entry(entry) {
+          .Ok(a) => .Ok(a),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+
+        try assert.is_true(artifacts.project_root.starts_with("/"))
+        try assert.equal(artifacts.project_root, "${abs_root}/tests/fixtures/project_reachable")
+
+        main_entry := artifacts.debug_files.find(fn(f) { f.path == "main.tw" })
+        try assert.is_some(main_entry)
+
+        try assert.is_false(artifacts.debug_files.any(fn(f) { f.path.starts_with("/") }))
+        try assert.is_false(artifacts.debug_files.any(fn(f) { f.path.starts_with("@extern") }))
+        .Ok({})
+      },
+    )
+    .test(
+      "producer: project_root == \".\" (relative entry, repo-root manifest) stores relative debug paths",
+      fn() {
+        artifacts := try case module_compiler.compile_entry("examples/adder.tw") {
+          .Ok(a) => .Ok(a),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+
+        try assert.is_true(artifacts.project_root.starts_with("/"))
+        try assert.equal(artifacts.project_root, proc.cwd())
+
+        entry := artifacts.debug_files.find(fn(f) { f.path == "examples/adder.tw" })
+        try assert.is_some(entry)
+
+        try assert.is_false(artifacts.debug_files.any(fn(f) { f.path.starts_with("/") }))
+        try assert.is_false(artifacts.debug_files.any(fn(f) { f.path.starts_with("@extern") }))
         .Ok({})
       },
     )

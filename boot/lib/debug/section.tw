@@ -42,7 +42,7 @@ pub fn section_name() String {
   "twinkle.debug"
 }
 
-version: Int = 2
+version: Int = 3
 
 // ── Byte writing ────────────────────────────────────────────────────
 fn byte_of(n: Int) Byte {
