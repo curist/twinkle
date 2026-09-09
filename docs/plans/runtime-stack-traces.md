@@ -9,7 +9,7 @@ Date: 2026-09-05
 > notes). That inline-source format is being replaced by disk-backed recovery —
 > the section stores only project-relative paths, precomputed line/col, and PC
 > maps, and snippets are read from disk at render time on `twk run`. See
-> [disk-backed-debug-info.md](disk-backed-debug-info.md). The capture/render
+> [disk-backed-debug-info.md](archive/disk-backed-debug-info.md). The capture/render
 > architecture (Component 5, `childTrapHandler`, the renderer `--lib`) is
 > unchanged; only the section payload and the source-recovery step change.
 
