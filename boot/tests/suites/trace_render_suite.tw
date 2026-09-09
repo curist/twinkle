@@ -67,6 +67,53 @@ fn sample() DebugSection {
   sample_at(rel_path)
 }
 
+// A section with a user file (id 0) and an @-logical stdlib file (id 1), each
+// owning its own function body, so different frames resolve to different files.
+// frame_at(200,_) -> @std/io.tw:19:3 ; frame_at(110,_) -> src/a.tw:2:1 ;
+// frame_at(100,_) -> src/a.tw:1:1.
+fn sample_mixed() DebugSection {
+  files: Vector<FileEntry> = [.{ file_id: 0, path: rel_path }, .{ file_id: 1, path: "@std/io.tw" }]
+  funcs: Vector<FuncDebug> = [
+    .{
+      func_idx: 6,
+      body_start: 100,
+      lines: [
+        .{
+          offset: 0,
+          span: .{ file_id: 0, start: 0, end: 6 },
+          start_line: 1,
+          start_col: 1,
+          end_line: 1,
+          end_col: 7,
+        },
+        .{
+          offset: 8,
+          span: .{ file_id: 0, start: 7, end: 17 },
+          start_line: 2,
+          start_col: 1,
+          end_line: 2,
+          end_col: 11,
+        },
+      ],
+    },
+    .{
+      func_idx: 7,
+      body_start: 200,
+      lines: [
+        .{
+          offset: 0,
+          span: .{ file_id: 1, start: 0, end: 5 },
+          start_line: 19,
+          start_col: 3,
+          end_line: 19,
+          end_col: 8,
+        },
+      ],
+    },
+  ]
+  .{ files, funcs }
+}
+
 fn frame_at(offset: Int, name: String) Frame {
   .{
     module_token: .Some("wasm://wasm/abcd"),
@@ -196,6 +243,61 @@ pub fn suite() runner.Suite {
         try assert.str_contains(out, "error: boom")
         try assert.is_false(out.contains("-->"))
         try assert.str_contains(out, "at deeper (@std/vector.tw:1:1)")
+        try assert.str_contains(out, "source unavailable")
+        .Ok({})
+      },
+    )
+    .test(
+      "points the primary caret at the first user frame when the innermost frame is @-logical stdlib",
+      fn() {
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
+
+        // Innermost frame resolves to @std/io.tw; the next resolves to the user
+        // file. Primary + backtrace must prefer the user frame.
+        frames: Vector<Frame> = [frame_at(200, "error"), frame_at(110, "deeper")]
+        out := trace.render_trace(sample_mixed(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "--> ${rel_path}:2:1")
+        try assert.str_contains(out, "b := a + 2")
+        try assert.str_contains(out, "^^^^^^^^^^")
+        try assert.str_contains(out, "at deeper (${rel_path}:2:1)")
+        try assert.is_false(out.contains("@std/io.tw"))
+        try assert.is_false(out.contains("at error"))
+        .Ok({})
+      },
+    )
+    .test(
+      "keeps both user frames and drops an interior @-logical frame from the backtrace",
+      fn() {
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
+
+        // user(deeper) -> @std(error) -> user(main): both user frames stay, the
+        // interior stdlib frame is dropped.
+        frames: Vector<Frame> = [
+          frame_at(110, "deeper"),
+          frame_at(200, "error"),
+          frame_at(100, "main"),
+        ]
+        out := trace.render_trace(sample_mixed(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "--> ${rel_path}:2:1")
+        try assert.str_contains(out, "at deeper (${rel_path}:2:1)")
+        try assert.str_contains(out, "at main (${rel_path}:1:1)")
+        try assert.is_false(out.contains("@std/io.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "falls back to all resolved frames when every frame is @-logical, never empty",
+      fn() {
+        // An all-stdlib trap (no user frame): must still show the @ location(s),
+        // not the empty "(no Twinkle stack trace available)" note.
+        frames: Vector<Frame> = [frame_at(200, "error"), frame_at(200, "inner")]
+        out := trace.render_trace(sample_mixed(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "error: boom")
+        try assert.is_false(out.contains("no Twinkle stack trace available"))
+        try assert.is_false(out.contains("-->"))
+        try assert.str_contains(out, "at error (@std/io.tw:19:3)")
         try assert.str_contains(out, "source unavailable")
         .Ok({})
       },

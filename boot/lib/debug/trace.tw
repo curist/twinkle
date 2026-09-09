@@ -4,8 +4,13 @@
 //! parsed from a trap's stack into the final terminal report: a severity
 //! headline + source snippet + caret for the innermost Twinkle frame (via the
 //! shared `render.tw`), followed by an ordered backtrace of the resolved
-//! frames. Frames that do not map to Twinkle source (prelude, imports, the host
-//! `error` shim) are dropped so the trace shows only user-meaningful frames.
+//! frames. It renders only the user-meaningful frames: the primary
+//! snippet/caret and the backtrace are taken from the frames that resolve to a
+//! real project source file (a non-`@` path), so a trap through the prelude
+//! `error` shim or a stdlib internal points at the user's call site. When a
+//! trap resolves to no user frame at all (an all-stdlib stack), it falls back
+//! to every resolved frame so a location still renders; frames that resolve to
+//! nothing are dropped from the backtrace as before.
 //! Locations (file:line:col) come straight from the section's embedded
 //! line/col and render regardless of whether the source file is still on
 //! disk; the source snippet is best-effort and degrades to a `source
@@ -22,6 +27,30 @@ use .section.{DebugSection}
 use .stack.{Frame}
 use .symbolicate
 use .symbolicate.{ResolvedFrame}
+
+/// A frame counts as a user frame when it resolved to a source location whose
+/// file is a real project-relative path — i.e. not an `@`-logical stdlib,
+/// prelude, or extern name (M2's path convention). Unresolved frames (no
+/// location) are never user frames.
+fn is_user_frame(rf: ResolvedFrame) Bool {
+  case rf.location {
+    .Some(loc) => !loc.file.starts_with("@"),
+    .None => false,
+  }
+}
+
+/// The user-frame subset of `resolved`, preserving stack order.
+fn user_frames(resolved: Vector<ResolvedFrame>) Vector<ResolvedFrame> {
+  out: Vector<ResolvedFrame> = []
+
+  for rf in resolved {
+    if is_user_frame(rf) {
+      out = .append(rf)
+    }
+  }
+
+  out
+}
 
 fn primary_label(resolved: Vector<ResolvedFrame>) SpanLabel? {
   for rf in resolved {
@@ -67,7 +96,18 @@ pub fn render_trace(
 ) String {
   reg := symbolicate.build_disk_registry(section, source_root)
   resolved := symbolicate.symbolicate(section, frames)
-  primary := primary_label(resolved)
+
+  // Prefer user frames for both the primary snippet and the backtrace so an
+  // `error()` (or any stdlib-internal) trap points at the user's call site, not
+  // the prelude. Fall back to all resolved frames when none are user frames, so
+  // an all-stdlib trap still shows a location instead of nothing.
+  users := user_frames(resolved)
+  chosen := if users.len() > 0 {
+    users
+  } else {
+    resolved
+  }
+  primary := primary_label(chosen)
 
   labels := case primary {
     .Some(l) => [l],
@@ -75,7 +115,7 @@ pub fn render_trace(
   }
   report: Report = .{ severity: .Error, title: message, labels, help_lines: [] }
   head := render.render(report, reg, config)
-  bt := backtrace_lines(resolved)
+  bt := backtrace_lines(chosen)
 
   snippet_ok := case primary {
     .Some(l) => case reg.line_col(l.span) {
