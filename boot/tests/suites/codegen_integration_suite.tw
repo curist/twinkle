@@ -3,6 +3,7 @@ use @std.testing as runner
 
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.linker.{LinkedModule, link}
+use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.buf as rt_buf
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm_ir.{Instr}
@@ -897,9 +898,54 @@ fn test_extern_omitted_return_type_is_void() Result<Void, String> {
   .Ok({})
 }
 
+// A user indexed read `xs[i]` emits the rich out-of-bounds guard at the call
+// site (emit_index_op), which calls the hidden `rt_arr____panic_oob` helper
+// instead of a bare `unreachable`.
+fn test_index_read_emits_panic_oob_call() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "xs := [10, 20, 30]\nprintln(xs[5])\n",
+    "index read emits panic_oob",
+  )
+  try assert.str_contains(wat, "rt_arr____panic_oob")
+  .Ok({})
+}
+
+// Every user-reachable write/mutation entry in rt.arr — the functional `set`,
+// the in-place `set_in_place`, and the `mutvec_set`/`mutvec_get` cold arms
+// (across all element families) — guards its bounds by calling `__panic_oob`.
+// Inspect the arr runtime module structurally so the guard can't silently drop
+// out of a single family builder.
+fn test_index_write_and_mutvec_emit_panic_oob() Result<Void, String> {
+  arr_mod := rt_arr.module()
+  guarded := 0
+
+  for f in arr_mod.funcs {
+    is_write := f.name.starts_with("set")
+      or f.name.starts_with("mutvec_set")
+      or f.name.starts_with("mutvec_get")
+
+    if is_write {
+      if !instr_has_call(f.body, "__panic_oob") {
+        return assert.fail("rt.arr ${f.name} is missing its __panic_oob bounds guard")
+      }
+
+      guarded = guarded + 1
+    }
+  }
+
+  // Guard against the scan matching nothing (e.g. a rename) reporting a false pass.
+  if guarded == 0 {
+    return assert.fail("expected at least one guarded write/mutvec function")
+  }
+
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen integration (M11)")
+    .test("index read emits rich panic_oob call", test_index_read_emits_panic_oob_call)
+    .test("index write and mutvec arms emit panic_oob", test_index_write_and_mutvec_emit_panic_oob)
     .test("emit_wat produces valid linked WAT", test_emit_wat_basic)
     .test(
       "codegen compiles a simple source program end to end",

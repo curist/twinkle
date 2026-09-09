@@ -120,6 +120,78 @@ test("twk run points the caret at the user's error() call site (not the prelude 
   }
 });
 
+// Runs `twk run <trap.tw>` for `src` in a fresh temp dir with the built
+// renderer, returning { status, stderr }. Shared by the out-of-bounds cases.
+function runTrap(src) {
+  const root = mkdtempSync(join(tmpdir(), "twk-trace-"));
+  try {
+    const rendererPath = buildRenderer(root);
+    const trapPath = join(root, "trap.tw");
+    writeFileSync(trapPath, src);
+
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync("node", [entry, "run", trapPath], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RENDERER_WASM: rendererPath },
+      });
+    } catch (e) {
+      status = e.status ?? 1;
+      stderr = e.stderr?.toString() ?? "";
+    }
+
+    return { status, stderr };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("twk run renders a rich out-of-bounds message for an indexed read", () => {
+  // Reading past the end of a length-3 vector traps with the rich
+  // `index N out of bounds for length L` message (from the emit-site
+  // __panic_oob guard) plus a source-mapped snippet + caret on the xs[i] site.
+  const { status, stderr } = runTrap('xs := [10, 20, 30]\nprintln(xs[5])\n');
+  assert.notEqual(status, 0);
+  assert.match(stderr, /index 5 out of bounds for length 3/);
+  assert.match(stderr, /-->[^\n]*trap\.tw:2:/);
+  assert.equal(stderr.includes("^^"), true);
+});
+
+test("twk run renders a rich out-of-bounds message for an indexed write", () => {
+  // Writing past the end reaches the rt.arr set/set_in_place bounds guard added
+  // in this phase; the write site (line 2) carries the rich message + caret.
+  const { status, stderr } = runTrap(
+    "fn w(xs: Vector<Int>, i: Int) Vector<Int> {\n  xs[i] = 1\n  xs\n}\n\nprintln(w([1, 2, 3], 5))\n",
+  );
+  assert.notEqual(status, 0);
+  assert.match(stderr, /index 5 out of bounds for length 3/);
+  assert.match(stderr, /-->[^\n]*trap\.tw:2:/);
+  assert.equal(stderr.includes("^^"), true);
+});
+
+test("twk run catches a negative index via the unsigned bounds guard", () => {
+  // A negative index arrives as a large unsigned i32; the single I32GeU compare
+  // catches it, and the raw index renders as `-1` (sign-extended in __panic_oob).
+  const { status, stderr } = runTrap('xs := [10, 20, 30]\nprintln(xs[-1])\n');
+  assert.notEqual(status, 0);
+  assert.match(stderr, /index -1 out of bounds for length 3/);
+});
+
+test("twk run exits 0 for an in-bounds index (guard does not false-fire)", () => {
+  // Sanity: a valid indexing program still runs to completion.
+  const root = mkdtempSync(join(tmpdir(), "twk-trace-"));
+  try {
+    const okPath = join(root, "ok.tw");
+    writeFileSync(okPath, 'xs := [10, 20, 30]\nprintln(xs[1])\n');
+    const stdout = execFileSync("node", [entry, "run", okPath], { encoding: "utf8" });
+    assert.match(stdout, /20/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Minimal writable stream collector for the direct-runtime test below: no
 // child process is spawned, so stdout/stderr are plain in-memory sinks rather
 // than pipes read back from a subprocess.

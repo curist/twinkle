@@ -1576,8 +1576,13 @@ fn family_byte() PVecFamily {
 // "index {index} out of bounds for length {len}" and traps through the same
 // string-sink-then-throw path as `error(...)`, so the host tags the throw with
 // `twinkleMessage` and the renderer shows the formatted string as the trace
-// headline (no renderer/host change needed). Reached from bounds guards in the
-// pvec get/set family via `.Call("__panic_oob")`.
+// headline (no renderer/host change needed).
+//
+// Call sites: the indexed *read* guard is emitted at the call site in
+// `emit_index_op` (emit/arrays.tw) as `.Call("rt_arr____panic_oob")`; the
+// indexed *write* (`pvec_set`/`pvec_set_in_place`) and the `mutvec` cold arms
+// guard from within this module via `.Call("__panic_oob")` (the linker adds the
+// `rt_arr` prefix).
 //
 // Wiring mechanism (spike-decided): a self-contained runtime FuncDef that calls
 // the cross-module string ops by their already-qualified `rt_*` linked names —
@@ -1595,6 +1600,8 @@ fn panic_oob_fn() FuncDef {
     results: [],
     locals: [],
     body: [
+      // NOTE: each ArrayNewFixed(ts, N) below must have N equal to the number of
+      // I32Const code points that precede it in the same string literal.
       // "index "
       .I32Const(105),
       .I32Const(110),
@@ -1647,6 +1654,19 @@ fn panic_oob_fn() FuncDef {
       .Unreachable,
     ],
   }
+}
+
+// Unsigned bounds guard for a user `xs[i] = v` write: `if i u>= len {
+// __panic_oob(i, len) }`. Assumes p0 = vec (PVec of family f), p1 = i (i32).
+// A single unsigned compare (I32GeU) also catches a negative index (it arrives
+// as a large unsigned i32). Prepended to the `set`/`set_in_place` bodies so an
+// out-of-bounds write traps with the rich message instead of the native trie
+// trap. The raw index is passed through unmasked so a negative renders as `-N`.
+fn pvec_write_oob_guard(f: PVecFamily) Vector<Instr> {
+  len_load: Vector<Instr> = [.LocalGet(0), .RefAsNonNull, .StructGet(f.pvec_ty, pv_LEN)]
+  panic_arm: Vector<Instr> = len_load.concat([.Call("__panic_oob"), .Unreachable])
+  idx: Vector<Instr> = [.LocalGet(1)]
+  idx.concat(len_load).append(.I32GeU).append(.If(.None, idx.concat(panic_arm), []))
 }
 
 // len/len_i64(vec: PVec?) -> i32
@@ -2060,48 +2080,50 @@ fn pvec_set_fn(f: PVecFamily) FuncDef {
     params: [f.pvec_null, .I32, .Anyref],
     results: [f.pvec_ref],
     locals: [.I32, f.arr_null],
-    body: [
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(f.pvec_ty, pv_LEN),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(f.pvec_ty, pv_TAIL),
-      .ArrayLen,
-      .I32Sub,
-      .LocalSet(3),
-      .LocalGet(1),
-      .LocalGet(3),
-      .I32GeS,
-      .If(
-        .Some(f.pvec_ref),
-        tail_then,
-        [
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_LEN),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_ROOT),
-          .RefAsNonNull,
-          .RefCast(false, .Eq),
-          .LocalGet(1),
-          .LocalGet(2),
-          .Call("do_set${f.suffix}"),
-          .RefCast(true, .Named(t_VEC_INTERNAL)),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_TAIL),
-          .StructNew(f.pvec_ty),
-        ],
-      ),
-    ],
+    body: f
+      .pvec_write_oob_guard()
+      .concat([
+        .LocalGet(0),
+        .RefAsNonNull,
+        .StructGet(f.pvec_ty, pv_LEN),
+        .LocalGet(0),
+        .RefAsNonNull,
+        .StructGet(f.pvec_ty, pv_TAIL),
+        .ArrayLen,
+        .I32Sub,
+        .LocalSet(3),
+        .LocalGet(1),
+        .LocalGet(3),
+        .I32GeS,
+        .If(
+          .Some(f.pvec_ref),
+          tail_then,
+          [
+            .LocalGet(0),
+            .RefAsNonNull,
+            .StructGet(f.pvec_ty, pv_LEN),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .StructGet(f.pvec_ty, pv_SHIFT),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .StructGet(f.pvec_ty, pv_SHIFT),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .StructGet(f.pvec_ty, pv_ROOT),
+            .RefAsNonNull,
+            .RefCast(false, .Eq),
+            .LocalGet(1),
+            .LocalGet(2),
+            .Call("do_set${f.suffix}"),
+            .RefCast(true, .Named(t_VEC_INTERNAL)),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .StructGet(f.pvec_ty, pv_TAIL),
+            .StructNew(f.pvec_ty),
+          ],
+        ),
+      ]),
   }
 }
 
@@ -2123,7 +2145,11 @@ fn pvec_set_in_place_fn(f: PVecFamily) FuncDef {
     params: [f.pvec_null, .I32, .Anyref],
     results: [f.pvec_ref],
     locals: [],
-    body: head.concat(f.leaf_store).concat([.ArraySet(f.arr_ty), .LocalGet(0), .RefAsNonNull]),
+    body: f
+      .pvec_write_oob_guard()
+      .concat(head)
+      .concat(f.leaf_store)
+      .concat([.ArraySet(f.arr_ty), .LocalGet(0), .RefAsNonNull]),
   }
 }
 
@@ -2532,7 +2558,7 @@ fn pvec_mutvec_set_fn(f: PVecFamily) FuncDef {
       .LocalGet(3),
       .I32GeS,
       .I32Or,
-      .If(.None, [.Unreachable], []),
+      .If(.None, [.LocalGet(1), .LocalGet(3), .Call("__panic_oob"), .Unreachable], []),
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(f.mutvec_ty, 0),
@@ -2565,7 +2591,7 @@ fn pvec_mutvec_get_fn(f: PVecFamily) FuncDef {
       .LocalGet(2),
       .I32GeS,
       .I32Or,
-      .If(.None, [.Unreachable], []),
+      .If(.None, [.LocalGet(1), .LocalGet(2), .Call("__panic_oob"), .Unreachable], []),
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(f.mutvec_ty, 0),
