@@ -3,7 +3,7 @@ extern twinkle_runtime {
   fn exit(code: Int) Never
   fn args() Vector<String>
   fn env(name: String) Vector<String>
-  fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>) Int
+  fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>, source_root: String) Int
 }
 
 /// Return the current process argument vector.
@@ -14,8 +14,11 @@ pub fn args() Vector<String> {
 /// Run a compiled Wasm module with the provided argv vector.
 ///
 /// `argv[0]` should be the logical program path presented to the guest.
-pub fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>) Int {
-  twinkle_runtime.run_wasm(bytes, argv)
+///
+/// `source_root` is the absolute project root the host uses to resolve
+/// source-mapped trap snippets; pass `""` to render location-only traces.
+pub fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>, source_root: String) Int {
+  twinkle_runtime.run_wasm(bytes, argv, source_root)
 }
 
 /// Return the environment variable value when present.

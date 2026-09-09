@@ -55,7 +55,7 @@ fn run_file(file: String, argv: Vector<String>) {
   }
   print_warnings(artifacts.warnings)
   wasm_bytes := pipeline.emit_wasm(artifacts)
-  exit_code := proc.run_wasm(wasm_bytes, argv)
+  exit_code := proc.run_wasm(wasm_bytes, argv, artifacts.project_root)
 
   if exit_code != 0 {
     proc.exit(exit_code)

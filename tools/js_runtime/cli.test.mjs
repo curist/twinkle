@@ -133,15 +133,17 @@ function collector() {
 
 test("running a pre-built artifact directly degrades to a location-only trace once its source is gone", async () => {
   // This exercises the disk-backed-debug-info degradation path: `twinkle.debug`
-  // (v2) carries absolute paths + line/col but no embedded source text, so a
-  // compiled artifact run away from its original source can only recover
-  // `file:line:col` + backtrace, not a snippet. Reuses the divide-by-zero
-  // fixture (traps directly in user code, not through the prelude `error()`
-  // shim) so this isolates the disk-unavailable degrade path specifically,
-  // distinct from the separate prelude-frame case above. Unlike the tests
-  // above, this goes straight through tools/js_runtime's runtime.mjs (no
-  // `twk run` recompile of the fixture) to mirror "run a pre-built .wasm"
-  // directly.
+  // (v3) carries project-relative/@-logical paths + line/col but no embedded
+  // source text, and a pre-built artifact run directly gets NO `source_root`
+  // (the 4th `render_runtime_trace` arg is omitted below) — so per the M2
+  // "no source_root ⇒ location-only for every frame" rule it can only recover
+  // `file:line:col` + backtrace, not a snippet. Deleting the source dir first
+  // makes the degrade unconditional. Reuses the divide-by-zero fixture (traps
+  // directly in user code, not through the prelude `error()` shim) so this
+  // isolates the no-root/disk-unavailable degrade path specifically, distinct
+  // from the separate prelude-frame case above. Unlike the tests above, this
+  // goes straight through tools/js_runtime's runtime.mjs (no `twk run`
+  // recompile of the fixture) to mirror "run a pre-built .wasm" directly.
   const srcRoot = mkdtempSync(join(tmpdir(), "twk-artifact-src-"));
   const outRoot = mkdtempSync(join(tmpdir(), "twk-artifact-out-"));
   try {
@@ -178,8 +180,10 @@ test("running a pre-built artifact directly degrades to a location-only trace on
       imports: {},
       // Render the trap ourselves rather than going through `twk run`'s
       // compile step (which is what "no compile" rules out): load the
-      // renderer lib and call the same 3-arg entry point the CLI's own
-      // childTrapHandler uses.
+      // renderer lib and call render_runtime_trace WITHOUT a source_root
+      // (the CLI's childTrapHandler passes one only for `twk run`; a raw
+      // pre-built artifact gets none) — the omitted 4th arg forces the
+      // location-only path.
       childTrapHandler: async (trapInfo, childBytes) => {
         const lib = await loadLibBytes(rendererBytes, {
           programPath: "<renderer>.wasm",
@@ -208,6 +212,93 @@ test("running a pre-built artifact directly degrades to a location-only trace on
   } finally {
     rmSync(srcRoot, { recursive: true, force: true });
     rmSync(outRoot, { recursive: true, force: true });
+  }
+});
+
+test("twk run resolves a project-relative snippet path when launched from the project root", () => {
+  // The B1 regression case: a project whose `twinkle.toml` sits at the launch
+  // CWD makes `find_project_root("src")` return `"."`. The producer's
+  // absolutization (module_compiler.abspath) turns that into the absolute CWD
+  // so files still classify as in-root RELATIVE ("src/main.tw"), and `run_file`
+  // forwards that absolute root as `source_root` so the renderer safe-joins and
+  // reads the snippet — while the *rendered* frame path stays project-relative
+  // and no absolute build path leaks into the trace.
+  const projectDir = mkdtempSync(join(tmpdir(), "twk-proj-"));
+  const rendererDir = mkdtempSync(join(tmpdir(), "twk-renderer-"));
+  try {
+    const rendererPath = buildRenderer(rendererDir);
+    writeFileSync(join(projectDir, "twinkle.toml"), '[project]\nname = "demo"\n');
+    mkdirSync(join(projectDir, "src"));
+    writeFileSync(
+      join(projectDir, "src", "main.tw"),
+      "fn divide(a: Int, b: Int) Int {\n  a / b\n}\n\nx := divide(10, 0)\nprintln(\"never ${x}\")\n",
+    );
+
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync("node", [entry, "run", join("src", "main.tw")], {
+        cwd: projectDir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RENDERER_WASM: rendererPath },
+      });
+    } catch (e) {
+      status = e.status ?? 1;
+      stderr = e.stderr?.toString() ?? "";
+    }
+
+    assert.notEqual(status, 0);
+    assert.match(stderr, /error: divide by zero/);
+    // Frame path is the project-relative "src/main.tw", not an absolute path.
+    assert.match(stderr, /src\/main\.tw:2:\d+/);
+    assert.match(stderr, /\^\^/);
+    assert.match(stderr, /a \/ b/);
+    // The absolute project directory must never appear in the trace.
+    assert.equal(stderr.includes(projectDir), false);
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(rendererDir, { recursive: true, force: true });
+  }
+});
+
+test("twk run ./foo.tw with no manifest resolves its snippet via the entry-dir fallback", () => {
+  // No `twinkle.toml` anywhere: `find_project_root(".")` returns `"."`, the
+  // producer absolutizes it to the CWD (which contains the file), and the
+  // relative entry "foo.tw" resolves from disk. Exercises the manifest-less
+  // relative-entry path (distinct from the absolute-entry no-manifest case).
+  const dir = mkdtempSync(join(tmpdir(), "twk-nomanifest-"));
+  const rendererDir = mkdtempSync(join(tmpdir(), "twk-renderer-"));
+  try {
+    const rendererPath = buildRenderer(rendererDir);
+    writeFileSync(
+      join(dir, "foo.tw"),
+      "fn divide(a: Int, b: Int) Int {\n  a / b\n}\n\nx := divide(10, 0)\nprintln(\"never ${x}\")\n",
+    );
+
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync("node", [entry, "run", "./foo.tw"], {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RENDERER_WASM: rendererPath },
+      });
+    } catch (e) {
+      status = e.status ?? 1;
+      stderr = e.stderr?.toString() ?? "";
+    }
+
+    assert.notEqual(status, 0);
+    assert.match(stderr, /error: divide by zero/);
+    assert.match(stderr, /foo\.tw:2:\d+/);
+    assert.match(stderr, /\^\^/);
+    assert.match(stderr, /a \/ b/);
+    assert.equal(stderr.includes(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(rendererDir, { recursive: true, force: true });
   }
 });
 

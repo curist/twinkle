@@ -97,5 +97,5 @@ fn run_test_entry(file: String, reporting_args: Vector<String>) Bool {
 
   print_warnings(artifacts.warnings)
   wasm_bytes := pipeline.emit_wasm(artifacts)
-  proc.run_wasm(wasm_bytes, [file].concat(reporting_args)) == 0
+  proc.run_wasm(wasm_bytes, [file].concat(reporting_args), "") == 0
 }
