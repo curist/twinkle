@@ -53,7 +53,7 @@ test("twk run renders a full source snippet for a trap in user code (file presen
       execFileSync("node", [entry, "run", trapPath], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, RENDERER_WASM: rendererPath },
+        env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
       });
     } catch (e) {
       status = e.status ?? 1;
@@ -97,7 +97,7 @@ test("twk run points the caret at the user's error() call site (not the prelude 
       execFileSync("node", [entry, "run", trapPath], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, RENDERER_WASM: rendererPath },
+        env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
       });
     } catch (e) {
       status = e.status ?? 1;
@@ -248,7 +248,7 @@ test("running a pre-built artifact directly degrades to a location-only trace on
       programPath: artifactPath,
       guestArgs: [],
       cwd: outRoot,
-      env: process.env,
+      env: { ...process.env, NO_COLOR: "1" },
       stdout: out.stream,
       stderr: err.stream,
       host: nodeHost,
@@ -264,7 +264,7 @@ test("running a pre-built artifact directly degrades to a location-only trace on
           programPath: "<renderer>.wasm",
           guestArgs: [],
           cwd: outRoot,
-          env: process.env,
+          env: { ...process.env, NO_COLOR: "1" },
           stdout: { write: () => true },
           stderr: { write: () => true },
           host: nodeHost,
@@ -316,7 +316,7 @@ test("twk run resolves a project-relative snippet path when launched from the pr
         cwd: projectDir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, RENDERER_WASM: rendererPath },
+        env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
       });
     } catch (e) {
       status = e.status ?? 1;
@@ -358,7 +358,7 @@ test("twk run ./foo.tw with no manifest resolves its snippet via the entry-dir f
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, RENDERER_WASM: rendererPath },
+        env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
       });
     } catch (e) {
       status = e.status ?? 1;

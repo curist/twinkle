@@ -1,0 +1,93 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.debug.demangle
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("demangle")
+    .test(
+      "strips the namespace and $fN_ prefix from a regular function",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f350_cell"), "cell")
+        .Ok({})
+      },
+    )
+    .test(
+      "maps the synthetic top-level body to <script>",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f352__init"), "<script>")
+        .Ok({})
+      },
+    )
+    .test(
+      "maps a hoisted lambda to <closure>",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f7___lambda"), "<closure>")
+        .Ok({})
+      },
+    )
+    .test(
+      "maps a monomorphized lambda to <closure>",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f7___lambda__Int"), "<closure>")
+        .Ok({})
+      },
+    )
+    .test(
+      "strips a monomorphization suffix to the base name",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f361_sort_by__Int"), "sort_by")
+        .Ok({})
+      },
+    )
+    .test(
+      "keeps a genuine double-underscore user name intact",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f5_my__thing"), "my__thing")
+        .Ok({})
+      },
+    )
+    .test(
+      "drops a non-user namespace prefix too",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("std_view__$f12_from"), "from")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a name without the $f marker unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("rt_arr__get"), "rt_arr__get")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves an empty string unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name(""), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a $f marker with no digits unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$foo"), "user__$foo")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a $f marker with no separator unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f12"), "user__$f12")
+        .Ok({})
+      },
+    )
+    .test(
+      "does not treat a user function named init as the top-level body",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f9_init"), "init")
+        .Ok({})
+      },
+    )
+}

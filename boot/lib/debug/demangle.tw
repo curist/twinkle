@@ -1,0 +1,78 @@
+//! Demangle Wasm function names into readable backtrace labels.
+//!
+//! Codegen mangles every user function into `<ns>__$f<id>_<sanitized_name>`
+//! (see `codegen/emit.tw` and `codegen/linker.tw`): a namespace prefix
+//! (`user`, `std_view`, …), a `$f<func-id>_` marker, then the source name with
+//! every non-`[A-Za-z0-9_]` byte mapped to `_`. This turns that back into a
+//! name a human recognizes in a trap backtrace — dropping the prefix and id,
+//! naming the synthetic top-level body (`$init` → `<script>`) and hoisted
+//! lambdas (`__lambda` → `<closure>`), and stripping monomorphization suffixes
+//! (`sort_by__Int` → `sort_by`).
+
+fn is_digit(c: Int) Bool {
+  c >= 48 and c <= 57
+}
+
+fn is_upper(c: Int) Bool {
+  c >= 65 and c <= 90
+}
+
+// Strip a monomorphization suffix from a base name. Suffixes come from
+// `monomorphize.tw` type keys and are always PascalCase-leading (`Int`,
+// `Vec_Int`, `T7_Int`, `Fn_..`, …), joined onto the base with `__`. User names
+// are snake_case, so we cut at the first `__` immediately followed by an
+// uppercase ASCII letter; a `__` followed by lowercase (`my__thing`) is part of
+// the name and left intact.
+fn strip_mono_suffix(tail: String) String {
+  bytes := tail.utf8_bytes()
+  i := 0
+
+  for i + 2 < bytes.len() {
+    if bytes[i].to_int() == 95 and bytes[i + 1].to_int() == 95 and is_upper(bytes[i + 2].to_int()) {
+      return tail.slice(0, i)
+    }
+
+    i = i + 1
+  }
+
+  tail
+}
+
+fn demangle_tail(tail: String) String {
+  if tail == "_init" {
+    "<script>"
+  } else if tail.starts_with("__lambda") {
+    "<closure>"
+  } else {
+    strip_mono_suffix(tail)
+  }
+}
+
+/// Turn a mangled Wasm function name into a readable backtrace label. A name
+/// without the `$f<digits>_` marker (externs, `rt_*` helpers, raw exports) is
+/// returned unchanged.
+pub fn demangle_frame_name(raw: String) String {
+  case raw.index_of("$f") {
+    .None => raw,
+    .Some(marker) => {
+      bytes := raw.utf8_bytes()
+      digit_start := marker + 2
+      i := digit_start
+
+      for i < bytes.len() {
+        if !is_digit(bytes[i].to_int()) {
+          break
+        }
+
+        i = i + 1
+      }
+
+      // Require at least one digit after `$f` and a following `_` separator.
+      if i == digit_start or i >= bytes.len() or bytes[i].to_int() != 95 {
+        raw
+      } else {
+        demangle_tail(raw.slice(i + 1, raw.len()))
+      }
+    },
+  }
+}

@@ -23,6 +23,7 @@
 use lib.source.render
 use lib.source.report.{RenderConfig, Report, SpanLabel}
 
+use .demangle.{demangle_frame_name}
 use .section.{DebugSection}
 use .stack.{Frame}
 use .symbolicate
@@ -70,7 +71,7 @@ fn backtrace_lines(resolved: Vector<ResolvedFrame>) Vector<String> {
     case rf.location {
       .Some(loc) => {
         name := case rf.frame.name {
-          .Some(n) => n,
+          .Some(n) => demangle_frame_name(n),
           .None => "<anonymous>",
         }
         out = .append("  at ${name} (${loc.file}:${loc.line}:${loc.column})")
