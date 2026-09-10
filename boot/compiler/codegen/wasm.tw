@@ -1482,18 +1482,19 @@ fn emit_wasm_module_buf(module: WasmModule) WasmBuf {
     module.data,
     module.start,
     [],
+    false,
   )
 }
 
-pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
-  emit_linked_wasm_buf(linked).wasm_buf_to_bytes()
+pub fn emit_linked_wasm(linked: LinkedModule, strip_debug: Bool) Vector<Byte> {
+  emit_linked_wasm_buf(linked, strip_debug).wasm_buf_to_bytes()
 }
 
-pub fn emit_linked_wasm_buffer(linked: LinkedModule) Buffer {
-  emit_linked_wasm_buf(linked).wasm_buf_to_buffer()
+pub fn emit_linked_wasm_buffer(linked: LinkedModule, strip_debug: Bool) Buffer {
+  emit_linked_wasm_buf(linked, strip_debug).wasm_buf_to_buffer()
 }
 
-fn emit_linked_wasm_buf(linked: LinkedModule) WasmBuf {
+fn emit_linked_wasm_buf(linked: LinkedModule, strip_debug: Bool) WasmBuf {
   buf := emit_wasm_parts(
     linked.types,
     linked.imports,
@@ -1507,6 +1508,7 @@ fn emit_linked_wasm_buf(linked: LinkedModule) WasmBuf {
     linked.data,
     linked.start,
     linked.debug_files,
+    strip_debug,
   )
 
   // Custom sections may appear anywhere; emit them last, and only when non-empty.
@@ -1596,6 +1598,7 @@ fn emit_wasm_parts(
   data: Vector<DataSegment>,
   start: String?,
   debug_files: Vector<DebugFile>,
+  strip_debug: Bool,
 ) WasmBuf {
   timed := case proc.env("TWINKLE_TIMINGS") {
     .Some(_) => true,
@@ -1728,7 +1731,7 @@ fn emit_wasm_parts(
     buf = .emit_section_into(11, encode_data_section_payload(data, ctx))
   }
 
-  if imports.len() > 0 or funcs.len() > 0 {
+  if !strip_debug and (imports.len() > 0 or funcs.len() > 0) {
     buf = .emit_section_into(0x00, encode_name_section_payload(imports, funcs, ctx))
   }
 
@@ -1737,7 +1740,7 @@ fn emit_wasm_parts(
   // here, once, from a throwaway registry built over the threaded source —
   // the emitted section itself never carries source text; the disk-backed
   // renderer re-reads files by path when it wants a snippet.
-  if module_debug.len() > 0 {
+  if !strip_debug and module_debug.len() > 0 {
     reg := registry.empty()
 
     for df in debug_files {

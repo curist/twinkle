@@ -36,4 +36,7 @@ pub type PipelineArtifacts = .{
   // File table (file_id -> path + source) threaded to codegen for the
   // twinkle.debug section.
   debug_files: Vector<DebugFile>,
+  // When true, the emitter omits the `name` and `twinkle.debug` custom
+  // sections (opt-in via `twk build --strip-debug`).
+  strip_debug: Bool,
 }

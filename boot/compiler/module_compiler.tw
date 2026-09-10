@@ -323,6 +323,7 @@ pub fn compile_analyzed_graph(
         warnings: compile_warnings,
         project_root: abs_root,
         debug_files,
+        strip_debug: false,
       },
     },
   )
