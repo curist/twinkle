@@ -7,14 +7,20 @@
 > or lifecycle machinery until Task 3 records and reviews the representation
 > decision.
 
-**Status:** S5 representation gate completed and stopped without selection after
-the 2026-08-29 evidence-closure run. The immutable publication adapter is landed,
-but the real Wasm-GC `MutDict` runtime and its retained storage layout have not
-started. Candidate M wins update-dense rows and decisively beats the aliased
-persistent control, but the optimized boot-compiler census is dominated by
-build-once/low-overwrite maps, where Candidate H wins without justifying a boxed
-storage reopening. Task 4 remains closed pending an evidenced update-dense
-customer.
+**Status: DORMANT / BLOCKED — re-entry point only.** The S5 representation gate
+completed and stopped without selection after the 2026-08-29 evidence-closure run
+(that execution plan is now archived at
+[archive/2026-08-29-mutdict-evidence-closure.md](archive/2026-08-29-mutdict-evidence-closure.md);
+the bottom-up builder spike at
+[archive/dict-bottom-up-hamt-builder.md](archive/dict-bottom-up-hamt-builder.md)).
+The immutable publication adapter is landed (`freeze_dense` + `Dict.compact()`),
+but the real Wasm-GC `MutDict` runtime and its retained storage layout have **not
+started** and are hard-gated. Candidate M wins update-dense rows and decisively
+beats the aliased persistent control, but the optimized boot-compiler census is
+dominated by build-once/low-overwrite maps, where Candidate H wins without
+justifying a boxed storage reopening. This document is kept as the re-entry point:
+Task 4 stays closed until a concrete update-dense region appears whose measured
+operations and publication boundary match the rows where Candidate M wins.
 
 **Goal:** Measure the smallest real Wasm-GC storage slice that distinguishes an
 unboxed mutable arena followed by one conversion pass from a canonical immutable
@@ -37,7 +43,7 @@ index.
 - [sound-uniqueness/storage/spike-tier0-dict.md](sound-uniqueness/storage/spike-tier0-dict.md)
 - [archived publication-adapter design](archive/mutdict-bottom-up-publication-adapter.md)
 - [archived adapter extraction plan](archive/2026-08-28-mutdict-publication-adapter-extraction.md)
-- [bottom-up builder spike](dict-bottom-up-hamt-builder.md)
+- [bottom-up builder spike](archive/dict-bottom-up-hamt-builder.md)
 - [`boot/bench/dict_spike.tw`](../../boot/bench/dict_spike.tw)
 - [`boot/bench/mutdict_reads_forks_spike.tw`](../../boot/bench/mutdict_reads_forks_spike.tw)
 
