@@ -192,6 +192,71 @@ test("twk run exits 0 for an in-bounds index (guard does not false-fire)", () =>
   }
 });
 
+test("twk build --strip-debug produces an artifact that traps without a source-mapped trace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "twk-strip-"));
+  try {
+    const rendererPath = buildRenderer(root);
+    const trapPath = join(root, "trap.tw");
+    writeFileSync(
+      trapPath,
+      "fn divide(a: Int, b: Int) Int {\n  a / b\n}\n\nx := divide(10, 0)\nprintln(\"never ${x}\")\n",
+    );
+    const outPath = join(root, "trap.wasm");
+
+    // Build with --strip-debug through the real CLI (should succeed).
+    execFileSync("node", [entry, "build", trapPath, "--strip-debug", "-o", outPath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
+    });
+
+    // `twk run` always recompiles from source (run.tw's run_file calls
+    // pipeline.compile_entry_path on its argument), so it cannot execute a
+    // pre-built artifact directly. Drive the stripped bytes through the
+    // runtime bridge instead, the same way the disk-backed-debug-info
+    // degrade test above does, and confirm the renderer falls all the way
+    // back: with no name/twinkle.debug sections at all it can't resolve
+    // frame names, let alone a source-mapped location.
+    const artifactBytes = new Uint8Array(readFileSync(outPath));
+    const rendererBytes = new Uint8Array(readFileSync(rendererPath));
+
+    const out = collector();
+    const err = collector();
+
+    const exitCode = await runWasmBytesAsync(artifactBytes, {
+      programPath: outPath,
+      guestArgs: [],
+      cwd: root,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdout: out.stream,
+      stderr: err.stream,
+      host: nodeHost,
+      imports: {},
+      childTrapHandler: async (trapInfo, childBytes) => {
+        const lib = await loadLibBytes(rendererBytes, {
+          programPath: "<renderer>.wasm",
+          guestArgs: [],
+          cwd: root,
+          env: { ...process.env, NO_COLOR: "1" },
+          stdout: { write: () => true },
+          stderr: { write: () => true },
+          host: nodeHost,
+          imports: {},
+        });
+        const rendered = lib.render_runtime_trace(childBytes, trapInfo.stack, trapInfo.message);
+        err.stream.write(rendered + "\n");
+        return 1;
+      },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.match(err.text, /no Twinkle stack trace available/);
+    assert.doesNotMatch(err.text, /trap\.tw:\d+:\d+/); // no source-mapped location
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Minimal writable stream collector for the direct-runtime test below: no
 // child process is spawned, so stdout/stderr are plain in-memory sinks rather
 // than pipes read back from a subprocess.

@@ -79,7 +79,7 @@ pub fn run_build_command(parsed: ParseResult) {
     if want_node or want_web {
       root := loader.find_project_root(path.dirname(file))
       name := path.stem(file)
-      if !build_lib_bundles(file, root, name, want_node, want_web) {
+      if !build_lib_bundles(file, root, name, want_node, want_web, parsed.has_flag("strip-debug")) {
         proc.exit(1)
       }
 
@@ -101,7 +101,7 @@ pub fn run_build_command(parsed: ParseResult) {
       },
     }
 
-    if !build_to(file, out, Dict.new(), lib_build).ok {
+    if !build_to(file, out, Dict.new(), lib_build, parsed.has_flag("strip-debug")).ok {
       proc.exit(1)
     }
 
@@ -149,11 +149,12 @@ fn run_build_lib_project(parsed: ParseResult, want_node: Bool, want_web: Bool) {
     proc.exit(1)
   }
 
+  strip_debug := parsed.has_flag("strip-debug")
   failed := false
 
   for entry in targets {
     ok := if want_node or want_web {
-      build_lib_bundles(entry.abs_path, ctx.root, entry.name, want_node, want_web)
+      build_lib_bundles(entry.abs_path, ctx.root, entry.name, want_node, want_web, strip_debug)
     } else {
       out := case output_opt {
         .Some(o) => case validate_output_ext(o) {
@@ -165,7 +166,7 @@ fn run_build_lib_project(parsed: ParseResult, want_node: Bool, want_web: Bool) {
         },
         .None => ctx.default_lib_output_path(entry),
       }
-      build_to(entry.abs_path, out, Dict.new(), true).ok
+      build_to(entry.abs_path, out, Dict.new(), true, strip_debug).ok
     }
 
     if !ok {
@@ -206,6 +207,7 @@ fn run_build_project(parsed: ParseResult) {
     proc.exit(1)
   }
 
+  strip_debug := parsed.has_flag("strip-debug")
   failed := false
   seen_diags: Dict<String, Bool> = Dict.new()
 
@@ -221,7 +223,7 @@ fn run_build_project(parsed: ParseResult) {
       .None => ctx.default_output_path(t),
     }
 
-    result := build_to(t.abs_path, out, seen_diags, false)
+    result := build_to(t.abs_path, out, seen_diags, false, strip_debug)
     seen_diags = result.seen_diags
 
     if !result.ok {
@@ -236,7 +238,13 @@ fn run_build_project(parsed: ParseResult) {
 
 // Compile `file` and write the artifact to `out`, choosing Wasm or WAT by the
 // output extension. Returns whether the build succeeded.
-fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>, lib_build: Bool) BuildResult {
+fn build_to(
+  file: String,
+  out: String,
+  seen_diags: Dict<String, Bool>,
+  lib_build: Bool,
+  strip_debug: Bool,
+) BuildResult {
   artifacts := case if lib_build {
     pipeline.compile_entry_path_lib(file)
   } else {
@@ -248,6 +256,7 @@ fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>, lib_build
       return .{ ok: false, seen_diags: result }
     },
   }
+  artifacts.strip_debug = strip_debug
   print_warnings(artifacts.warnings)
 
   parent := path.dirname(out)
@@ -284,7 +293,14 @@ fn compiler_version() String {
 // `<root>/target/<name>/`. Owned files are (re)written in place; the bundle
 // directories are never recreated wholesale, so a user's `npm install`
 // (node_modules/, lockfile) survives a rebuild.
-fn build_lib_bundles(file: String, root: String, name: String, want_node: Bool, want_web: Bool) Bool {
+fn build_lib_bundles(
+  file: String,
+  root: String,
+  name: String,
+  want_node: Bool,
+  want_web: Bool,
+  strip_debug: Bool,
+) Bool {
   artifacts := case pipeline.compile_entry_path_lib(file) {
     .Ok(result) => result,
     .Err(err) => {
@@ -292,6 +308,7 @@ fn build_lib_bundles(file: String, root: String, name: String, want_node: Bool, 
       return false
     },
   }
+  artifacts.strip_debug = strip_debug
   print_warnings(artifacts.warnings)
 
   bundle_root := context.bundle_dir(root, name)

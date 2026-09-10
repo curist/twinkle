@@ -84,6 +84,7 @@ build_cmd := command
     "web",
     "Build the library entry and emit a runnable Vite web bundle under target/<name>/web/",
   )
+  .add_flag("strip-debug", "Omit the name and twinkle.debug custom sections from the .wasm output")
 
 test_cmd := command
   .make("test", "Run configured project test entries")
