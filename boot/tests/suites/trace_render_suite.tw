@@ -164,6 +164,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "demangles mangled frame names in the backtrace",
+      fn() {
+        try ensure_root()
+        try write_fixture("${root}/${rel_path}", "a := 1\nb := a + 2\n")
+
+        frames: Vector<Frame> = [
+          frame_at(110, "user__$f350_cell"),
+          frame_at(100, "user__$f352__init"),
+        ]
+        out := trace.render_trace(sample(), frames, "boom", plain(), root)
+        try assert.str_contains(out, "at cell (${rel_path}:2:1)")
+        try assert.str_contains(out, "at <script> (${rel_path}:1:1)")
+        .Ok({})
+      },
+    )
+    .test(
       "drops unresolved (prelude/import) frames from the backtrace and caret",
       fn() {
         try ensure_root()
