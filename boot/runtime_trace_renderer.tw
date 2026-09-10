@@ -18,12 +18,10 @@ use lib.debug.stack.{parse_v8_stack}
 use lib.debug.trace
 use lib.source.registry
 use lib.source.render
-use lib.source.report.{RenderConfig, Report}
+use lib.source.report.{RenderConfig, Report, default_config}
 
-// ANSI color is Phase-4 polish; swap this for `report.default_config()` to
-// match the compiler's diagnostic coloring once the host wiring lands.
 fn render_config() RenderConfig {
-  .{ color: false }
+  default_config()
 }
 
 // Best-effort boundary: the module has no decodable `twinkle.debug` section, so

@@ -4,6 +4,7 @@ use @std.testing as runner
 
 use lib.debug.section
 use lib.debug.section.{DebugSection, FileEntry, FuncDebug}
+use lib.source.report
 use runtime_trace_renderer as renderer
 
 // ── Fixture helpers ─────────────────────────────────────────────────
@@ -144,6 +145,33 @@ fn deno_stack() String {
   lines.join("\n")
 }
 
+// Remove ANSI SGR escape sequences (`\e[...m`) so content assertions hold
+// whether or not color is enabled. Fixtures are ASCII, so per-byte reassembly
+// is exact.
+fn strip_ansi(s: String) String {
+  out := ""
+  in_escape := false
+
+  for ch in s {
+    c := ch.to_int()
+
+    if in_escape {
+      if c == 109 {
+        in_escape = false
+      }
+    } else if c == 27 {
+      in_escape = true
+    } else {
+      case String.from_char_code(c) {
+        .Some(x) => out = .concat(x),
+        .None => {},
+      }
+    }
+  }
+
+  out
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner
@@ -152,16 +180,17 @@ pub fn suite() runner.Suite {
       "renders a source-mapped trace from full module bytes and a captured stack",
       fn() {
         out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom", root)
-        try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "--> ${rel_path}:2:1")
-        try assert.str_contains(out, "b := a + 2")
-        try assert.str_contains(out, "^^^^^^^^^^")
+        stripped := strip_ansi(out)
+        try assert.str_contains(stripped, "error: boom")
+        try assert.str_contains(stripped, "--> ${rel_path}:2:1")
+        try assert.str_contains(stripped, "b := a + 2")
+        try assert.str_contains(stripped, "^^^^^^^^^^")
 
         // Both child frames appear in the backtrace, innermost first.
-        try assert.str_contains(out, "at user__deeper (${rel_path}:2:1)")
-        try assert.str_contains(out, "at user__main (${rel_path}:1:1)")
-        deeper_at := try out.index_of("user__deeper").ok_or("deeper missing")
-        main_at := try out.index_of("user__main").ok_or("main missing")
+        try assert.str_contains(stripped, "at user__deeper (${rel_path}:2:1)")
+        try assert.str_contains(stripped, "at user__main (${rel_path}:1:1)")
+        deeper_at := try stripped.index_of("user__deeper").ok_or("deeper missing")
+        main_at := try stripped.index_of("user__main").ok_or("main missing")
         try assert.is_true(deeper_at < main_at)
         .Ok({})
       },
@@ -174,12 +203,13 @@ pub fn suite() runner.Suite {
         // still resolve file:line:col from the embedded line/col (no disk
         // read needed for locations), while the snippet block is dropped.
         out := renderer.render_runtime_trace(missing_module_bytes(), deno_stack(), "boom", root)
-        try assert.str_contains(out, "error: boom")
-        try assert.is_false(out.contains("-->"))
-        try assert.is_false(out.contains("b := a + 2"))
-        try assert.str_contains(out, "at user__deeper (${missing_rel_path}:2:1)")
-        try assert.str_contains(out, "at user__main (${missing_rel_path}:1:1)")
-        try assert.str_contains(out, "source unavailable")
+        stripped := strip_ansi(out)
+        try assert.str_contains(stripped, "error: boom")
+        try assert.is_false(stripped.contains("-->"))
+        try assert.is_false(stripped.contains("b := a + 2"))
+        try assert.str_contains(stripped, "at user__deeper (${missing_rel_path}:2:1)")
+        try assert.str_contains(stripped, "at user__main (${missing_rel_path}:1:1)")
+        try assert.str_contains(stripped, "source unavailable")
         .Ok({})
       },
     )
@@ -189,10 +219,11 @@ pub fn suite() runner.Suite {
         // Proves the empty-root case never disk-reads, even for a path that
         // does exist under `root`.
         out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom", "")
-        try assert.str_contains(out, "error: boom")
-        try assert.is_false(out.contains("-->"))
-        try assert.str_contains(out, "at user__deeper (${rel_path}:2:1)")
-        try assert.str_contains(out, "source unavailable")
+        stripped := strip_ansi(out)
+        try assert.str_contains(stripped, "error: boom")
+        try assert.is_false(stripped.contains("-->"))
+        try assert.str_contains(stripped, "at user__deeper (${rel_path}:2:1)")
+        try assert.str_contains(stripped, "source unavailable")
         .Ok({})
       },
     )
@@ -214,8 +245,9 @@ pub fn suite() runner.Suite {
         // Bytes that are not a wasm module at all.
         garbage: Vector<Byte> = [b(1), b(2), b(3)]
         out := renderer.render_runtime_trace(garbage, deno_stack(), "boom", root)
-        try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "no Twinkle stack trace available")
+        stripped := strip_ansi(out)
+        try assert.str_contains(stripped, "error: boom")
+        try assert.str_contains(stripped, "no Twinkle stack trace available")
         .Ok({})
       },
     )
@@ -224,8 +256,22 @@ pub fn suite() runner.Suite {
       fn() {
         host_only := "Error: boom\n    at run (file:///host.js:20:3)"
         out := renderer.render_runtime_trace(module_bytes(), host_only, "boom", root)
-        try assert.str_contains(out, "error: boom")
-        try assert.str_contains(out, "no Twinkle stack trace available")
+        stripped := strip_ansi(out)
+        try assert.str_contains(stripped, "error: boom")
+        try assert.str_contains(stripped, "no Twinkle stack trace available")
+        .Ok({})
+      },
+    )
+    .test(
+      "colors output per default_config (NO_COLOR parity)",
+      fn() {
+        out := renderer.render_runtime_trace(module_bytes(), deno_stack(), "boom", root)
+
+        if report.default_config().color {
+          try assert.is_true(out.contains("\e["))
+        } else {
+          try assert.is_false(out.contains("\e["))
+        }
         .Ok({})
       },
     )
