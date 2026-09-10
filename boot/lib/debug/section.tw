@@ -90,20 +90,23 @@ fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
   result := 0
   shift := 0
   p := pos
+  n := bytes.len()
 
-  for true {
+  for p < n {
     byte := bytes[p].to_int()
     p = p + 1
     result = result | (byte & 0x7f) << shift
 
     if (byte & 0x80) == 0 {
-      break
+      return .{ value: result, pos: p }
     }
 
     shift = shift + 7
   }
 
-  .{ value: result, pos: p }
+  // Ran off the end without a terminating byte: signal failure with a position
+  // past the end, which callers detect as a corrupt/truncated section.
+  .{ value: 0, pos: n + 1 }
 }
 
 type StrRead = .{ value: String, pos: Int }
@@ -111,6 +114,14 @@ type StrRead = .{ value: String, pos: Int }
 fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
   lr := read_uleb(bytes, pos)
   len := lr.value
+  n := bytes.len()
+
+  // Refuse a length header that overruns the buffer rather than reading past the
+  // end (which would trap inside the renderer). Signal failure with pos past end.
+  if lr.pos > n or lr.pos + len > n {
+    return .{ value: "", pos: n + 1 }
+  }
+
   slice: Vector<Byte> = []
   i := 0
 
@@ -119,11 +130,11 @@ fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
     i = i + 1
   }
 
-  s := case String.from_utf8(slice) {
-    .Some(str) => str,
-    .None => error("debug.section: invalid utf8 in section"),
+  // Invalid UTF-8 in a corrupt section degrades to failure instead of trapping.
+  case String.from_utf8(slice) {
+    .Some(str) => .{ value: str, pos: lr.pos + len },
+    .None => .{ value: "", pos: n + 1 },
   }
-  .{ value: s, pos: lr.pos + len }
 }
 
 // ── Encode ──────────────────────────────────────────────────────────
@@ -164,23 +175,43 @@ pub fn encode(section: DebugSection) Vector<Byte> {
 // ── Decode ──────────────────────────────────────────────────────────
 // Returns .None when the payload version is not understood.
 pub fn decode(bytes: Vector<Byte>) DebugSection? {
-  if bytes.len() == 0 or bytes[0].to_int() != version {
+  n := bytes.len()
+
+  if n == 0 or bytes[0].to_int() != version {
     return .None
   }
 
+  // Any read that overruns the buffer sets its `pos` past the end (see
+  // `read_uleb`/`read_str`); a truncated or corrupt payload then degrades to
+  // `.None` rather than trapping inside the renderer or looping on a bogus
+  // count. The per-loop `pos > n` guard also bounds work to the input size.
   pos := 1
   fr := read_uleb(bytes, pos)
   file_count := fr.value
   pos = fr.pos
+
+  if pos > n {
+    return .None
+  }
+
   files: Vector<FileEntry> = []
   fi := 0
 
   for fi < file_count {
+    if pos > n {
+      return .None
+    }
+
     idr := read_uleb(bytes, pos)
     file_id := idr.value
     pos = idr.pos
     pr := read_str(bytes, pos)
     pos = pr.pos
+
+    if pos > n {
+      return .None
+    }
+
     files = .append(.{ file_id, path: pr.value })
     fi = fi + 1
   }
@@ -188,10 +219,19 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
   cr := read_uleb(bytes, pos)
   func_count := cr.value
   pos = cr.pos
+
+  if pos > n {
+    return .None
+  }
+
   funcs: Vector<FuncDebug> = []
   ci := 0
 
   for ci < func_count {
+    if pos > n {
+      return .None
+    }
+
     ir := read_uleb(bytes, pos)
     func_idx := ir.value
     pos = ir.pos
@@ -201,11 +241,20 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
     lr := read_uleb(bytes, pos)
     line_count := lr.value
     pos = lr.pos
+
+    if pos > n {
+      return .None
+    }
+
     lines: Vector<LineEntry> = []
     prev := 0
     li := 0
 
     for li < line_count {
+      if pos > n {
+        return .None
+      }
+
       dr := read_uleb(bytes, pos)
       offset := prev + dr.value
       pos = dr.pos
@@ -223,6 +272,11 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
       pos = elr.pos
       ecr := read_uleb(bytes, pos)
       pos = ecr.pos
+
+      if pos > n {
+        return .None
+      }
+
       lines = .append(
         .{
           offset,
@@ -271,6 +325,12 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
     lr := read_uleb(module_bytes, pos)
     content_start := lr.pos
     content_end := content_start + lr.value
+
+    // A section length that overruns the module is malformed; degrade to `.None`
+    // instead of reading past the end when copying the payload below.
+    if content_start > n or content_end > n {
+      return .None
+    }
 
     if id == 0 {
       nr := read_str(module_bytes, content_start)
