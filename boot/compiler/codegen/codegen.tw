@@ -506,11 +506,12 @@ pub fn codegen_wasm(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
   debug_files: Vector<DebugFile>,
+  strip_debug: Bool,
 ) Vector<Byte> {
   linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()
   t0 := date.now()
-  bytes := emit_linked_wasm(linked)
+  bytes := emit_linked_wasm(linked, strip_debug)
   t1 := date.now()
 
   if timed {
@@ -525,11 +526,12 @@ pub fn codegen_wasm_buffer(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
   debug_files: Vector<DebugFile>,
+  strip_debug: Bool,
 ) Buffer {
   linked := link_program(anf, env, builtins, debug_files)
   timed := timings_enabled()
   t0 := date.now()
-  bytes := emit_linked_wasm_buffer(linked)
+  bytes := emit_linked_wasm_buffer(linked, strip_debug)
   t1 := date.now()
 
   if timed {

@@ -138,6 +138,18 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "decode degrades to .None on a truncated payload instead of trapping",
+      fn() {
+        // A correct-version but truncated payload must decode to .None (a read
+        // runs past the end) rather than trapping inside the renderer instance.
+        full := sample().encode()
+        try assert.is_none(section.decode(full.slice(0, 1))) // version only, counts missing
+        try assert.is_none(section.decode(full.slice(0, 3)))
+        try assert.is_none(section.decode(full.slice(0, full.len() / 2)))
+        .Ok({})
+      },
+    )
+    .test(
       "producer: nested-manifest project stores relative debug paths",
       fn() {
         root := loader.find_project_root("boot")

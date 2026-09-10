@@ -171,6 +171,18 @@ test("twk run renders a rich out-of-bounds message for an indexed write", () => 
   assert.equal(stderr.includes("^^"), true);
 });
 
+test("twk run renders a rich out-of-bounds message for a string index", () => {
+  // String byte indexing routes through the same __panic_oob helper as Vector,
+  // so a strings-only program (no vector ops) still keeps the helper + its deps
+  // alive through DCE and reports `index N out of bounds for length L` where L
+  // is the string's byte length.
+  const { status, stderr } = runTrap('s := "hi"\nb := s[5]\nprintln(b.to_string())\n');
+  assert.notEqual(status, 0);
+  assert.match(stderr, /index 5 out of bounds for length 2/);
+  assert.match(stderr, /-->[^\n]*trap\.tw:2:/);
+  assert.equal(stderr.includes("^^"), true);
+});
+
 test("twk run catches a negative index via the unsigned bounds guard", () => {
   // A negative index arrives as a large unsigned i32; the single I32GeU compare
   // catches it, and the raw index renders as `-1` (sign-extended in __panic_oob).
@@ -187,6 +199,71 @@ test("twk run exits 0 for an in-bounds index (guard does not false-fire)", () =>
     writeFileSync(okPath, 'xs := [10, 20, 30]\nprintln(xs[1])\n');
     const stdout = execFileSync("node", [entry, "run", okPath], { encoding: "utf8" });
     assert.match(stdout, /20/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("twk build --strip-debug produces an artifact that traps without a source-mapped trace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "twk-strip-"));
+  try {
+    const rendererPath = buildRenderer(root);
+    const trapPath = join(root, "trap.tw");
+    writeFileSync(
+      trapPath,
+      "fn divide(a: Int, b: Int) Int {\n  a / b\n}\n\nx := divide(10, 0)\nprintln(\"never ${x}\")\n",
+    );
+    const outPath = join(root, "trap.wasm");
+
+    // Build with --strip-debug through the real CLI (should succeed).
+    execFileSync("node", [entry, "build", trapPath, "--strip-debug", "-o", outPath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RENDERER_WASM: rendererPath, NO_COLOR: "1" },
+    });
+
+    // `twk run` always recompiles from source (run.tw's run_file calls
+    // pipeline.compile_entry_path on its argument), so it cannot execute a
+    // pre-built artifact directly. Drive the stripped bytes through the
+    // runtime bridge instead, the same way the disk-backed-debug-info
+    // degrade test above does, and confirm the renderer falls all the way
+    // back: with no name/twinkle.debug sections at all it can't resolve
+    // frame names, let alone a source-mapped location.
+    const artifactBytes = new Uint8Array(readFileSync(outPath));
+    const rendererBytes = new Uint8Array(readFileSync(rendererPath));
+
+    const out = collector();
+    const err = collector();
+
+    const exitCode = await runWasmBytesAsync(artifactBytes, {
+      programPath: outPath,
+      guestArgs: [],
+      cwd: root,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdout: out.stream,
+      stderr: err.stream,
+      host: nodeHost,
+      imports: {},
+      childTrapHandler: async (trapInfo, childBytes) => {
+        const lib = await loadLibBytes(rendererBytes, {
+          programPath: "<renderer>.wasm",
+          guestArgs: [],
+          cwd: root,
+          env: { ...process.env, NO_COLOR: "1" },
+          stdout: { write: () => true },
+          stderr: { write: () => true },
+          host: nodeHost,
+          imports: {},
+        });
+        const rendered = lib.render_runtime_trace(childBytes, trapInfo.stack, trapInfo.message);
+        err.stream.write(rendered + "\n");
+        return 1;
+      },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.match(err.text, /no Twinkle stack trace available/);
+    assert.doesNotMatch(err.text, /trap\.tw:\d+:\d+/); // no source-mapped location
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

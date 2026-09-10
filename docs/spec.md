@@ -246,6 +246,14 @@ try expr
 Unrecoverable errors trap and cannot be caught: out-of-bounds access, division by
 zero, and explicit `error("msg")`.
 
+On `twk run`, an unrecoverable trap prints a source-mapped trace: a severity
+headline with the trap message, the `file:line:col` of the failing expression,
+a source snippet with a caret, and a backtrace of readable frame names — colored
+like compile diagnostics (and honoring `NO_COLOR`). Out-of-bounds reports
+`index N out of bounds for length L`. `twk build --strip-debug` omits the debug
+sections, so a stripped artifact reports only the trap message with no
+source-mapped trace.
+
 `error(...)` and `@std.proc`'s `exit(...)` have return type `Never` — the type of
 expressions that never complete normally. `Never` has no values and is only ever a
 return type; a `Never`-typed expression contributes no type to a surrounding

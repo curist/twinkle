@@ -64,6 +64,14 @@ fn primary_label(resolved: Vector<ResolvedFrame>) SpanLabel? {
   .None
 }
 
+/// The headline-only degradation shared by the trap renderers: `head` plus the
+/// "no stack trace" note. Used when no Twinkle frame resolves (here) or the
+/// module carries no debug section (`runtime_trace_renderer`), so the two paths
+/// can't drift.
+pub fn no_trace_note(head: String) String {
+  "${head}\n  (no Twinkle stack trace available)"
+}
+
 fn backtrace_lines(resolved: Vector<ResolvedFrame>) Vector<String> {
   out: Vector<String> = []
 
@@ -127,7 +135,7 @@ pub fn render_trace(
   }
 
   if bt.len() == 0 {
-    "${head}\n  (no Twinkle stack trace available)"
+    no_trace_note(head)
   } else if snippet_ok {
     "${head}\n\n${bt.join("\n")}"
   } else {

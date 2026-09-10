@@ -150,6 +150,7 @@ use .suites.stdlib_testing_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.string_literal_suite
+use .suites.strip_debug_suite
 use .suites.symbolicate_suite
 use .suites.tail_match_result_typing_suite
 use .suites.task_suite
@@ -265,6 +266,7 @@ runner.run_all([
   symbolicate_suite.suite(),
   trace_render_suite.suite(),
   runtime_trace_renderer_suite.suite(),
+  strip_debug_suite.suite(),
   diag_render_suite.suite(),
   file_identity_suite.suite(),
   fix_suite.suite(),

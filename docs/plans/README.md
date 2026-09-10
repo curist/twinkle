@@ -53,7 +53,6 @@ throughput.
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | Rebinding-ceremony fixers | Skeleton: three `twk lint`/`fix` rules from manual "tidy up" rewrites — named-ctor to anonymous `.{}` (A), numbered-accumulator rebind (B), full-record reconstruction to field rebind (C). A landed as `redundant-record-prefix` (three anchors: annotated `let`, declared return, record-field value; call-argument anchoring deferred from v1), applied across boot (2026-08-06, re-applied 2026-08-07). C's return-position variant landed via `record-copy-helper` (2026-08-06); B and C's let-binding/nested/block-expr variants remain | Planned (skeleton; A done, C partial) | [lint-rebinding-fixers.md](lint-rebinding-fixers.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
-| Runtime stack traces | Source-mapped trap reporting: catch runtime traps (all kinds) and render a Twinkle stack trace with `file:line:col` + snippet & caret, reusing the compile-diagnostic renderer. Approach A — `name` + `twinkle.debug` custom sections, host symbolication in `twk run`. `twk run`/Deno first. Phases 0–2 done (end-to-end for error/div0/OOB). | In Progress | [runtime-stack-traces.md](runtime-stack-traces.md) |
 
 ### Active cross-cutting plans
 

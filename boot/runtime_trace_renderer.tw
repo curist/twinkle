@@ -1,11 +1,11 @@
 //! Top-level runtime trap-trace renderer (the eventual `--lib` module).
 //!
 //! `render_runtime_trace` is the single entry point the host calls at the
-//! `run_wasm` boundary after a child module traps. It is pure in its three
-//! arguments — the child module's own bytes, the V8/Deno `.stack` string, and
-//! the trap message — so it needs neither the compiler's ephemeral state nor
-//! the suspended CLI instance: it runs in a dedicated renderer instance loaded
-//! beside `boot.wasm`.
+//! `run_wasm` boundary after a child module traps. It is pure in its four
+//! arguments — the child module's own bytes, the V8/Deno `.stack` string, the
+//! trap message, and the `source_root` for reading source snippets — so it
+//! needs neither the compiler's ephemeral state nor the suspended CLI instance:
+//! it runs in a dedicated renderer instance loaded beside `boot.wasm`.
 //!
 //! It decodes the embedded `twinkle.debug` section from the module bytes,
 //! parses the stack into the child's Wasm frames, and renders the source-mapped
@@ -30,7 +30,7 @@ fn render_config() RenderConfig {
 fn no_debug_fallback(message: String, config: RenderConfig) String {
   report: Report = .{ severity: .Error, title: message, labels: [], help_lines: [] }
   head := render.render(report, registry.empty(), config)
-  "${head}\n  (no Twinkle stack trace available)"
+  trace.no_trace_note(head)
 }
 
 /// Render a source-mapped trap trace for a child module that just trapped.

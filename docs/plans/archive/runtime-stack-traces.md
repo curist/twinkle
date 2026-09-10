@@ -8,8 +8,9 @@ backtrace point at the innermost **user** frame, not the prelude shim);
 Phase 4.2 (name demangling — `user__$fN_` symbols rendered as readable
 labels, `<script>`/`<closure>` for the top-level body and lambdas, mono
 suffixes stripped) and Phase 4.4 (ANSI color parity via `report.default_config()`)
-complete.
-Remaining: Phase 4.5 (`twk build --strip-debug`) and Phase 4.6 (docs).
+complete. Phase 4.5 (`twk build --strip-debug`) and Phase 4.6 (docs) complete —
+the feature is fully done.
+Remaining: none — feature complete.
 Date: 2026-09-05 (updated 2026-09-10)
 
 > **Format superseded (2026-09-07):** the `twinkle.debug` section described below
@@ -598,13 +599,15 @@ still source-mapped by Phase 4.1; a guard would add a compare on every division
 future option, not part of this phase.
 
 ### Phase 4 — Polish
-- Trap-kind headlines and any kind-specific hints; snippet+caret for the
+- **[DONE]** Trap-kind headlines and any kind-specific hints; snippet+caret for the
   innermost frame; ANSI parity with compile diagnostics.
-- `twk build --strip-debug`.
-- Docs: update `docs/spec.md` §6 (traps now report a source-mapped trace),
-  `docs/internals/host-abi.md` (`run_wasm`-boundary trap capture +
-  `render_runtime_trace` export),
-  and `docs/API.md` if `rt.panic` surfaces.
+- **[DONE]** `twk build --strip-debug` — gates the `name`/`twinkle.debug`
+  sections off; default-off, wired through `PipelineArtifacts`.
+- **[DONE]** Docs: `docs/spec.md` §6 (traps now report a source-mapped trace,
+  `--strip-debug` note), `docs/internals/host-abi.md` (`run_wasm` 3-arg
+  signature + `render_runtime_trace`-boundary subsection), and `docs/API.md`
+  (trap-trace note at the `error`/indexing surface; `rt.panic` intentionally
+  not mentioned, it's internal).
 
 ### Out of MVP scope (future)
 Inline-frame recovery for tail-call collapse; Node + browser symbolication;

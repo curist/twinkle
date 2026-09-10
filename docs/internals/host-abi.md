@@ -162,7 +162,11 @@ shim when the guest exports none).
 | `twinkle_runtime.cwd` | `() → (ref $String)` | Current working directory |
 | `twinkle_runtime.exit` | `(i64) → ()` | Exit process with given code (declared `Never`; must not return) |
 | `twinkle_runtime.now` | `() → (f64)` | Milliseconds since the runtime time origin |
-| `twinkle_runtime.run_wasm` | `(ref null $Array, ref null $Array) → (i64)` | Run a child Wasm module with argv; returns its exit code |
+| `twinkle_runtime.run_wasm` | `(ref null $Array, ref null $Array, ref null $Array) → (i64)` | Run a child Wasm module (bytes, argv, source_root); returns its exit code |
+
+The third arg, `source_root`, is the absolute directory that the child's
+project-relative `twinkle.debug` paths are safe-joined against when the
+renderer reads a source snippet (empty string disables snippet reads).
 
 ### Stdin / stdout (byte streams)
 
@@ -184,6 +188,17 @@ bridged (see the `hasJspi` block in `runtime.mjs`). Under a synchronous runtime,
 | Import | Signature | Description |
 |---|---|---|
 | `twinkle_runtime.sleep` | `(i64) → ()` | Suspend for at least `ms` milliseconds (JSPI only) |
+
+### Runtime trap traces
+
+When a module launched via `run_wasm` traps, the host captures the trap message
+and the V8 `.stack` string and renders a source-mapped trace via the renderer
+library's `render_runtime_trace(bytes, stack, message, source_root)` export — a
+dedicated library instance loaded beside `boot.wasm`, so rendering never
+re-enters the suspended child. The trace is printed once to stderr and the run
+exits nonzero. When no renderer is available (embeddable/web), the trap
+re-throws unchanged. `twk build --strip-debug` drops the `name`/`twinkle.debug`
+sections, so a stripped module renders only the trap headline.
 
 ---
 

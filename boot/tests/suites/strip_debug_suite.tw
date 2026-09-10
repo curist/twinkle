@@ -1,0 +1,128 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.pipeline
+use lib.debug.section
+
+// True if `bytes` is a valid wasm module (magic `\0asm` + version 1) that
+// contains an id-0 custom section whose name equals `want`. Mirrors the
+// section-framing walk in `section.decode_module`, but matches any custom
+// section name (not just "twinkle.debug").
+fn has_custom_section(bytes: Vector<Byte>, want: String) Bool {
+  // Minimal header check: 8-byte header, then a sequence of (id, uleb(len), payload).
+  if bytes.len() < 8 {
+    return false
+  }
+
+  want_bytes := want.utf8_bytes()
+  i := 8
+
+  for i < bytes.len() {
+    id := bytes[i].to_int()
+    i = i + 1
+
+    // Decode uleb section length.
+    len := 0
+    shift := 0
+
+    for i < bytes.len() {
+      byte := bytes[i].to_int()
+      i = i + 1
+      len = len | (byte & 0x7f) << shift
+      shift = shift + 7
+
+      if (byte & 0x80) == 0 {
+        break
+      }
+    }
+
+    payload_start := i
+    payload_end := i + len
+
+    if id == 0 {
+      // Custom section: payload begins with uleb name length + name bytes.
+      j := payload_start
+      name_len := 0
+      nshift := 0
+
+      for j < bytes.len() {
+        byte := bytes[j].to_int()
+        j = j + 1
+        name_len = name_len | (byte & 0x7f) << nshift
+        nshift = nshift + 7
+
+        if (byte & 0x80) == 0 {
+          break
+        }
+      }
+
+      if name_len == want_bytes.len() {
+        matches := true
+        k := 0
+
+        for k < name_len {
+          if bytes[j + k].to_int() != want_bytes[k].to_int() {
+            matches = false
+            break
+          }
+
+          k = k + 1
+        }
+
+        if matches {
+          return true
+        }
+      }
+    }
+
+    i = payload_end
+  }
+
+  false
+}
+
+fn emit(src: String, strip: Bool) Vector<Byte> {
+  artifacts := case pipeline.compile_source(src) {
+    .Ok(a) => a,
+    .Err(_) => error("strip_debug_suite: compile failed"),
+  }
+  artifacts.strip_debug = strip
+  pipeline.emit_wasm(artifacts)
+}
+
+pub fn suite() runner.Suite {
+  src: String = "fn cell(xs: Vector<Int>, i: Int) Int {\n  xs[i]\n}\n\nprintln(cell([1, 2, 3], 0))\n"
+
+  runner
+    .suite("strip debug")
+    .test(
+      "default build keeps the name and twinkle.debug sections",
+      fn() {
+        bytes := emit(src, false)
+        try assert.is_true(has_custom_section(bytes, "name"))
+        try assert.is_true(has_custom_section(bytes, "twinkle.debug"))
+        try assert.is_true(case section.decode_module(bytes) {
+          .Some(_) => true,
+          .None => false,
+        })
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_debug omits the name and twinkle.debug sections but stays valid wasm",
+      fn() {
+        bytes := emit(src, true)
+        try assert.is_false(has_custom_section(bytes, "name"))
+        try assert.is_false(has_custom_section(bytes, "twinkle.debug"))
+        try assert.is_true(case section.decode_module(bytes) {
+          .Some(_) => false,
+          .None => true,
+        })
+
+        // A non-debug custom section (twinkle.externs/exports) or a core
+        // section still present proves we emitted a real module, not nothing.
+        try assert.is_true(bytes.len() > 8)
+        .Ok({})
+      },
+    )
+}
