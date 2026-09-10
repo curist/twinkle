@@ -178,6 +178,9 @@ Because these functions are generic over `Stringify`, pass values directly:
 `twk lint --fix-redundant-print-stringify` rewrites them when the whole argument
 is only stringification.
 
+Under `twk run`, an out-of-bounds access, division by zero, or `error(msg)`
+traps with a source-mapped trace (headline + snippet + backtrace); see spec §6.
+
 ## Type Conversions
 
 | Function | Signature | Description |
@@ -324,7 +327,8 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
 
-**Indexing syntax:** `v[i]` — unsafe, traps on out-of-bounds.
+**Indexing syntax:** `v[i]` — unsafe, traps on out-of-bounds (see the
+source-mapped trap trace note under [I/O](#io)).
 
 **Index assignment:** `v[i] = x` — sets element at index `i`.
 
