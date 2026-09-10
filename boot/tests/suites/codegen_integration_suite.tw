@@ -353,6 +353,10 @@ fn test_checked_narrowing_string_index() Result<Void, String> {
     "checked narrowing string index",
   )
   try assert.str_contains(wat, "i64.const 2147483647")
+
+  // Out-of-bounds string indexing routes through the rich __panic_oob helper
+  // (like Vector), not a bare `unreachable`.
+  try assert.str_contains(wat, "rt_arr____panic_oob")
   .Ok({})
 }
 

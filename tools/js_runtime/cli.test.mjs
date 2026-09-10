@@ -171,6 +171,18 @@ test("twk run renders a rich out-of-bounds message for an indexed write", () => 
   assert.equal(stderr.includes("^^"), true);
 });
 
+test("twk run renders a rich out-of-bounds message for a string index", () => {
+  // String byte indexing routes through the same __panic_oob helper as Vector,
+  // so a strings-only program (no vector ops) still keeps the helper + its deps
+  // alive through DCE and reports `index N out of bounds for length L` where L
+  // is the string's byte length.
+  const { status, stderr } = runTrap('s := "hi"\nb := s[5]\nprintln(b.to_string())\n');
+  assert.notEqual(status, 0);
+  assert.match(stderr, /index 5 out of bounds for length 2/);
+  assert.match(stderr, /-->[^\n]*trap\.tw:2:/);
+  assert.equal(stderr.includes("^^"), true);
+});
+
 test("twk run catches a negative index via the unsigned bounds guard", () => {
   // A negative index arrives as a large unsigned i32; the single I32GeU compare
   // catches it, and the raw index renders as `-1` (sign-extended in __panic_oob).
