@@ -4,9 +4,13 @@ Status: Phases 0–3 complete (end-to-end for `error` and OOB with rich messages
 disk-backed debug info Milestones 1 & 2 complete (source-less v3 section with
 portable project-relative / `@`-logical paths, snippets read from disk under a
 render-time `source_root`); Phase 4.1 complete (primary snippet/caret and
-backtrace point at the innermost **user** frame, not the prelude shim).
-Remaining: Phase 4.2–4.6 (name demangling, ANSI parity, `twk build --strip-debug`, docs).
-Date: 2026-09-05 (updated 2026-09-09)
+backtrace point at the innermost **user** frame, not the prelude shim);
+Phase 4.2 (name demangling — `user__$fN_` symbols rendered as readable
+labels, `<script>`/`<closure>` for the top-level body and lambdas, mono
+suffixes stripped) and Phase 4.4 (ANSI color parity via `report.default_config()`)
+complete.
+Remaining: Phase 4.5 (`twk build --strip-debug`) and Phase 4.6 (docs).
+Date: 2026-09-05 (updated 2026-09-10)
 
 > **Format superseded (2026-09-07):** the `twinkle.debug` section described below
 > embeds source **text** inline (Component 1's file table, the "self-contained
