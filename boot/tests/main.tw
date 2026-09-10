@@ -44,6 +44,7 @@ use .suites.core_ir_suite
 use .suites.dce_funcs_suite
 use .suites.debug_section_suite
 use .suites.defer_suite
+use .suites.demangle_suite
 use .suites.dependency_graph_suite
 use .suites.diag_render_suite
 use .suites.diag_suite
@@ -311,6 +312,7 @@ runner.run_all([
   typed_record_fields_suite.suite(),
   receiver_shorthand_suite.suite(),
   defer_suite.suite(),
+  demangle_suite.suite(),
   first_class_method_suite.suite(),
   byte_suite.suite(),
   char_literal_suite.suite(),
