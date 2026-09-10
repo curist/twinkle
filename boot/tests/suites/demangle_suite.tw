@@ -90,4 +90,25 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "strips a composite type-key suffix (Vec_Int)",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f9_first__Vec_Int"), "first")
+        .Ok({})
+      },
+    )
+    .test(
+      "strips an id-shaped type-key suffix (T7)",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f9_wrap__T7_Int"), "wrap")
+        .Ok({})
+      },
+    )
+    .test(
+      "keeps a user __Word that is not a type key (parse__Http)",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f9_parse__Http"), "parse__Http")
+        .Ok({})
+      },
+    )
 }

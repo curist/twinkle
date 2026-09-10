@@ -30,7 +30,7 @@ fn render_config() RenderConfig {
 fn no_debug_fallback(message: String, config: RenderConfig) String {
   report: Report = .{ severity: .Error, title: message, labels: [], help_lines: [] }
   head := render.render(report, registry.empty(), config)
-  "${head}\n  (no Twinkle stack trace available)"
+  trace.no_trace_note(head)
 }
 
 /// Render a source-mapped trap trace for a child module that just trapped.

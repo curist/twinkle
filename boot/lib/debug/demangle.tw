@@ -13,22 +13,51 @@ fn is_digit(c: Int) Bool {
   c >= 48 and c <= 57
 }
 
-fn is_upper(c: Int) Bool {
-  c >= 65 and c <= 90
+// True when `seg` begins a monomorphization type key as produced by
+// `monomorphize.tw`'s `type_key`: a primitive (`Int`, `Float`, …) at a token
+// boundary, a composite prefix (`Vec_`, `Dict_`, `Opt_`, `Res_`, `Fn_`), or an
+// id-shaped key (`T<n>`, `M<n>`, `Ext<n>`). Emitted functions are fully
+// monomorphized, so a real suffix always starts with one of these — letting a
+// user identifier that merely contains `__Upper` (e.g. `parse__Http`) survive.
+fn is_mono_key_start(seg: String) Bool {
+  if seg.starts_with("Vec_")
+    or seg.starts_with("Dict_")
+    or seg.starts_with("Opt_")
+    or seg.starts_with("Res_")
+    or seg.starts_with("Fn_") {
+    return true
+  }
+
+  for name in ["Int", "Float", "Bool", "Byte", "String", "Void", "Anyref", "Never", "Error"] {
+    if seg == name or seg.starts_with("${name}_") {
+      return true
+    }
+  }
+
+  bytes := seg.utf8_bytes()
+
+  // `T<digit>` / `M<digit>` (user-type and metavar ids).
+  if bytes.len() >= 2
+    and (bytes[0].to_int() == 84 or bytes[0].to_int() == 77) and is_digit(bytes[1].to_int()) {
+    return true
+  }
+
+  // `Ext<digit>` (extern type ids).
+  seg.starts_with("Ext") and bytes.len() >= 4 and is_digit(bytes[3].to_int())
 }
 
 // Strip a monomorphization suffix from a base name. Suffixes come from
-// `monomorphize.tw` type keys and are always PascalCase-leading (`Int`,
-// `Vec_Int`, `T7_Int`, `Fn_..`, …), joined onto the base with `__`. User names
-// are snake_case, so we cut at the first `__` immediately followed by an
-// uppercase ASCII letter; a `__` followed by lowercase (`my__thing`) is part of
-// the name and left intact.
+// `monomorphize.tw` type keys, joined onto the base with `__` (`sort_by__Int`,
+// `first__Vec_Int`, `g__T7_Int`). We cut at the first `__` that begins a
+// recognized type key; a `__` inside the name itself (`my__thing`,
+// `parse__Http`) is left intact.
 fn strip_mono_suffix(tail: String) String {
   bytes := tail.utf8_bytes()
   i := 0
 
   for i + 2 < bytes.len() {
-    if bytes[i].to_int() == 95 and bytes[i + 1].to_int() == 95 and is_upper(bytes[i + 2].to_int()) {
+    if bytes[i].to_int() == 95
+      and bytes[i + 1].to_int() == 95 and is_mono_key_start(tail.slice(i + 2, tail.len())) {
       return tail.slice(0, i)
     }
 
