@@ -147,7 +147,8 @@ fn deno_stack() String {
 
 // Remove ANSI SGR escape sequences (`\e[...m`) so content assertions hold
 // whether or not color is enabled. Fixtures are ASCII, so per-byte reassembly
-// is exact.
+// is exact. Assumes m-terminated SGR sequences (the only escapes render.tw
+// emits); a non-SGR escape would swallow the rest of the string.
 fn strip_ansi(s: String) String {
   out := ""
   in_escape := false

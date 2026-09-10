@@ -62,4 +62,32 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "leaves an empty string unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name(""), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a $f marker with no digits unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$foo"), "user__$foo")
+        .Ok({})
+      },
+    )
+    .test(
+      "leaves a $f marker with no separator unchanged",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f12"), "user__$f12")
+        .Ok({})
+      },
+    )
+    .test(
+      "does not treat a user function named init as the top-level body",
+      fn() {
+        try assert.equal(demangle.demangle_frame_name("user__$f9_init"), "init")
+        .Ok({})
+      },
+    )
 }
