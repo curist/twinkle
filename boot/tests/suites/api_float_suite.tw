@@ -1,0 +1,55 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("api Float")
+    .test(
+      "trigonometric methods bridge to the host",
+      fn() {
+        try assert.equal(0.0.sin(), 0.0)
+        try assert.equal(0.0.cos(), 1.0)
+        try assert.equal(0.0.tan(), 0.0)
+        try assert.equal(0.0.asin(), 0.0)
+        try assert.equal(1.0.acos(), 0.0)
+        try assert.equal(0.0.atan(), 0.0)
+        try assert.equal(0.0.atan2(1.0), 0.0)
+        .Ok({})
+      },
+    )
+    .test(
+      "hyperbolic methods bridge to the host",
+      fn() {
+        try assert.equal(0.0.sinh(), 0.0)
+        try assert.equal(0.0.cosh(), 1.0)
+        try assert.equal(0.0.tanh(), 0.0)
+        try assert.equal(0.0.asinh(), 0.0)
+        try assert.equal(1.0.acosh(), 0.0)
+        try assert.equal(0.0.atanh(), 0.0)
+        .Ok({})
+      },
+    )
+    .test(
+      "exponential and logarithmic methods",
+      fn() {
+        try assert.equal(0.0.exp(), 1.0)
+        try assert.equal(0.0.expm1(), 0.0)
+        try assert.equal(1.0.log(), 0.0)
+        try assert.equal(0.0.log1p(), 0.0)
+        try assert.equal(8.0.log2(), 3.0)
+        try assert.equal(100.0.log10(), 2.0)
+        .Ok({})
+      },
+    )
+    .test(
+      "misc float methods",
+      fn() {
+        try assert.equal(27.0.cbrt(), 3.0)
+        try assert.equal(3.0.hypot(4.0), 5.0)
+        try assert.equal(2.0.pow(8.0), 256.0)
+        try assert.equal((-2.5).sign(), -1.0)
+        try assert.equal(1.0.fround(), 1.0)
+        .Ok({})
+      },
+    )
+}

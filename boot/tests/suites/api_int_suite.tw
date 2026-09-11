@@ -55,4 +55,82 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "abs returns magnitude",
+      fn() {
+        try assert.equal((-7).abs(), 7)
+        try assert.equal(7.abs(), 7)
+        try assert.equal(0.abs(), 0)
+        magnitude := Int.abs
+        try assert.equal(magnitude(-3), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "is_even and is_odd classify parity",
+      fn() {
+        try assert.equal(4.is_even(), true)
+        try assert.equal(3.is_even(), false)
+        try assert.equal((-4).is_even(), true)
+        try assert.equal(3.is_odd(), true)
+        try assert.equal((-3).is_odd(), true)
+        try assert.equal(4.is_odd(), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "is_zero, is_positive, and is_negative classify sign",
+      fn() {
+        try assert.equal(0.is_zero(), true)
+        try assert.equal(1.is_zero(), false)
+        try assert.equal(1.is_positive(), true)
+        try assert.equal(0.is_positive(), false)
+        try assert.equal((-1).is_positive(), false)
+        try assert.equal((-1).is_negative(), true)
+        try assert.equal(0.is_negative(), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "sign reports direction",
+      fn() {
+        try assert.equal((-3).sign(), -1)
+        try assert.equal(0.sign(), 0)
+        try assert.equal(9.sign(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "gcd and lcm",
+      fn() {
+        try assert.equal(48.gcd(36), 12)
+        try assert.equal((-48).gcd(36), 12)
+        try assert.equal(0.gcd(0), 0)
+        try assert.equal(13.gcd(0), 13)
+        try assert.equal(4.lcm(6), 12)
+        try assert.equal(0.lcm(5), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "pow by squaring",
+      fn() {
+        try assert.equal(2.pow(10), 1024)
+        try assert.equal(3.pow(0), 1)
+        try assert.equal(0.pow(0), 1)
+        try assert.equal(5.pow(3), 125)
+        .Ok({})
+      },
+    )
+    .test(
+      "isqrt floors the integer root",
+      fn() {
+        try assert.equal(0.isqrt(), 0)
+        try assert.equal(1.isqrt(), 1)
+        try assert.equal(99.isqrt(), 9)
+        try assert.equal(100.isqrt(), 10)
+        try assert.equal(101.isqrt(), 10)
+        .Ok({})
+      },
+    )
 }

@@ -680,3 +680,66 @@ pub fn trim(s: String) String {
 
   s.slice(start, end + 1)
 }
+
+/// Concatenate `n` copies of the string. `n <= 0` yields the empty string.
+pub fn repeat(s: String, n: Int) String {
+  if n <= 0 {
+    return ""
+  }
+
+  Vector.make(n, s).join("")
+}
+
+/// Left-pad with `fill` until the string is `width` characters wide. `fill`
+/// should be a single character; the string is returned unchanged when it is
+/// already at least `width` characters wide or when `fill` is empty.
+pub fn pad_start(s: String, width: Int, fill: String) String {
+  deficit := width - s.char_len()
+
+  if deficit <= 0 or fill.is_empty() {
+    return s
+  }
+
+  fill.repeat(deficit).concat(s)
+}
+
+/// Right-pad with `fill` until the string is `width` characters wide. `fill`
+/// should be a single character; the string is returned unchanged when it is
+/// already at least `width` characters wide or when `fill` is empty.
+pub fn pad_end(s: String, width: Int, fill: String) String {
+  deficit := width - s.char_len()
+
+  if deficit <= 0 or fill.is_empty() {
+    return s
+  }
+
+  s.concat(fill.repeat(deficit))
+}
+
+/// Uppercase ASCII letters (a–z → A–Z). All other bytes, including non-ASCII
+/// UTF-8, are left unchanged.
+pub fn to_ascii_upper(s: String) String {
+  bytes := collect b in s.utf8_bytes() {
+    if b.is_lower() {
+      Byte.from_int(Byte.to_int(b) - 32).unwrap()
+    } else {
+      b
+    }
+  }
+
+  String.from_utf8(bytes).unwrap()
+}
+
+/// Lowercase ASCII letters (A–Z → a–z). All other bytes, including non-ASCII
+/// UTF-8, are left unchanged.
+pub fn to_ascii_lower(s: String) String {
+  bytes := collect b in s.utf8_bytes() {
+    if b.is_upper() {
+      Byte.from_int(Byte.to_int(b) + 32).unwrap()
+    } else {
+      b
+    }
+  }
+
+  String.from_utf8(bytes).unwrap()
+}

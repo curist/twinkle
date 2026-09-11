@@ -43,6 +43,126 @@ pub fn dec(n: Int) Int {
   n - 1
 }
 
+/// Absolute value of `n`. `abs(min_i64)` overflows, matching two's-complement.
+pub fn abs(n: Int) Int {
+  if n < 0 {
+    -n
+  } else {
+    n
+  }
+}
+
+/// True when `n` is even (divisible by two).
+pub fn is_even(n: Int) Bool {
+  n % 2 == 0
+}
+
+/// True when `n` is odd.
+pub fn is_odd(n: Int) Bool {
+  !n.is_even()
+}
+
+/// True when `n` is zero.
+pub fn is_zero(n: Int) Bool {
+  n == 0
+}
+
+/// True when `n` is strictly greater than zero.
+pub fn is_positive(n: Int) Bool {
+  n > 0
+}
+
+/// True when `n` is strictly less than zero.
+pub fn is_negative(n: Int) Bool {
+  n < 0
+}
+
+/// Sign of `n`: -1 when negative, 0 when zero, 1 when positive.
+pub fn sign(n: Int) Int {
+  cond {
+    n < 0 => -1,
+    n > 0 => 1,
+    _ => 0,
+  }
+}
+
+/// Greatest common divisor of `a` and `b` (Euclid's algorithm). Result is
+/// non-negative; `gcd(0, 0)` is 0.
+pub fn gcd(a: Int, b: Int) Int {
+  x := a.abs()
+  y := b.abs()
+
+  for y != 0 {
+    t := y
+    y = x % y
+    x = t
+  }
+
+  x
+}
+
+/// Least common multiple of `a` and `b`. Returns 0 when either is 0.
+pub fn lcm(a: Int, b: Int) Int {
+  if a == 0 or b == 0 {
+    return 0
+  }
+
+  (a / gcd(a, b) * b).abs()
+}
+
+/// Integer exponentiation by squaring. Traps on a negative exponent (the result
+/// would not be an integer). `pow(0, 0)` is 1.
+pub fn pow(base: Int, exp: Int) Int {
+  if exp < 0 {
+    error("Int.pow: negative exponent")
+  }
+
+  result := 1
+  b := base
+  e := exp
+
+  for e > 0 {
+    if e % 2 == 1 {
+      result = result * b
+    }
+
+    b = b * b
+    e = e / 2
+  }
+
+  result
+}
+
+/// Floor of the square root of a non-negative integer (integer square root).
+/// Traps when `n < 0`.
+pub fn isqrt(n: Int) Int {
+  if n < 0 {
+    error("Int.isqrt: negative input")
+  }
+
+  if n < 2 {
+    return n
+  }
+
+  // Binary search for the largest r with r*r <= n.
+  lo := 1
+  hi := n
+  ans := 1
+
+  for lo <= hi {
+    mid := lo + (hi - lo) / 2
+
+    if mid <= n / mid {
+      ans = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  ans
+}
+
 /// Convert Int to Float.
 pub fn to_float(n: Int) Float {
   case Float.from_string(n.to_string()) {

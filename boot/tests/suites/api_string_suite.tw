@@ -264,4 +264,43 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "repeat concatenates copies",
+      fn() {
+        try assert.equal("ab".repeat(3), "ababab")
+        try assert.equal("x".repeat(1), "x")
+        try assert.equal("ab".repeat(0), "")
+        try assert.equal("ab".repeat(-1), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "pad_start left-pads to width in characters",
+      fn() {
+        try assert.equal("42".pad_start(4, "0"), "0042")
+        try assert.equal("abcd".pad_start(4, "0"), "abcd")
+        try assert.equal("hello".pad_start(3, "0"), "hello")
+        try assert.equal("42".pad_start(4, ""), "42")
+        try assert.equal("é".pad_start(3, "-"), "--é")
+        .Ok({})
+      },
+    )
+    .test(
+      "pad_end right-pads to width in characters",
+      fn() {
+        try assert.equal("42".pad_end(4, "."), "42..")
+        try assert.equal("hello".pad_end(3, "."), "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "to_ascii_upper and to_ascii_lower remap only ASCII letters",
+      fn() {
+        try assert.equal("aB3z!".to_ascii_upper(), "AB3Z!")
+        try assert.equal("aB3Z!".to_ascii_lower(), "ab3z!")
+        try assert.equal("café".to_ascii_upper(), "CAFé")
+        try assert.equal("CAFÉ".to_ascii_lower(), "cafÉ")
+        .Ok({})
+      },
+    )
 }

@@ -658,6 +658,32 @@ Some built-in types define compiler-known inherent methods.
 
 * `Int.inc() Int` — equivalent to adding one
 * `Int.dec() Int` — equivalent to subtracting one
+* `Int.abs() Int` — absolute value (`abs(min_i64)` overflows, matching two's-complement)
+
+**Integer predicates:**
+
+* `Int.is_even() Bool`, `Int.is_odd() Bool`
+* `Int.is_zero() Bool`, `Int.is_positive() Bool` (`n > 0`), `Int.is_negative() Bool` (`n < 0`)
+
+**Integer number theory:**
+
+* `Int.sign() Int` — -1, 0, or 1
+* `Int.gcd(m: Int) Int`, `Int.lcm(m: Int) Int`
+* `Int.pow(exp: Int) Int` — exponentiation by squaring; traps on negative `exp`
+* `Int.isqrt() Int` — floored integer square root (for an exact float root, use `n.to_float().sqrt()`)
+
+**Float math:** trigonometric (`sin`/`cos`/`tan`, `asin`/`acos`/`atan`, `atan2`),
+hyperbolic (`sinh`/`cosh`/`tanh`, `asinh`/`acosh`/`atanh`), exponential/logarithmic
+(`exp`/`expm1`, `log`/`log1p`/`log2`/`log10`), and `cbrt`/`hypot`/`pow`/`sign`/`fround`
+are inherent methods on `Float` bridging to the host `Math` object. The native
+`f64` operations `abs`/`sqrt`/`floor`/`ceil`/`trunc`/`round`/`min`/`max` are also
+`Float` methods.
+
+**String helpers:**
+
+* `String.repeat(n: Int) String` — `n` copies (`n <= 0` yields `""`)
+* `String.pad_start(width: Int, fill: String) String`, `String.pad_end(width: Int, fill: String) String` — pad to `width` characters with a single-character `fill`
+* `String.to_ascii_upper() String`, `String.to_ascii_lower() String` — remap ASCII letters only; non-ASCII bytes unchanged
 
 **Parsing** — type-qualified constructors returning `Option<T>`:
 

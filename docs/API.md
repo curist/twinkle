@@ -158,12 +158,28 @@ names.sort_by(String.compare)
 | `Int.clamp` | `fn(n: Int, lo: Int, hi: Int) Int` | Clamp `n` into the inclusive range `[lo, hi]` (assumes `lo <= hi`) |
 | `Int.inc` | `fn(n: Int) Int` | Add one to an integer |
 | `Int.dec` | `fn(n: Int) Int` | Subtract one from an integer |
+| `Int.abs` | `fn(n: Int) Int` | Absolute value (`abs(min_i64)` overflows, matching two's-complement) |
+| `Int.is_even` | `fn(n: Int) Bool` | True when `n` is even |
+| `Int.is_odd` | `fn(n: Int) Bool` | True when `n` is odd |
+| `Int.is_zero` | `fn(n: Int) Bool` | True when `n` is zero |
+| `Int.is_positive` | `fn(n: Int) Bool` | True when `n > 0` |
+| `Int.is_negative` | `fn(n: Int) Bool` | True when `n < 0` |
+| `Int.sign` | `fn(n: Int) Int` | `-1`, `0`, or `1` by sign |
+| `Int.gcd` | `fn(a: Int, b: Int) Int` | Greatest common divisor (non-negative; `gcd(0,0)=0`) |
+| `Int.lcm` | `fn(a: Int, b: Int) Int` | Least common multiple (`0` when either is `0`) |
+| `Int.pow` | `fn(base: Int, exp: Int) Int` | Integer exponentiation; traps on negative `exp`; `pow(0,0)=1` |
+| `Int.isqrt` | `fn(n: Int) Int` | Floor of the integer square root; traps when `n < 0` |
 
 ```tw
 lo.max(0).min(width)   // clamp via chained dot-calls
 i.clamp(0, xs.len())   // or directly
 i.inc()                // i + 1
 i.dec()                // i - 1
+n.abs()                // magnitude
+nums.filter(Int.is_even)   // predicates as first-class refs
+12.gcd(18)             // 6
+99.isqrt()             // 9   (floored integer root)
+n.to_float().sqrt()    // exact float root (native f64.sqrt)
 ```
 
 ## I/O
@@ -207,6 +223,19 @@ traps with a source-mapped trace (headline + snippet + backtrace); see spec §6.
 | `Float.min` | `fn(a: Float, b: Float) Float` | Lesser float, lowered to native `f64.min` |
 | `Float.max` | `fn(a: Float, b: Float) Float` | Greater float, lowered to native `f64.max` |
 | `Float.round` | `fn(f: Float) Float` | Round to nearest integer with halves toward +∞, matching JS `Math.round` |
+| `Float.sin` / `cos` / `tan` | `fn(x: Float) Float` | Trigonometric functions, radians (host `Math.*`) |
+| `Float.asin` / `acos` / `atan` | `fn(x: Float) Float` | Inverse trigonometric functions, radians (host `Math.*`) |
+| `Float.atan2` | `fn(y: Float, x: Float) Float` | Quadrant-aware arc-tangent (host `Math.atan2`) |
+| `Float.sinh` / `cosh` / `tanh` | `fn(x: Float) Float` | Hyperbolic functions (host `Math.*`) |
+| `Float.asinh` / `acosh` / `atanh` | `fn(x: Float) Float` | Inverse hyperbolic functions (host `Math.*`) |
+| `Float.exp` / `expm1` | `fn(x: Float) Float` | `e^x` and `e^x - 1` (host `Math.*`) |
+| `Float.log` / `log1p` | `fn(x: Float) Float` | Natural log and `ln(1+x)` (host `Math.*`) |
+| `Float.log2` / `log10` | `fn(x: Float) Float` | Base-2 and base-10 logarithms (host `Math.*`) |
+| `Float.cbrt` | `fn(x: Float) Float` | Cube root (host `Math.cbrt`) |
+| `Float.hypot` | `fn(x: Float, y: Float) Float` | `sqrt(x*x + y*y)` (host `Math.hypot`) |
+| `Float.pow` | `fn(base: Float, exp: Float) Float` | Exponentiation (host `Math.pow`) |
+| `Float.sign` | `fn(x: Float) Float` | Floating-point sign: -1.0, 0.0, -0.0, 1.0, or NaN (host `Math.sign`) |
+| `Float.fround` | `fn(x: Float) Float` | Round to nearest 32-bit float value (host `Math.fround`) |
 | `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from integer code (ASCII range) |
 | `String.from_byte` | `fn(b: Byte) Option<String>` | Single-char string from byte value (ASCII range) |
 | `String.from_code_point` | `fn(n: Int) Option<String>` | String from Unicode code point (full range) |
@@ -271,6 +300,11 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.strip_suffix(suffix)` | `fn(s: String, suffix: String) Option<String>` | Remove suffix and return remainder, or `None` |
 | `.count(needle)` | `fn(s: String, needle: String) Int` | Count non-overlapping occurrences of `needle` |
 | `.replace(old, new)` | `fn(s: String, old: String, new_s: String) String` | Replace all non-overlapping occurrences |
+| `.repeat(n)` | `fn(s: String, n: Int) String` | Concatenate `n` copies (`n <= 0` yields `""`) |
+| `.pad_start(width, fill)` | `fn(s: String, width: Int, fill: String) String` | Left-pad to `width` characters with single-character `fill`; unchanged when already wide enough or `fill` is empty |
+| `.pad_end(width, fill)` | `fn(s: String, width: Int, fill: String) String` | Right-pad to `width` characters with single-character `fill`; unchanged when already wide enough or `fill` is empty |
+| `.to_ascii_upper()` | `fn(s: String) String` | Uppercase ASCII letters (a–z → A–Z); non-ASCII bytes unchanged |
+| `.to_ascii_lower()` | `fn(s: String) String` | Lowercase ASCII letters (A–Z → a–z); non-ASCII bytes unchanged |
 
 ### Unicode helpers (prelude)
 

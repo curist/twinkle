@@ -45,3 +45,156 @@ pub fn to_int(f: Float) Int {
     },
   }
 }
+
+// Trigonometric, exponential, and logarithmic helpers bridge to the host's
+// `Math` object via `extern`, so they require the JS/Deno runner (the same host
+// that backs `target/twk run`); the imports are tree-shaken away when unused.
+// The native `f64` operations (`abs`, `sqrt`, `floor`, `ceil`, `trunc`,
+// `round`, `min`, `max`) are compiler intrinsics and are not wrapped here.
+extern Math {
+  fn acos(x: Float) Float
+  fn acosh(x: Float) Float
+  fn asin(x: Float) Float
+  fn asinh(x: Float) Float
+  fn atan(x: Float) Float
+  fn atan2(y: Float, x: Float) Float
+  fn atanh(x: Float) Float
+  fn cbrt(x: Float) Float
+  fn cos(x: Float) Float
+  fn cosh(x: Float) Float
+  fn exp(x: Float) Float
+  fn expm1(x: Float) Float
+  fn fround(x: Float) Float
+  fn hypot(x: Float, y: Float) Float
+  fn log(x: Float) Float
+  fn log10(x: Float) Float
+  fn log1p(x: Float) Float
+  fn log2(x: Float) Float
+  fn pow(base: Float, exp: Float) Float
+  fn sign(x: Float) Float
+  fn sin(x: Float) Float
+  fn sinh(x: Float) Float
+  fn tan(x: Float) Float
+  fn tanh(x: Float) Float
+}
+
+/// Sine of `x` radians (host `Math.sin`).
+pub fn sin(x: Float) Float {
+  Math.sin(x)
+}
+
+/// Cosine of `x` radians (host `Math.cos`).
+pub fn cos(x: Float) Float {
+  Math.cos(x)
+}
+
+/// Tangent of `x` radians (host `Math.tan`).
+pub fn tan(x: Float) Float {
+  Math.tan(x)
+}
+
+/// Arc-sine of `x` in radians (host `Math.asin`).
+pub fn asin(x: Float) Float {
+  Math.asin(x)
+}
+
+/// Arc-cosine of `x` in radians (host `Math.acos`).
+pub fn acos(x: Float) Float {
+  Math.acos(x)
+}
+
+/// Arc-tangent of `x` in radians (host `Math.atan`).
+pub fn atan(x: Float) Float {
+  Math.atan(x)
+}
+
+/// Arc-tangent of `y/x` using signs to choose the quadrant (host `Math.atan2`).
+pub fn atan2(y: Float, x: Float) Float {
+  Math.atan2(y, x)
+}
+
+/// Hyperbolic sine of `x` (host `Math.sinh`).
+pub fn sinh(x: Float) Float {
+  Math.sinh(x)
+}
+
+/// Hyperbolic cosine of `x` (host `Math.cosh`).
+pub fn cosh(x: Float) Float {
+  Math.cosh(x)
+}
+
+/// Hyperbolic tangent of `x` (host `Math.tanh`).
+pub fn tanh(x: Float) Float {
+  Math.tanh(x)
+}
+
+/// Hyperbolic arc-sine of `x` (host `Math.asinh`).
+pub fn asinh(x: Float) Float {
+  Math.asinh(x)
+}
+
+/// Hyperbolic arc-cosine of `x` (host `Math.acosh`).
+pub fn acosh(x: Float) Float {
+  Math.acosh(x)
+}
+
+/// Hyperbolic arc-tangent of `x` (host `Math.atanh`).
+pub fn atanh(x: Float) Float {
+  Math.atanh(x)
+}
+
+/// e raised to `x` (host `Math.exp`).
+pub fn exp(x: Float) Float {
+  Math.exp(x)
+}
+
+/// e^x - 1 (host `Math.expm1`).
+pub fn expm1(x: Float) Float {
+  Math.expm1(x)
+}
+
+/// Natural logarithm of `x` (host `Math.log`).
+pub fn log(x: Float) Float {
+  Math.log(x)
+}
+
+/// Natural logarithm of `1 + x` (host `Math.log1p`).
+pub fn log1p(x: Float) Float {
+  Math.log1p(x)
+}
+
+/// Base-2 logarithm of `x` (host `Math.log2`).
+pub fn log2(x: Float) Float {
+  Math.log2(x)
+}
+
+/// Base-10 logarithm of `x` (host `Math.log10`).
+pub fn log10(x: Float) Float {
+  Math.log10(x)
+}
+
+/// Cube root of `x` (host `Math.cbrt`).
+pub fn cbrt(x: Float) Float {
+  Math.cbrt(x)
+}
+
+/// Square root of `x*x + y*y` (host `Math.hypot`, two-argument form).
+pub fn hypot(x: Float, y: Float) Float {
+  Math.hypot(x, y)
+}
+
+/// Floating-point exponentiation (host `Math.pow`).
+pub fn pow(base: Float, exp: Float) Float {
+  Math.pow(base, exp)
+}
+
+/// Floating-point sign: -1.0, 0.0, -0.0, 1.0, or NaN (host `Math.sign`).
+pub fn sign(x: Float) Float {
+  Math.sign(x)
+}
+
+/// Round to the nearest 32-bit float value, returned as a Float (host
+/// `Math.fround`).
+pub fn fround(x: Float) Float {
+  Math.fround(x)
+}
