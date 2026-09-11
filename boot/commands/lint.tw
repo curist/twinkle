@@ -333,16 +333,55 @@ fn findings_for(findings: Vector<Finding>, rule: String) Vector<Finding> {
   })
 }
 
+// The marker shown after an auto-fixable rule's name, explained by the legend.
+fix_marker := "🔧"
+
+/// Whether any finding for `rule` carries a rewrite — i.e. the rule is
+/// auto-fixable and shows up under `--fix`/`--fix-<rule>`.
+fn rule_is_fixable(findings: Vector<Finding>, rule: String) Bool {
+  for f in findings {
+    if f.rule == rule and f.edits.len() > 0 {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether any finding at all carries a rewrite (gates the legend line).
+fn any_fixable(findings: Vector<Finding>) Bool {
+  for f in findings {
+    if f.edits.len() > 0 {
+      return true
+    }
+  }
+  false
+}
+
 /// Render the findings body as a string: grouped by rule, each group headed by
-/// `<rule>  <brief>` (and, when `explain`, the detailed rationale), with
-/// findings indented underneath. Pure given a prebuilt line-index map.
+/// `<rule>  <brief>`. Auto-fixable rules carry a `🔧` after the name, explained
+/// by a legend line above the groups; `--explain` adds each rule's detailed
+/// rationale. Pure given a prebuilt line-index map.
 pub fn render_report(
   findings: Vector<Finding>,
   indexes: Dict<String, line_index.LineIndex>,
   explain: Bool,
   color: Bool,
 ) String {
-  out := ""
+  legend := if any_fixable(findings) {
+    text := "${fix_marker} auto-fixable — apply with `twk lint --fix`"
+    if color {
+      style.dim_if(true, text)
+    } else {
+      text
+    }
+  } else {
+    ""
+  }
+  out := if legend.len() > 0 {
+    "${legend}\n\n"
+  } else {
+    ""
+  }
   first_group := true
 
   for rule in distinct_rules(findings) {
@@ -355,6 +394,11 @@ pub fn render_report(
     } else {
       rule
     }
+    fix_tag := if rule_is_fixable(findings, rule) {
+      " ${fix_marker}"
+    } else {
+      ""
+    }
     header := if brief.len() > 0 {
       brief_text := if color {
         style.dim_if(true, brief)
@@ -362,9 +406,9 @@ pub fn render_report(
         brief
       }
 
-      "${rule_text}  ${brief_text}"
+      "${rule_text}${fix_tag}  ${brief_text}"
     } else {
-      rule_text
+      "${rule_text}${fix_tag}"
     }
     group_sep := if first_group {
       ""

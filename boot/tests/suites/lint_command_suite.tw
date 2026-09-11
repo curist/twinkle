@@ -360,6 +360,36 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "render_report: tags auto-fixable rule headers, leaves report-only ones untagged",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "self-copy",
+            rule: "record-copy-helper",
+            edits: [FixEdit.{ start: 0, end: 4, replacement: "x" }],
+          },
+          lint.Finding.{
+            path: "a.tw",
+            start: 10,
+            message: "code after a return never runs",
+            rule: "unreachable-code",
+            edits: [],
+          },
+        ]
+        out := lint.render_report(findings, Dict.new(), false, false)
+
+        // Legend explains the marker, shown once because a fixable rule is present.
+        try assert.is_true(out.contains("🔧 auto-fixable"))
+
+        // Fixable rule carries the marker after its name; report-only does not.
+        try assert.is_true(out.contains("record-copy-helper 🔧"))
+        try assert.is_false(out.contains("unreachable-code 🔧"))
+        .Ok({})
+      },
+    )
+    .test(
       "render_report: --explain includes the detailed rationale",
       fn() {
         findings := [
