@@ -482,36 +482,95 @@ fn overlaps_any(edit: FixEdit, edits: Vector<FixEdit>) Bool {
   false
 }
 
+/// Which auto-fixable rules to apply, one field per fixable rule id. The
+/// report-only lints have no field. `twk lint --fix` enables all; each
+/// `--fix-<rule>` enables one.
+pub type FixFlags = .{
+  unused_imports: Bool,
+  inherent_calls: Bool,
+  inline_record_copy: Bool,
+  redundant_print_stringify: Bool,
+  prefer_multiline_string: Bool,
+  constant_fn: Bool,
+  prefer_case_dispatch: Bool,
+  record_copy_helper: Bool,
+  redundant_record_prefix: Bool,
+  prefer_cond: Bool,
+}
+
+/// A `FixFlags` with every fix disabled — the base for `--fix-<rule>` selection
+/// and for tests that enable one field via rebinding.
+pub fn no_fixes() FixFlags {
+  .{
+    unused_imports: false,
+    inherent_calls: false,
+    inline_record_copy: false,
+    redundant_print_stringify: false,
+    prefer_multiline_string: false,
+    constant_fn: false,
+    prefer_case_dispatch: false,
+    record_copy_helper: false,
+    redundant_record_prefix: false,
+    prefer_cond: false,
+  }
+}
+
+/// Whether the fix for `rule` is requested.
+fn wants(flags: FixFlags, rule: String) Bool {
+  case rule {
+    "unused-imports" => flags.unused_imports,
+    "inherent-calls" => flags.inherent_calls,
+    "inline-record-copy" => flags.inline_record_copy,
+    "redundant-print-stringify" => flags.redundant_print_stringify,
+    "prefer-multiline-string" => flags.prefer_multiline_string,
+    "constant-fn" => flags.constant_fn,
+    "prefer-case-dispatch" => flags.prefer_case_dispatch,
+    "record-copy-helper" => flags.record_copy_helper,
+    "redundant-record-prefix" => flags.redundant_record_prefix,
+    "prefer-cond" => flags.prefer_cond,
+    _ => false,
+  }
+}
+
+/// Build the FixFlags from parsed CLI flags: `--fix` enables every rule, each
+/// `--fix-<rule>` enables one.
+fn fix_flags_from_args(parsed: ParseResult) FixFlags {
+  fix_all := parsed.has_flag("fix")
+  .{
+    unused_imports: fix_all or parsed.has_flag("fix-unused-imports"),
+    inherent_calls: fix_all or parsed.has_flag("fix-inherent-calls"),
+    inline_record_copy: fix_all or parsed.has_flag("fix-inline-record-copy"),
+    redundant_print_stringify: fix_all or parsed.has_flag("fix-redundant-print-stringify"),
+    prefer_multiline_string: fix_all or parsed.has_flag("fix-prefer-multiline-string"),
+    constant_fn: fix_all or parsed.has_flag("fix-constant-fn"),
+    prefer_case_dispatch: fix_all or parsed.has_flag("fix-prefer-case-dispatch"),
+    record_copy_helper: fix_all or parsed.has_flag("fix-record-copy-helper"),
+    redundant_record_prefix: fix_all or parsed.has_flag("fix-redundant-record-prefix"),
+    prefer_cond: fix_all or parsed.has_flag("fix-prefer-cond"),
+  }
+}
+
+/// Whether any fix is requested.
+fn any(flags: FixFlags) Bool {
+  flags.unused_imports
+    or flags.inherent_calls
+    or flags.inline_record_copy
+    or flags.redundant_print_stringify
+    or flags.prefer_multiline_string
+    or flags.constant_fn
+    or flags.prefer_case_dispatch
+    or flags.record_copy_helper
+    or flags.redundant_record_prefix
+    or flags.prefer_cond
+}
+
 /// Edits for the selected rules, grouped by file path (skips report-only and
 /// rules not requested).
-fn select_edits(
-  findings: Vector<Finding>,
-  fix_unused: Bool,
-  fix_inherent: Bool,
-  fix_inline_copy: Bool,
-  fix_redundant: Bool,
-  fix_ml: Bool,
-  fix_constant_fn: Bool,
-  fix_case_dispatch: Bool,
-  fix_record_copy: Bool,
-  fix_redundant_prefix: Bool,
-  fix_prefer_cond: Bool,
-) Dict<String, Vector<FixEdit>> {
+fn select_edits(findings: Vector<Finding>, flags: FixFlags) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
   for f in findings {
-    selected := f.rule == "unused-imports" and fix_unused
-      or f.rule == "inherent-calls" and fix_inherent
-      or f.rule == "inline-record-copy" and fix_inline_copy
-      or f.rule == "redundant-print-stringify" and fix_redundant
-      or f.rule == "prefer-multiline-string" and fix_ml
-      or f.rule == "constant-fn" and fix_constant_fn
-      or f.rule == "prefer-case-dispatch" and fix_case_dispatch
-      or f.rule == "record-copy-helper" and fix_record_copy
-      or f.rule == "redundant-record-prefix" and fix_redundant_prefix
-      or f.rule == "prefer-cond" and fix_prefer_cond
-
-    if selected and f.edits.len() > 0 {
+    if flags.wants(f.rule) and f.edits.len() > 0 {
       existing := case edits_by_file[f.path] {
         .Some(es) => es,
         .None => [],
@@ -538,32 +597,11 @@ fn select_edits(
   edits_by_file
 }
 
-pub fn select_edits_for_test(
-  findings: Vector<Finding>,
-  fix_unused: Bool,
-  fix_inherent: Bool,
-  fix_inline_copy: Bool,
-  fix_redundant: Bool,
-  fix_ml: Bool,
-  fix_constant_fn: Bool,
-  fix_case_dispatch: Bool,
-  fix_record_copy: Bool,
-  fix_redundant_prefix: Bool,
-  fix_prefer_cond: Bool,
-) Dict<String, Vector<FixEdit>> {
-  select_edits(
-    findings,
-    fix_unused,
-    fix_inherent,
-    fix_inline_copy,
-    fix_redundant,
-    fix_ml,
-    fix_constant_fn,
-    fix_case_dispatch,
-    fix_record_copy,
-    fix_redundant_prefix,
-    fix_prefer_cond,
-  )
+pub fn select_edits_for_test(findings: Vector<Finding>, flags: FixFlags) Dict<
+  String,
+  Vector<FixEdit>,
+> {
+  select_edits(findings, flags)
 }
 
 pub fn run_lint_command(parsed: ParseResult) {
@@ -574,29 +612,10 @@ pub fn run_lint_command(parsed: ParseResult) {
       proc.exit(1)
     },
   }
-  fix_all := parsed.has_flag("fix")
-  fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
-  fix_inherent := fix_all or parsed.has_flag("fix-inherent-calls")
-  fix_inline_copy := fix_all or parsed.has_flag("fix-inline-record-copy")
-  fix_redundant := fix_all or parsed.has_flag("fix-redundant-print-stringify")
-  fix_ml := fix_all or parsed.has_flag("fix-prefer-multiline-string")
-  fix_constant_fn := fix_all or parsed.has_flag("fix-constant-fn")
-  fix_case_dispatch := fix_all or parsed.has_flag("fix-prefer-case-dispatch")
-  fix_record_copy := fix_all or parsed.has_flag("fix-record-copy-helper")
-  fix_redundant_prefix := fix_all or parsed.has_flag("fix-redundant-record-prefix")
-  fix_prefer_cond := fix_all or parsed.has_flag("fix-prefer-cond")
+  flags := fix_flags_from_args(parsed)
   explain := parsed.has_flag("explain")
   color := default_config().color
-  any_apply := fix_unused
-    or fix_inherent
-    or fix_inline_copy
-    or fix_redundant
-    or fix_ml
-    or fix_constant_fn
-    or fix_case_dispatch
-    or fix_record_copy
-    or fix_redundant_prefix
-    or fix_prefer_cond
+  any_apply := flags.any()
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -632,19 +651,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       proc.exit(1)
     }
 
-    edits := select_edits(
-      current.result.findings,
-      fix_unused,
-      fix_inherent,
-      fix_inline_copy,
-      fix_redundant,
-      fix_ml,
-      fix_constant_fn,
-      fix_case_dispatch,
-      fix_record_copy,
-      fix_redundant_prefix,
-      fix_prefer_cond,
-    )
+    edits := select_edits(current.result.findings, flags)
 
     if edits.len() == 0 {
       break

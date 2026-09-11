@@ -93,19 +93,10 @@ pub fn suite() runner.Suite {
           },
         ]
 
-        edits := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          true,
-          false,
-          true,
-          false,
-          false,
-          false,
-        )
+        flags := lint.no_fixes()
+        flags.prefer_multiline_string = true
+        flags.prefer_case_dispatch = true
+        edits := lint.select_edits_for_test(findings, flags)
         selected := try edits["a.tw"].ok_or("expected edits for a.tw")
         try assert.equal(selected.len(), 2)
         try assert.equal(selected[0].start, 0)
@@ -126,34 +117,12 @@ pub fn suite() runner.Suite {
           },
         ]
 
-        none := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-        )
+        none := lint.select_edits_for_test(findings, lint.no_fixes())
         try assert.is_false(none.has("a.tw"))
 
-        some := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          true,
-          false,
-          false,
-        )
+        flags := lint.no_fixes()
+        flags.record_copy_helper = true
+        some := lint.select_edits_for_test(findings, flags)
         selected := try some["a.tw"].ok_or("expected record-copy-helper edit")
         try assert.equal(selected.len(), 1)
         try assert.equal(selected[0].start, 10)
@@ -173,34 +142,12 @@ pub fn suite() runner.Suite {
           },
         ]
 
-        none := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-        )
+        none := lint.select_edits_for_test(findings, lint.no_fixes())
         try assert.is_false(none.has("a.tw"))
 
-        some := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          true,
-          false,
-        )
+        flags := lint.no_fixes()
+        flags.redundant_record_prefix = true
+        some := lint.select_edits_for_test(findings, flags)
         selected := try some["a.tw"].ok_or("expected redundant-record-prefix edit")
         try assert.equal(selected.len(), 1)
         try assert.equal(selected[0].start, 12)
@@ -220,34 +167,12 @@ pub fn suite() runner.Suite {
           },
         ]
 
-        none := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-        )
+        none := lint.select_edits_for_test(findings, lint.no_fixes())
         try assert.is_false(none.has("a.tw"))
 
-        some := lint.select_edits_for_test(
-          findings,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          false,
-          true,
-        )
+        flags := lint.no_fixes()
+        flags.prefer_cond = true
+        some := lint.select_edits_for_test(findings, flags)
         selected := try some["a.tw"].ok_or("expected prefer-cond edit")
         try assert.equal(selected.len(), 1)
         try assert.equal(selected[0].start, 8)
