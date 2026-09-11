@@ -236,14 +236,10 @@ fn scan_clone_live(ctx: CCtx, e: AnfExpr, s: CScan) CScan {
 // shape; a second exit or a return of anything else rejects.
 fn scan_tail(ctx: CCtx, a: Atom, s: CScan) CScan {
   if atom_is_local(a, ctx.recv) {
-    if s.returned {
-      s.cscan_reject(.MultiExit)
-    } else if s.pending.len() > 0 {
-      // A set_unsafe result was never reclaimed onto recv — the returned
-      // backing identity is unproven.
-      s.cscan_reject(.CalleeRepublishes)
-    } else {
-      .{ reason: s.reason, pending: s.pending, returned: true }
+    cond {
+      s.returned => s.cscan_reject(.MultiExit),
+      s.pending.len() > 0 => s.cscan_reject(.CalleeRepublishes),
+      _ => .{ reason: s.reason, pending: s.pending, returned: true },
     }
   } else {
     s.cscan_reject(.NonContinuationReturn)
@@ -271,21 +267,19 @@ fn scan_clone_op(ctx: CCtx, op: AnfOp, local: LocalId, s: CScan) CScan {
       s
     },
     // In-region read `recv[idx]` with idx != recv.
-    .AIndex(base, idx, .Array, _) => if atom_is_local(base, ctx.recv) {
-      if atom_is_local(idx, ctx.recv) {
+    .AIndex(base, idx, .Array, _) => cond {
+      atom_is_local(base, ctx.recv) => if atom_is_local(idx, ctx.recv) {
         s.cscan_reject(.CalleeRepublishes)
       } else {
         s
-      }
-    } else if references_any_pending(op, s.pending) {
-      s.cscan_reject(.CalleeRepublishes)
-    } else {
-      s
+      },
+      references_any_pending(op, s.pending) => s.cscan_reject(.CalleeRepublishes),
+      _ => s,
     },
     // Rebind. `assign recv = <pending write result>` reclaims the backing;
     // anything else touching recv is a republish/alias.
-    .AAssign(target, atom) => if target.id == ctx.recv.id {
-      case atom {
+    .AAssign(target, atom) => cond {
+      target.id == ctx.recv.id => case atom {
         .ALocal(src) => case s.pending.get(src.id) {
           .Some(_) => {
             s.pending = .remove(src.id)
@@ -294,12 +288,11 @@ fn scan_clone_op(ctx: CCtx, op: AnfOp, local: LocalId, s: CScan) CScan {
           .None => s.cscan_reject(.CalleeRepublishes),
         },
         _ => s.cscan_reject(.CalleeRepublishes),
-      }
-    } else if op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) {
-      // recv (or a backing alias) flowing into a different local — alias escape.
-      s.cscan_reject(.CalleeRepublishes)
-    } else {
-      s
+      },
+      op_references_deep(op, ctx.recv) or references_any_pending(op, s.pending) => s.cscan_reject(
+        .CalleeRepublishes,
+      ),
+      _ => s,
     },
     // `L = init recv` copies the receiver into another live local — republish.
     .AInit(atom) => if atom_is_local(atom, ctx.recv) or references_any_pending(op, s.pending) {

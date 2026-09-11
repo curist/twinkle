@@ -133,19 +133,17 @@ fn producer_of_op(op: AnfOp, defs: Dict<Int, AnfOp>, ids: ProducerIds) MutVecPro
     // reach a MutVec-typed clone param and trap in `emit_coerce_stack`. Leave
     // them undiscoverable (persistent fallback) until the lowering handles them.
     .AArrayLit(_) => .None,
-    .ACall(.AGlobalFunc(f), args) => if f.id == ids.make.id and args.len() == 2 {
-      .Some(.MakeSeed)
-    } else if f.id == ids.freeze_box.id and args.len() == 1 {
-      case args[0] {
+    .ACall(.AGlobalFunc(f), args) => cond {
+      f.id == ids.make.id and args.len() == 2 => .Some(.MakeSeed),
+      f.id == ids.freeze_box.id and args.len() == 1 => case args[0] {
         .ALocal(builder) => if traces_to_builder_new(builder.id, defs, ids) {
           .Some(.CollectSeed)
         } else {
           .None
         },
         _ => .None,
-      }
-    } else {
-      .None
+      },
+      _ => .None,
     },
     _ => .None,
   }
@@ -462,13 +460,10 @@ fn classify_leaf_use(ctx: ScanCtx, op: AnfOp, local: LocalId, s: UseScan) UseSca
     // result is never reclaimed is a plain escape (handle handed to another
     // owned-clone call site, or a call site that isn't routed at all). The
     // one exception is a `vector$len` read, an in-region use like `AIndex`.
-    .ACall(.AGlobalFunc(g), args) => if g.id == ctx.len_id
-      and args.len() == 1 and atom_is_local(args[0], ctx.handle) {
-      s
-    } else if ctx.rebind_sources.has(local.id) {
-      s
-    } else {
-      s.reject()
+    .ACall(.AGlobalFunc(g), args) => cond {
+      g.id == ctx.len_id and args.len() == 1 and atom_is_local(args[0], ctx.handle) => s,
+      ctx.rebind_sources.has(local.id) => s,
+      _ => s.reject(),
     },
     // Any other callee form (closure/local callee) carrying the handle.
     .ACall(_, _) => s.reject(),

@@ -52,12 +52,10 @@ type GatherOut = .{ result: LintResult, store: query_cache.Store }
 /// valid as later edits are applied. Pure.
 pub fn apply_edits(source: String, edits: Vector<FixEdit>) String {
   sorted := edits.sort_by(fn(a: FixEdit, b: FixEdit) Order {
-    if b.start < a.start {
-      .Lt
-    } else if b.start > a.start {
-      .Gt
-    } else {
-      .Eq
+    cond {
+      b.start < a.start => .Lt,
+      b.start > a.start => .Gt,
+      _ => .Eq,
     }
   })
   result := source

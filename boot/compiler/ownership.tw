@@ -1123,15 +1123,16 @@ pub fn analyze_copy_carriers(
               reason = "source-escape"
             },
             .ACall(callee, args) => case callee_func_id(callee) {
-              .Some(f) => if f.id == ops.set or f.id == ops.remove {
-                if args.len() >= 1 and atom_is_local_id(args[0], carrier) {} else if args.len() >= 1
+              .Some(f) => cond {
+                f.id == ops.set or f.id == ops.remove => if args.len() >= 1
+                  and atom_is_local_id(args[0], carrier) {} else if args.len() >= 1
                   and atom_is_local_id(args[0], source) {
                   reason = "source-escape" // [S2] second in-place writer on the source
                 } else if live_contains_int(op_uses(fi.op), source) {
                   reason = "source-escape"
-                }
-              } else if f.id == ops.get or f.id == ops.get_unsafe {
-                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                },
+                f.id == ops.get or f.id == ops.get_unsafe => if args.len() >= 1
+                  and atom_is_local_id(args[0], source) {
                   key := if args.len() >= 2 {
                     case atom_local_id(args[1]) {
                       .Some(k) => k,
@@ -1157,9 +1158,8 @@ pub fn analyze_copy_carriers(
                   )
                 } else if live_contains_int(op_uses(fi.op), source) {
                   reason = "source-escape"
-                }
-              } else if f.id == ops.keys {
-                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                },
+                f.id == ops.keys => if args.len() >= 1 and atom_is_local_id(args[0], source) {
                   loans = .append(
                     Loan.{
                       source,
@@ -1173,9 +1173,8 @@ pub fn analyze_copy_carriers(
                   read_suppress = .append(fi.result)
                 } else if live_contains_int(op_uses(fi.op), source) {
                   reason = "source-escape"
-                }
-              } else {
-                case call_info(sem, f) {
+                },
+                _ => case call_info(sem, f) {
                   .Some(cs) => case cs.effect {
                     .Update => if live_contains_int(op_uses(fi.op), source) {
                       reason = "source-escape"
@@ -1222,7 +1221,7 @@ pub fn analyze_copy_carriers(
                       .None => reason = "unknown-source-use",
                     }
                   },
-                }
+                },
               },
               .None => if live_contains_int(op_uses(fi.op), source) {
                 reason = "source-escape"
@@ -4773,12 +4772,10 @@ fn shell_reusable(st: ForwardState, base: Atom, last: Vector<Int>) Bool {
 fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
   case atom_local_id(base) {
     .Some(bid) => case fact_of(st.own, base) {
-      .Unique => if st.shell_reusable(base, last) {
-        "reuse(unique)"
-      } else if !valid_of_local(st.valid, bid) {
-        "persistent(base consumed)"
-      } else {
-        "persistent(base still live)"
+      .Unique => cond {
+        st.shell_reusable(base, last) => "reuse(unique)",
+        !valid_of_local(st.valid, bid) => "persistent(base consumed)",
+        _ => "persistent(base still live)",
       },
       _ => "persistent(aliased shell)",
     },

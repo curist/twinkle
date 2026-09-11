@@ -134,11 +134,9 @@ pub fn render_trace(
     .None => false,
   }
 
-  if bt.len() == 0 {
-    no_trace_note(head)
-  } else if snippet_ok {
-    "${head}\n\n${bt.join("\n")}"
-  } else {
-    "${head}\n\n${bt.join("\n")}\n\n  source unavailable"
+  cond {
+    bt.len() == 0 => no_trace_note(head),
+    snippet_ok => "${head}\n\n${bt.join("\n")}",
+    _ => "${head}\n\n${bt.join("\n")}\n\n  source unavailable",
   }
 }

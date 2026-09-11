@@ -652,15 +652,20 @@ fn rewrite_clone_expr(e: AnfExpr, recv: LocalId, ids: CloneRwIds) AnfExpr {
 
 fn rewrite_clone_op(op: AnfOp, recv: LocalId, ids: CloneRwIds) AnfOp {
   case op {
-    .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe
-      and args.len() == 3 and atom_is_local(args[0], recv) {
-      .ACall(.AGlobalFunc(ids.mset), args)
-    } else if f.id == ids.get and args.len() == 2 and atom_is_local(args[0], recv) {
-      .ACall(.AGlobalFunc(ids.mget), args)
-    } else if f.id == ids.len and args.len() == 1 and atom_is_local(args[0], recv) {
-      .ACall(.AGlobalFunc(ids.mlen), args)
-    } else {
-      op
+    .ACall(.AGlobalFunc(f), args) => cond {
+      f.id == ids.set_unsafe and args.len() == 3 and atom_is_local(args[0], recv) => .ACall(
+        .AGlobalFunc(ids.mset),
+        args,
+      ),
+      f.id == ids.get and args.len() == 2 and atom_is_local(args[0], recv) => .ACall(
+        .AGlobalFunc(ids.mget),
+        args,
+      ),
+      f.id == ids.len and args.len() == 1 and atom_is_local(args[0], recv) => .ACall(
+        .AGlobalFunc(ids.mlen),
+        args,
+      ),
+      _ => op,
     },
     .AIndex(base, idx, .Array, _) => if atom_is_local(base, recv) and !atom_is_local(idx, recv) {
       .ACall(.AGlobalFunc(ids.mget), [base, idx])

@@ -325,12 +325,10 @@ fn verify_copy_probe(typed_dest: Bool) Result<Void, String> {
     } else {
       .Err("expected verify to reject the boxed-copy mismatch")
     },
-    .Err(msg) => if typed_dest {
-      .Err("expected verify to accept the matching typed copy, got: ${msg}")
-    } else if msg.contains("physical vector repr mismatch") {
-      .Ok({})
-    } else {
-      .Err("wrong rejection message: ${msg}")
+    .Err(msg) => cond {
+      typed_dest => .Err("expected verify to accept the matching typed copy, got: ${msg}"),
+      msg.contains("physical vector repr mismatch") => .Ok({}),
+      _ => .Err("wrong rejection message: ${msg}"),
     },
   }
 }

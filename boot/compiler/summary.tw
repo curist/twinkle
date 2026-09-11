@@ -1554,12 +1554,10 @@ fn unique_seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
 
 fn render_variant_key(v: vid.VariantId) String {
   reqs: Vector<String> = collect r in v.unique {
-    if r.path.is_shell() {
-      "p${r.param}"
-    } else if r.path.segs.len() > 0 {
-      "p${r.param}.f${r.path.segs[0]}"
-    } else {
-      "p${r.param}"
+    cond {
+      r.path.is_shell() => "p${r.param}",
+      r.path.segs.len() > 0 => "p${r.param}.f${r.path.segs[0]}",
+      _ => "p${r.param}",
     }
   }
   "unique:${reqs.join(",")}"

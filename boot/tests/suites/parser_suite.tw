@@ -113,17 +113,15 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
     .Ok(expected) => {
       trimmed := expected.trim()
 
-      if actual == trimmed {
-        .Ok({})
-      } else if update {
-        case fs.write_text(expected_path, "${actual}\n") {
+      cond {
+        actual == trimmed => .Ok({}),
+        update => case fs.write_text(expected_path, "${actual}\n") {
           .Ok(_) => .Ok({}),
           .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
-        }
-      } else {
-        .Err(
+        },
+        _ => .Err(
           "snapshot mismatch for ${expected_path}\n--- expected ---\n${trimmed}\n--- actual ---\n${actual}",
-        )
+        ),
       }
     },
     .Err(_) => if update {

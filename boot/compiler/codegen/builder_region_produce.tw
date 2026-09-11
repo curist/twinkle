@@ -40,12 +40,10 @@ pub type BuilderRegionDecisionTable = .{ by_func: Dict<Int, Vector<BuilderRegion
 // Deterministic and independent of detection order: func_id, then seed_site,
 // then loop_site, then fold_sites lexicographically, then family.
 fn cmp_int(a: Int, b: Int) Order {
-  if a < b {
-    .Lt
-  } else if a > b {
-    .Gt
-  } else {
-    .Eq
+  cond {
+    a < b => .Lt,
+    a > b => .Gt,
+    _ => .Eq,
   }
 }
 

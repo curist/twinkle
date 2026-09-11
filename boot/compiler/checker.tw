@@ -2483,12 +2483,10 @@ fn canonical_named_type(tid: TypeId, type_args: Vector<MonoType>, env: ResolvedE
     .None => "",
   }
 
-  if name == "Option" and type_args.len() == 1 {
-    .Optional(type_args[0])
-  } else if name == "Result" and type_args.len() == 2 {
-    .Result(type_args[0], type_args[1])
-  } else {
-    .Named(tid, type_args)
+  cond {
+    name == "Option" and type_args.len() == 1 => .Optional(type_args[0]),
+    name == "Result" and type_args.len() == 2 => .Result(type_args[0], type_args[1]),
+    _ => .Named(tid, type_args),
   }
 }
 

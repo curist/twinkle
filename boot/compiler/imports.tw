@@ -158,12 +158,10 @@ fn resolve_import_path(
   import_root: String,
   stdlib_root: String,
 ) String {
-  if decl.is_stdlib {
-    loader.resolve_stdlib_module_path(stdlib_root, decl.path)
-  } else if decl.is_relative {
-    loader.resolve_relative_module_path(importing_file, decl.path)
-  } else {
-    loader.resolve_module_path(import_root, decl.path)
+  cond {
+    decl.is_stdlib => loader.resolve_stdlib_module_path(stdlib_root, decl.path),
+    decl.is_relative => loader.resolve_relative_module_path(importing_file, decl.path),
+    _ => loader.resolve_module_path(import_root, decl.path),
   }
 }
 
@@ -186,11 +184,9 @@ fn module_alias(decl: UseDecl) String {
 fn format_import_path(decl: UseDecl) String {
   joined := decl.path.join(".")
 
-  if decl.is_stdlib {
-    "@${joined}"
-  } else if decl.is_relative {
-    ".${joined}"
-  } else {
-    joined
+  cond {
+    decl.is_stdlib => "@${joined}",
+    decl.is_relative => ".${joined}",
+    _ => joined,
   }
 }

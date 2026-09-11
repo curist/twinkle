@@ -126,12 +126,10 @@ fn producer_of_op(op: AnfOp, ids: OpIds, suffix: String) MutVecProducer? {
   }
   case op {
     .AArrayLit(_) => .Some(.ArrayLitSeed),
-    .ACall(.AGlobalFunc(f), _) => if f.id == ids.make.id {
-      .Some(.MakeSeed)
-    } else if f.id == ids.freeze_box.id or f.id == typed_freeze {
-      .Some(.CollectSeed)
-    } else {
-      .None
+    .ACall(.AGlobalFunc(f), _) => cond {
+      f.id == ids.make.id => .Some(.MakeSeed),
+      f.id == ids.freeze_box.id or f.id == typed_freeze => .Some(.CollectSeed),
+      _ => .None,
     },
     _ => .None,
   }
@@ -258,18 +256,20 @@ fn scan_use_op(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseScan) Us
 
 fn classify_leaf_use(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseScan) UseScan {
   case op {
-    .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe.id
-      and args.len() == 3 and atom_is_local(args[0], h) and !atom_is_local(args[1], h)
-      and !atom_is_local(args[2], h) {
-      s.record_op(local, .Set)
-    } else if f.id == ids.append.id
-      and args.len() == 2 and atom_is_local(args[0], h) and !atom_is_local(args[1], h) {
-      s.record_op(local, .Push)
-    } else if f.id == ids.len.id and args.len() == 1 and atom_is_local(args[0], h) {
-      s.record_op(local, .Len)
-    } else {
-      // Handle passed to some other call, or as a non-base argument — escape.
-      s.reject()
+    .ACall(.AGlobalFunc(f), args) => cond {
+      f.id == ids.set_unsafe.id
+        and args.len() == 3 and atom_is_local(args[0], h) and !atom_is_local(args[1], h)
+        and !atom_is_local(args[2], h) => s.record_op(local, .Set),
+      f.id == ids.append.id
+        and args.len() == 2 and atom_is_local(args[0], h) and !atom_is_local(args[1], h) => s.record_op(
+        local,
+        .Push,
+      ),
+      f.id == ids.len.id and args.len() == 1 and atom_is_local(args[0], h) => s.record_op(
+        local,
+        .Len,
+      ),
+      _ => s.reject(),
     },
     // Any other callee form (closure/local callee) carrying the handle — escape.
     .ACall(_, _) => s.reject(),
@@ -533,30 +533,36 @@ fn atom_in_set(a: Atom, ids: Dict<Int, Bool>) Bool {
 // in-region reads/sets nested in branches or the collect loop are covered.
 fn rewrite_op(ctx: RwCtx, op: AnfOp, local: LocalId) AnfOp {
   case op {
-    .ACall(.AGlobalFunc(f), args) => if local.id == ctx.make_src
-      and f.id == ctx.ids.make.id and args.len() == 2 {
-      // producer: Vector.make -> mutvec_make_i64 (same args; fill coerces i64)
-      .ACall(.AGlobalFunc(ctx.mids.make), args)
-    } else if local.id == ctx.builder_new_local
-      and f.id == ctx.ids.builder_new.id and args.len() == 0 {
-      // producer: collect builder_new() -> mutvec_new_i64(0) (0 rounds to MIN_CAP)
-      .ACall(.AGlobalFunc(ctx.mids.new), [.ALitInt(0)])
-    } else if local.id == ctx.freeze_temp and f.id == ctx.ids.freeze_box.id and args.len() == 1 {
-      // producer: collect builder_freeze(b) is elided — the handle IS the mutvec;
-      // slide materialization to the boundary. Passthrough the builder alias.
-      .AInit(args[0])
-    } else if f.id == ctx.ids.builder_push.id
-      and args.len() == 2 and atom_in_set(args[0], ctx.builder_aliases) {
-      // collect loop: builder_push(b, x) -> mutvec_push_i64(b, x)
-      .ACall(.AGlobalFunc(ctx.mids.push), args)
-    } else if f.id == ctx.ids.set_unsafe.id and args.len() == 3 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.set), args)
-    } else if f.id == ctx.ids.append.id and args.len() == 2 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.push), args)
-    } else if f.id == ctx.ids.len.id and args.len() == 1 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.len), args)
-    } else {
-      op
+    .ACall(.AGlobalFunc(f), args) => cond {
+      local.id == ctx.make_src and f.id == ctx.ids.make.id and args.len() == 2 => .ACall(
+        .AGlobalFunc(ctx.mids.make),
+        args,
+      ),
+      local.id == ctx.builder_new_local and f.id == ctx.ids.builder_new.id and args.len() == 0 => .ACall(
+        .AGlobalFunc(ctx.mids.new),
+        [.ALitInt(0)],
+      ),
+      local.id == ctx.freeze_temp and f.id == ctx.ids.freeze_box.id and args.len() == 1 => .AInit(
+        args[0],
+      ),
+      f.id == ctx.ids.builder_push.id
+        and args.len() == 2 and atom_in_set(args[0], ctx.builder_aliases) => .ACall(
+        .AGlobalFunc(ctx.mids.push),
+        args,
+      ),
+      f.id == ctx.ids.set_unsafe.id and args.len() == 3 and atom_is_local(args[0], ctx.h) => .ACall(
+        .AGlobalFunc(ctx.mids.set),
+        args,
+      ),
+      f.id == ctx.ids.append.id and args.len() == 2 and atom_is_local(args[0], ctx.h) => .ACall(
+        .AGlobalFunc(ctx.mids.push),
+        args,
+      ),
+      f.id == ctx.ids.len.id and args.len() == 1 and atom_is_local(args[0], ctx.h) => .ACall(
+        .AGlobalFunc(ctx.mids.len),
+        args,
+      ),
+      _ => op,
     },
     .AIndex(base, idx, _, _) => if atom_is_local(base, ctx.h) and !atom_is_local(idx, ctx.h) {
       .ACall(.AGlobalFunc(ctx.mids.get), [base, idx])

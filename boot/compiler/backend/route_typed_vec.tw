@@ -1834,29 +1834,19 @@ fn classify_op(
       // typed-safe use, but only when gather_read_ok (the consumed-SOURCE view):
       // a producer candidate feeding gather stays boxed — the gather RESULT
       // eligibility is decided separately by route_func's gather-result fixpoint.
-      .AGlobalFunc(fid) => if fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) {
-        use_esc(false)
-      } else if gather_read_ok and fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) {
-        use_esc(false)
-      } else if fam.mono_key == "vec_i64"
-        and fid.id == ids.set_unsafe and args.len() == 3 and slot_in(args[0], vs)
-        and !slot_in(args[1], vs) and !slot_in(args[2], vs) {
-        // set_unsafe(v, i, x) writing an in-region i64 vector: the base is the
-        // candidate, index/value are not group slots. Non-escaping — routing swaps
-        // it to set_i64 and its result rejoins the group (fact 9). i64 only; the
-        // rebind that follows is accepted by the .AAssign write-result exception.
-        use_esc(false)
-      } else if fam.mono_key == "vec_i64"
-        and fid.id == ids.append and args.len() == 2 and slot_in(args[0], vs)
-        and !slot_in(args[1], vs) {
-        // append(v, x) keeps the typed i64 vector in-region: base is the group,
-        // appended value is not, and the result rejoins the write group so a
-        // following rebind is accepted by the same write-result exception.
-        use_esc(false)
-      } else if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
-        use_esc(false)
-      } else {
-        use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs))
+      .AGlobalFunc(fid) => cond {
+        fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) => use_esc(false),
+        gather_read_ok and fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) => use_esc(
+          false,
+        ),
+        fam.mono_key == "vec_i64"
+          and fid.id == ids.set_unsafe and args.len() == 3 and slot_in(args[0], vs)
+          and !slot_in(args[1], vs) and !slot_in(args[2], vs) => use_esc(false),
+        fam.mono_key == "vec_i64"
+          and fid.id == ids.append and args.len() == 2 and slot_in(args[0], vs)
+          and !slot_in(args[1], vs) => use_esc(false),
+        user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) => use_esc(false),
+        _ => use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs)),
       },
       _ => use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs)),
     },

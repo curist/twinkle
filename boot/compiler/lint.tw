@@ -768,12 +768,14 @@ fn case_pattern_expr(e: Expr) Bool {
 
 fn equality_dispatch_parts(condition: Expr) EqualityDispatchParts? {
   case condition.kind {
-    .Binary(.Eq, left, right) => if stable_case_scrutinee_expr(left) and case_pattern_expr(right) {
-      .Some(.{ scrutinee: left, pattern: right })
-    } else if stable_case_scrutinee_expr(right) and case_pattern_expr(left) {
-      .Some(.{ scrutinee: right, pattern: left })
-    } else {
-      .None
+    .Binary(.Eq, left, right) => cond {
+      stable_case_scrutinee_expr(left) and case_pattern_expr(right) => .Some(
+        .{ scrutinee: left, pattern: right },
+      ),
+      stable_case_scrutinee_expr(right) and case_pattern_expr(left) => .Some(
+        .{ scrutinee: right, pattern: left },
+      ),
+      _ => .None,
     },
     _ => .None,
   }

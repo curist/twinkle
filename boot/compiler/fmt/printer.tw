@@ -403,12 +403,10 @@ fn import_sort_key(decl: UseDecl) String {
 }
 
 fn import_group(decl: UseDecl) Int {
-  if decl.is_stdlib {
-    0
-  } else if decl.is_relative {
-    2
-  } else {
-    1
+  cond {
+    decl.is_stdlib => 0,
+    decl.is_relative => 2,
+    _ => 1,
   }
 }
 
@@ -1939,9 +1937,8 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: Triv
 
 fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
   body := case arm.expr.kind {
-    .BlockExpr(block) => if block.stmts.len() == 0 {
-      // Unwrap single-expression blocks: { expr } => expr
-      case block.tail {
+    .BlockExpr(block) => cond {
+      block.stmts.len() == 0 => case block.tail {
         .Some(expr) => {
           trivia := tm.get_trivia(expr.span.start)
           trailing_t := tm.get_trailing_trivia(expr.span.end)
@@ -1953,12 +1950,12 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
           }
         },
         .None => format_block(block, tm),
-      }
-    } else if block.stmts.len() == 1
-      and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) {
-      format_stmt(block.stmts[0], tm)
-    } else {
-      format_block(block, tm)
+      },
+      block.stmts.len() == 1 and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) => format_stmt(
+        block.stmts[0],
+        tm,
+      ),
+      _ => format_block(block, tm),
     },
     _ => format_expr(arm.expr, tm),
   }
@@ -1995,8 +1992,8 @@ fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
 
 fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
   body := case arm.body.kind {
-    .BlockExpr(block) => if block.stmts.len() == 0 {
-      case block.tail {
+    .BlockExpr(block) => cond {
+      block.stmts.len() == 0 => case block.tail {
         .Some(expr) => {
           trivia := tm.get_trivia(expr.span.start)
           trailing_t := tm.get_trailing_trivia(expr.span.end)
@@ -2008,12 +2005,12 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
           }
         },
         .None => format_block(block, tm),
-      }
-    } else if block.stmts.len() == 1
-      and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) {
-      format_stmt(block.stmts[0], tm)
-    } else {
-      format_block(block, tm)
+      },
+      block.stmts.len() == 1 and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) => format_stmt(
+        block.stmts[0],
+        tm,
+      ),
+      _ => format_block(block, tm),
     },
     _ => format_expr(arm.body, tm),
   }

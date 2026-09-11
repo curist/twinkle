@@ -68,12 +68,10 @@ fn strip_mono_suffix(tail: String) String {
 }
 
 fn demangle_tail(tail: String) String {
-  if tail == "_init" {
-    "<script>"
-  } else if tail.starts_with("__lambda") {
-    "<closure>"
-  } else {
-    strip_mono_suffix(tail)
+  cond {
+    tail == "_init" => "<script>",
+    tail.starts_with("__lambda") => "<closure>",
+    _ => strip_mono_suffix(tail),
   }
 }
 
