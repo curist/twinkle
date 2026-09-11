@@ -654,6 +654,11 @@ Some built-in types define compiler-known inherent methods.
 * `Byte.to_int() Int`
 * `Byte.from_int(n: Int) Option<Byte>`
 
+**Integer arithmetic helpers:**
+
+* `Int.inc() Int` — equivalent to adding one
+* `Int.dec() Int` — equivalent to subtracting one
+
 **Parsing** — type-qualified constructors returning `Option<T>`:
 
 * `Int.from_string(s: String) Option<Int>` — decimal integer (optional `+`/`-`)

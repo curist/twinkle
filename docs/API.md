@@ -156,10 +156,14 @@ names.sort_by(String.compare)
 | `Int.min` | `fn(a: Int, b: Int) Int` | The smaller of two integers |
 | `Int.max` | `fn(a: Int, b: Int) Int` | The larger of two integers |
 | `Int.clamp` | `fn(n: Int, lo: Int, hi: Int) Int` | Clamp `n` into the inclusive range `[lo, hi]` (assumes `lo <= hi`) |
+| `Int.inc` | `fn(n: Int) Int` | Add one to an integer |
+| `Int.dec` | `fn(n: Int) Int` | Subtract one from an integer |
 
 ```tw
 lo.max(0).min(width)   // clamp via chained dot-calls
 i.clamp(0, xs.len())   // or directly
+i.inc()                // i + 1
+i.dec()                // i - 1
 ```
 
 ## I/O

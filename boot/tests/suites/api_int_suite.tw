@@ -35,4 +35,24 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "inc adds one",
+      fn() {
+        try assert.equal(0.inc(), 1)
+        try assert.equal((-2).inc(), -1)
+        increment := Int.inc
+        try assert.equal(increment(41), 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "dec subtracts one",
+      fn() {
+        try assert.equal(0.dec(), -1)
+        try assert.equal((-2).dec(), -3)
+        decrement := Int.dec
+        try assert.equal(decrement(43), 42)
+        .Ok({})
+      },
+    )
 }
