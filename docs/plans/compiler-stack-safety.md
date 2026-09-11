@@ -1,5 +1,12 @@
 # Compiler stack-safety for deeply-nested IR
 
+> **Superseded as primary by
+> [stack-safety-transform.md](stack-safety-transform.md)** — an ANF→ANF pass that
+> auto-rewrites recursion to a heap shadow stack, fixing the compiler *and* user
+> programs with one mechanism. This per-pass rewrite remains the **fallback** for
+> shapes that transform can't reach. The Phase-2 `prepare.tw` MutVec bailout
+> soundness item below is independent of both and still required.
+
 Status: **Paused at green checkpoint**. This branch lands the first stack-safety
 work: iterative handling for several deep `Let`/else-`If` paths, temporary safe
 fallbacks around remaining recursive hot spots, and clearer CLI stack-overflow
