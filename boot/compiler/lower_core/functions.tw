@@ -39,7 +39,7 @@ pub fn lower_function(
           .None => {},
         }
 
-        i = i + 1
+        i = .inc()
       }
     },
     .None => {},

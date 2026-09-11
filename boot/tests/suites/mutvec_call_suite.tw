@@ -124,7 +124,7 @@ pub fn count_op_calls(wat: String, marker: String, op_name: String) Int {
       for line in body.split("\n") {
         t := line.trim()
         if t.starts_with("call ") and t.contains(op_name) {
-          n = n + 1
+          n = .inc()
         }
       }
       n

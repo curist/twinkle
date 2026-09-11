@@ -110,7 +110,7 @@ pub fn suite() runner.Suite {
 
         for i < 3 {
           d[i] = i
-          i = i + 1
+          i = .inc()
         }
 
         ks := d.keys() // snapshot [0, 1, 2]
@@ -137,7 +137,7 @@ pub fn suite() runner.Suite {
         for i < 500 {
           d["$f${i}_lambda"] = i
           d["$str_${i}_get"] = i + 10000
-          i = i + 1
+          i = .inc()
         }
 
         try assert.equal(d.len(), 1000)

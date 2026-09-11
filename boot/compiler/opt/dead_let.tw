@@ -84,7 +84,7 @@ fn dead_let_spine(
   for i >= 0 {
     frame := frames[i]
     result = .Let(frame.local, frame.op, frame.span, result)
-    i = i - 1
+    i = .dec()
   }
 
   .{ expr: result, changed }

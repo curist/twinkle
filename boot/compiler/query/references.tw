@@ -101,7 +101,7 @@ fn sort_locations(locations: Vector<ReferenceLocation>) Vector<ReferenceLocation
       tmp := sorted[j]
       sorted[j] = sorted[j - 1]
       sorted[j - 1] = tmp
-      j = j - 1
+      j = .dec()
     }
   }
 

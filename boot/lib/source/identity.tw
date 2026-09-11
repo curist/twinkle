@@ -80,7 +80,7 @@ fn percent_decode(s: String) Result<String, String> {
       i = i + 3
     } else {
       out = .append(s[i])
-      i = i + 1
+      i = .inc()
     }
   }
 

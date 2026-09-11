@@ -171,13 +171,13 @@ pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
       return store
     },
     .None => {
-      store.revision = store.revision + 1
+      store.revision = .inc()
       store.source_hashes[module] = source_hash
       return store
     },
   }
 
-  store.revision = store.revision + 1
+  store.revision = .inc()
   store.parsed = .remove(module)
   store.occurrences = .remove(module)
   store = .invalidate_changed_module(module)
@@ -287,7 +287,7 @@ pub fn get_occurrences(store: Store, module: String, key: Int) Lookup<occurrence
 pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
   case store.parsed[module] {
     .Some(entry) => if entry.key == key {
-      store.stats.parse_hits = store.stats.parse_hits + 1
+      store.stats.parse_hits = .inc()
       store.parsed[module] = .{
         key: entry.key,
         value: entry.value,
@@ -300,7 +300,7 @@ pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
     .None => {},
   }
 
-  store.stats.parse_misses = store.stats.parse_misses + 1
+  store.stats.parse_misses = .inc()
   .{ store, value: .None, cache_hit: false }
 }
 
@@ -312,7 +312,7 @@ pub fn put_parsed(store: Store, module: String, key: Int, value: ParsedModule) S
 pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.ResolveResult> {
   case store.resolved[module] {
     .Some(entry) => if entry.key == key {
-      store.stats.resolve_hits = store.stats.resolve_hits + 1
+      store.stats.resolve_hits = .inc()
       store.resolved[module] = .{
         key: entry.key,
         value: entry.value,
@@ -325,7 +325,7 @@ pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.Reso
     .None => {},
   }
 
-  store.stats.resolve_misses = store.stats.resolve_misses + 1
+  store.stats.resolve_misses = .inc()
   .{ store, value: .None, cache_hit: false }
 }
 
@@ -337,7 +337,7 @@ pub fn put_resolved(store: Store, module: String, key: Int, value: resolver.Reso
 pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckResult> {
   case store.typed[module] {
     .Some(entry) => if entry.key == key {
-      store.stats.typecheck_hits = store.stats.typecheck_hits + 1
+      store.stats.typecheck_hits = .inc()
       store.typed[module] = .{
         key: entry.key,
         value: entry.value,
@@ -350,7 +350,7 @@ pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckRes
     .None => {},
   }
 
-  store.stats.typecheck_misses = store.stats.typecheck_misses + 1
+  store.stats.typecheck_misses = .inc()
   .{ store, value: .None, cache_hit: false }
 }
 
@@ -362,7 +362,7 @@ pub fn put_typed(store: Store, module: String, key: Int, value: checker.CheckRes
 pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.LowerResult> {
   case store.lowered[module] {
     .Some(entry) => if entry.key == key {
-      store.stats.lower_hits = store.stats.lower_hits + 1
+      store.stats.lower_hits = .inc()
       store.lowered[module] = .{
         key: entry.key,
         value: entry.value,
@@ -375,7 +375,7 @@ pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.Low
     .None => {},
   }
 
-  store.stats.lower_misses = store.stats.lower_misses + 1
+  store.stats.lower_misses = .inc()
   .{ store, value: .None, cache_hit: false }
 }
 

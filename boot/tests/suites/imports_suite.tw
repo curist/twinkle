@@ -38,7 +38,7 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           case dep.kind {
             .Import => {
-              import_count = import_count + 1
+              import_count = .inc()
             },
             .Prelude => {},
           }
@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           case dep.kind {
             .Import => {
-              import_count = import_count + 1
+              import_count = .inc()
             },
             _ => {},
           }
@@ -173,7 +173,7 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           case dep.kind {
             .Prelude => {
-              prelude_count = prelude_count + 1
+              prelude_count = .inc()
               try assert.is_true(dep.alias.starts_with("__prelude_"))
             },
             _ => {},
@@ -196,7 +196,7 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           case dep.kind {
             .Prelude => {
-              prelude_count = prelude_count + 1
+              prelude_count = .inc()
             },
             _ => {},
           }
@@ -218,7 +218,7 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           case dep.kind {
             .Prelude => {
-              prelude_count = prelude_count + 1
+              prelude_count = .inc()
             },
             _ => {},
           }

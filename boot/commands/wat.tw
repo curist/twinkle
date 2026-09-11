@@ -29,19 +29,19 @@ fn net_parens(line: String) Int {
     if in_string {
       if c == 92 {
         // backslash: skip the escaped byte
-        i = i + 1
+        i = .inc()
       } else if c == 34 {
         in_string = false
       }
     } else if c == 34 {
       in_string = true
     } else if c == 40 {
-      depth = depth + 1
+      depth = .inc()
     } else if c == 41 {
-      depth = depth - 1
+      depth = .dec()
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   depth
@@ -118,7 +118,7 @@ pub fn run_wat_command(parsed: ParseResult) {
     line := lines[i]
 
     if is_func_header(line) and line.contains(needle) {
-      matched = matched + 1
+      matched = .inc()
 
       // Capture the whole `(func ...)` block by paren balance.
       body: Vector<String> = [line]
@@ -128,13 +128,13 @@ pub fn run_wat_command(parsed: ParseResult) {
       for j < n and depth > 0 {
         body = .append(lines[j])
         depth = depth + net_parens(lines[j])
-        j = j + 1
+        j = .inc()
       }
 
       emit_func(body, list_only, calls_only)
       i = j
     } else {
-      i = i + 1
+      i = .inc()
     }
   }
 

@@ -101,7 +101,7 @@ fn unescape_string(raw: String) String {
       break
     }
 
-    k = k + 1
+    k = .inc()
   }
 
   if !has_escape {
@@ -142,7 +142,7 @@ fn unescape_string(raw: String) String {
       i = i + 2
       seg_start = i
     } else {
-      i = i + 1
+      i = .inc()
     }
   }
 
@@ -209,13 +209,13 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
 
     if escaped {
       escaped = false
-      i = i + 1
+      i = .inc()
       continue
     }
 
     if ch == '\\' {
       escaped = true
-      i = i + 1
+      i = .inc()
       continue
     }
 
@@ -241,7 +241,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
       break
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   .{ next_index: i, text: source.slice(content_start, i), terminated: false, found_interp: false }
@@ -279,7 +279,7 @@ fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanSt
       break
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   .{ next_index: i, text: source.slice(content_start, i), terminated: false, found_interp: false }
@@ -322,7 +322,7 @@ fn scan_multiline_segment(source: String, from: Int) ScanStringResult {
       k := j
 
       for k < n and (source[k] == ' ' or source[k] == '\t') {
-        k = k + 1
+        k = .inc()
       }
 
       if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
@@ -339,7 +339,7 @@ fn scan_multiline_segment(source: String, from: Int) ScanStringResult {
       }
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   // Unreachable: the loop only exits via return.
@@ -407,7 +407,7 @@ fn scan_number(
     i := token_start + 2
 
     for i < n and source[i].is_hex_digit() {
-      i = i + 1
+      i = .inc()
     }
 
     return ctx.op_scan(.IntLit, token_start, i, preceded_by_newline, leading_trivia)
@@ -416,17 +416,17 @@ fn scan_number(
   i := token_start + 1
 
   for i < n and source[i].is_digit() {
-    i = i + 1
+    i = .inc()
   }
 
   kind := TokenKind.IntLit
 
   if i + 1 < n and source[i] == '.' and source[i + 1].is_digit() {
     kind = .FloatLit
-    i = i + 1
+    i = .inc()
 
     for i < n and source[i].is_digit() {
-      i = i + 1
+      i = .inc()
     }
   }
 
@@ -452,18 +452,18 @@ fn scan_char_literal(
 
     if escaped {
       escaped = false
-      j = j + 1
+      j = .inc()
       continue
     }
 
     if ch == '\\' {
       escaped = true
-      j = j + 1
+      j = .inc()
       continue
     }
 
     if ch == '\'' {
-      j = j + 1
+      j = .inc()
       terminated = true
       break
     }
@@ -472,7 +472,7 @@ fn scan_char_literal(
       break
     }
 
-    j = j + 1
+    j = .inc()
   }
 
   diagnostic: DiagKind? = .None
@@ -651,7 +651,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         saw_newline = true
       }
 
-      i = i + 1
+      i = .inc()
       continue
     }
 
@@ -668,7 +668,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       i = i + 2
 
       for i < n and !source[i].is_newline() {
-        i = i + 1
+        i = .inc()
       }
 
       trivia_entry := Trivia.{
@@ -705,7 +705,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       host := frame.host
 
       if c == '{' {
-        i = i + 1
+        i = .inc()
         interp_depths = .drop_last().append(InterpFrame.{ depth: depth + 1, host })
         out = .append(
           make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
@@ -715,7 +715,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       if c == '}' {
         if depth > 1 {
-          i = i + 1
+          i = .inc()
           interp_depths = .drop_last().append(InterpFrame.{ depth: depth - 1, host })
           out = .append(
             make_token(
@@ -732,7 +732,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         }
 
         interp_depths = .drop_last()
-        i = i + 1
+        i = .inc()
         scanned := scan_host_segment(source, i, i, host)
         i = scanned.next_index
 
@@ -870,10 +870,10 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if is_ident_start(c) {
-      i = i + 1
+      i = .inc()
 
       for i < n and is_ident_continue(source[i]) {
-        i = i + 1
+        i = .inc()
       }
 
       text := source.slice(token_start, i)
@@ -909,7 +909,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if c == '\"' {
-      i = i + 1
+      i = .inc()
       scanned := scan_string_segment(source, i, i)
       i = scanned.next_index
 

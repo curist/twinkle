@@ -143,13 +143,13 @@ pub fn suite() runner.Suite {
 
         empty_count := 0
         for _ in regexp.must("a*").find_all("") {
-          empty_count = empty_count + 1
+          empty_count = .inc()
         }
         try assert.equal(empty_count, 1)
 
         bb_count := 0
         for _ in regexp.must("a*").find_all("bb") {
-          bb_count = bb_count + 1
+          bb_count = .inc()
         }
         try assert.equal(bb_count, 3)
         .Ok({})

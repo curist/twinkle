@@ -89,7 +89,7 @@ fn pad(s: String, width: Int) String {
 
   for n > 0 {
     out = .concat(" ")
-    n = n - 1
+    n = .dec()
   }
 
   out
@@ -156,7 +156,7 @@ fn format_arg_help(a: arg.Arg) String {
 
   for extra > 0 {
     spaces = .concat(" ")
-    extra = extra - 1
+    extra = .dec()
   }
 
   label.concat(spaces).concat(a.help)
@@ -251,7 +251,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     c := try a.commands.find(fn(c) { c.name == first }).ok_or(.UnknownCommand(first))
     cmd_name = .Some(first)
     active_args = c.args
-    i = i + 1
+    i = .inc()
   }
 
   // Parse remaining args
@@ -260,13 +260,13 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
 
     if past_flags {
       pos = .append(current)
-      i = i + 1
+      i = .inc()
       continue
     }
 
     if current == "--" {
       past_flags = true
-      i = i + 1
+      i = .inc()
       continue
     }
 
@@ -298,7 +298,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
                 return .Err(.MissingValue("--${name}"))
               }
 
-              i = i + 1
+              i = .inc()
               options[name] = argv[i]
             },
             .Positional => pos = .append(current),
@@ -316,7 +316,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
             return .Err(.MissingValue("-${s}"))
           }
 
-          i = i + 1
+          i = .inc()
           options[def.name] = argv[i]
         },
         .Positional => pos = .append(current),
@@ -325,7 +325,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       pos = .append(current)
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   // Validate required args

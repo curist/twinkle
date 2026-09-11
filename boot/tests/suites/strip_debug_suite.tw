@@ -19,7 +19,7 @@ fn has_custom_section(bytes: Vector<Byte>, want: String) Bool {
 
   for i < bytes.len() {
     id := bytes[i].to_int()
-    i = i + 1
+    i = .inc()
 
     // Decode uleb section length.
     len := 0
@@ -27,7 +27,7 @@ fn has_custom_section(bytes: Vector<Byte>, want: String) Bool {
 
     for i < bytes.len() {
       byte := bytes[i].to_int()
-      i = i + 1
+      i = .inc()
       len = len | (byte & 0x7f) << shift
       shift = shift + 7
 
@@ -47,7 +47,7 @@ fn has_custom_section(bytes: Vector<Byte>, want: String) Bool {
 
       for j < bytes.len() {
         byte := bytes[j].to_int()
-        j = j + 1
+        j = .inc()
         name_len = name_len | (byte & 0x7f) << nshift
         nshift = nshift + 7
 
@@ -66,7 +66,7 @@ fn has_custom_section(bytes: Vector<Byte>, want: String) Bool {
             break
           }
 
-          k = k + 1
+          k = .inc()
         }
 
         if matches {

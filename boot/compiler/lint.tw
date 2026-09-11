@@ -1,8 +1,8 @@
-//! Structural lints for `twk lint` (report-only, no auto-fix).
+//! Structural findings for `twk lint`, including report-only diagnostics and
+//! machine-applicable rewrites.
 //!
 //! A pure AST visitor over a parsed Module, producing LintFindings. Run only in
-//! review mode (see docs/plans/archive/linter.md). Currently: L3 record-copy-helper,
-//! L4 unreachable-code, L5 direct-rebinding, constant-fn.
+//! review mode (see docs/plans/archive/linter.md).
 //!
 //! `source` is the module's source text; structural lints that suggest a literal
 //! spelling (constant-fn) slice it by span rather than re-rendering AST values.
@@ -481,9 +481,71 @@ fn lint_block(block: Block, ctx: LintCtx) Vector<LintFinding> {
   out
 }
 
+// ── prefer-inc-dec ──────────────────────────────────────────────────
+/// Return the preferred step method when `value` is exactly `<target> +/- 1`.
+fn step_method_for_name(value: Expr, target: String) String? {
+  case value.kind {
+    .Binary(op, left, right) => if is_ident_named(left, target) {
+      case right.kind {
+        .IntLit(1) => case op {
+          .Add => .Some("inc"),
+          .Sub => .Some("dec"),
+          _ => .None,
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn step_method_for_path(value: Expr, target: Expr) String? {
+  if !is_field_path(target) {
+    return .None
+  }
+
+  case value.kind {
+    .Binary(op, left, right) => if same_path(left, target) {
+      case right.kind {
+        .IntLit(1) => case op {
+          .Add => .Some("inc"),
+          .Sub => .Some("dec"),
+          _ => .None,
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn step_finding(value: Expr, method: String) LintFinding {
+  .{
+    span: value.span,
+    message: "a self-rebinding by one can use `.${method}()`",
+    rule: "prefer-inc-dec",
+    edits: [.{ start: value.span.start, end: value.span.end, replacement: ".${method}()" }],
+  }
+}
+
 fn lint_stmt(stmt: Stmt, ctx: LintCtx) Vector<LintFinding> {
   case stmt {
-    .Let(s) => lint_expr(s.value, ctx),
+    .Let(s) => {
+      out := lint_expr(s.value, ctx)
+
+      if s.is_rebind {
+        case step_method_for_name(s.value, s.name) {
+          .Some(method) => out = .append(step_finding(s.value, method)),
+          .None => {},
+        }
+      }
+
+      out
+    },
     .For(s) => {
       out: Vector<LintFinding> = []
 
@@ -509,7 +571,19 @@ fn lint_stmt(stmt: Stmt, ctx: LintCtx) Vector<LintFinding> {
     },
     .Continue(_) => [],
     .Defer(s) => lint_expr(s.expr, ctx),
-    .Expr(s) => lint_expr(s.expr, ctx),
+    .Expr(s) => {
+      out := lint_expr(s.expr, ctx)
+
+      case s.expr.kind {
+        .Binary(.Assign, target, value) => case step_method_for_path(value, target) {
+          .Some(method) => out = .append(step_finding(value, method)),
+          .None => {},
+        },
+        _ => {},
+      }
+
+      out
+    },
     .ErrorStmt(_) => [],
   }
 }
@@ -663,8 +737,8 @@ fn column_at(source: String, offset: Int) Int {
     } else if source.slice(i - 1, i) == "\n" {
       done = true
     } else {
-      n = n + 1
-      i = i - 1
+      n = .inc()
+      i = .dec()
     }
   }
 
@@ -677,7 +751,7 @@ fn spaces(n: Int) String {
 
   for k < n {
     out = .concat(" ")
-    k = k + 1
+    k = .inc()
   }
 
   out
@@ -819,7 +893,7 @@ fn leading_line_indent(source: String, start: Int) String {
   line_start := start
 
   for line_start > 0 and source.slice(line_start - 1, line_start) != "\n" {
-    line_start = line_start - 1
+    line_start = .dec()
   }
 
   i := line_start
@@ -831,7 +905,7 @@ fn leading_line_indent(source: String, start: Int) String {
       return source.slice(line_start, i)
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   source.slice(line_start, i)
@@ -1396,7 +1470,7 @@ fn scan_rebinding_candidate(block: Block, start: Int, span: Span, tmp: String, s
       },
       .Other => return .None,
     }
-    j = j + 1
+    j = .inc()
   }
 
   // Tail-expression completion (whole-value alias only): the block returns the
@@ -1427,7 +1501,7 @@ fn lint_direct_rebinding(block: Block) Vector<LintFinding> {
       },
       _ => {},
     }
-    i = i + 1
+    i = .inc()
   }
 
   out
@@ -1512,7 +1586,7 @@ fn source_used_after(block: Block, i: Int, name: String) Bool {
       return true
     }
 
-    j = j + 1
+    j = .inc()
   }
 
   case block.tail {
@@ -1583,7 +1657,7 @@ fn line_indent(source: String, start: Int) String? {
   i := start
 
   for i > 0 and source.slice(i - 1, i) != "\n" {
-    i = i - 1
+    i = .dec()
   }
 
   run := source.slice(i, start)

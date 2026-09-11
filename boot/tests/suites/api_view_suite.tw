@@ -38,8 +38,8 @@ fn is_palindrome<C: IndexRead<E>, E: Eq>(c: C) Bool {
       return false
     }
 
-    lo = lo + 1
-    hi = hi - 1
+    lo = .inc()
+    hi = .dec()
   }
 
   true

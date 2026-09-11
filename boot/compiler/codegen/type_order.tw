@@ -208,7 +208,7 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
       if ready {
         emitted[cid] = true
         ordered = .append(cid)
-        remaining = remaining - 1
+        remaining = .dec()
         progress = true
       }
     }

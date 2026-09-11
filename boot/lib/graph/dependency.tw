@@ -64,7 +64,7 @@ pub fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<St
 
   for qi < queue.len() {
     cur := queue[qi]
-    qi = qi + 1
+    qi = .inc()
 
     case g.reverse[cur] {
       .Some(dependents) => {
@@ -93,7 +93,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
 
   for si < stack.len() {
     node := stack[si]
-    si = si + 1
+    si = .inc()
 
     if !reachable.has(node) {
       reachable[node] = true
@@ -123,7 +123,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
       .Some(deps) => {
         for dep in deps {
           if reachable.has(dep) {
-            count = count + 1
+            count = .inc()
           }
         }
       },
@@ -153,7 +153,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
 
   for qi < queue.len() {
     node := queue[qi]
-    qi = qi + 1
+    qi = .inc()
     result = .append(node)
 
     // Find nodes that depend on this node (via reverse map)
@@ -168,7 +168,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
               .Some(n) => n,
               .None => 0,
             }
-            deg = deg - 1
+            deg = .dec()
             dep_count[dep] = deg
 
             if deg == 0 {
@@ -237,7 +237,7 @@ fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>
 
   for si < stack.len() {
     cur := stack[si]
-    si = si + 1
+    si = .inc()
 
     if cur == start {
       return true

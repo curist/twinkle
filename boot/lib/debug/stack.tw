@@ -44,7 +44,7 @@ fn parse_hex_prefix(s: String) Int {
     case hex_digit_val(s.at(i)) {
       .Some(v) => {
         acc = acc * 16 + v
-        i = i + 1
+        i = .inc()
       },
       .None => {
         i = n

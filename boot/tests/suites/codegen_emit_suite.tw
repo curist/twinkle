@@ -1953,11 +1953,11 @@ fn func_block_wat(wat: String, needle: String) String {
       for j < n and depth > 0 {
         block = "${block}\n${lines[j]}"
         depth = depth + wat_net_parens(lines[j])
-        j = j + 1
+        j = .inc()
       }
       return block
     }
-    i = i + 1
+    i = .inc()
   }
   ""
 }

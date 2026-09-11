@@ -271,7 +271,7 @@ fn find_offset_nth(src: String, needle: String, n: Int) Int? {
         return .Some(i)
       }
 
-      count = count + 1
+      count = .inc()
     }
   }
 
@@ -857,7 +857,7 @@ pub fn suite() runner.Suite {
 
         for m in msgs {
           if m.contains("does not satisfy IndexRead") {
-            n = n + 1
+            n = .inc()
           }
         }
 

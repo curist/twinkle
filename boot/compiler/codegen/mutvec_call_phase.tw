@@ -272,7 +272,7 @@ fn build_mutvec_call_plan(
         .None => continue,
       }
       sib_id := next_id
-      next_id = next_id + 1
+      next_id = .inc()
       extra[r.generic_func] = added + 1
       siblings = .append(
         AnfFunctionDef.{

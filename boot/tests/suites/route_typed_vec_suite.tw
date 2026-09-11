@@ -54,7 +54,7 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
     for sid in pf.slots.keys() {
       case pf.slots[sid] {
         .Some(info) => if is_pvec_i64(info) {
-          n = n + 1
+          n = .inc()
         },
         .None => {},
       }
@@ -70,7 +70,7 @@ fn typed_count(d: Dict<String, Bool>) Int {
   for k in d.keys() {
     case d[k] {
       .Some(v) => if v {
-        n = n + 1
+        n = .inc()
       },
       .None => {},
     }
@@ -329,7 +329,7 @@ pub fn suite() runner.Suite {
                 // Every routed typed-vector slot carries TypedVec(elem) (not the
                 // boxed TypedRef default) and a wasm_type derived from that repr.
                 .TypedVec(elem) => {
-                  typed_slots = typed_slots + 1
+                  typed_slots = .inc()
 
                   try assert.ok(
                     val_type_eq(info.wasm_type, pvec_wasm_type(elem)),

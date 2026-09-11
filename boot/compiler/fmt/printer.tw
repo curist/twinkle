@@ -118,7 +118,7 @@ fn get_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
       .None => {},
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -152,7 +152,7 @@ fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Triv
       .None => {},
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -287,7 +287,7 @@ fn ends_with_module_doc_trivia(trivia: Vector<Trivia>) Bool {
   for idx >= 0 {
     case trivia[idx].kind {
       .BlankLine => {
-        idx = idx - 1
+        idx = .dec()
       },
       .ModuleDocComment => return true,
       _ => return false,
@@ -369,7 +369,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
           case items[i] {
             .Use(decl) => {
               uses = .append(sort_selective_items(decl))
-              i = i + 1
+              i = .inc()
             },
             _ => break,
           }
@@ -383,7 +383,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
       },
       _ => {
         result = .append(items[i])
-        i = i + 1
+        i = .inc()
       },
     }
   }
@@ -455,7 +455,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
     start := 0
 
     for start < leading_file_trivia.len() and is_blank_trivia(leading_file_trivia[start]) {
-      start = start + 1
+      start = .inc()
     }
 
     if start < leading_file_trivia.len() {
@@ -535,7 +535,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
           break
         }
 
-        group_end = group_end + 1
+        group_end = .inc()
       }
 
       group_items := items.slice(i, group_end)
@@ -1087,7 +1087,7 @@ fn join_block_docs(
       doc.hard_line()
     }
     result = doc.concat([result, sep, docs[i]])
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -1680,7 +1680,7 @@ fn finish_method_chain(base: Expr, segments: Vector<ChainSegment>) ChainResult? 
 
   for i >= 0 {
     reversed = .append(segments[i])
-    i = i - 1
+    i = .dec()
   }
 
   .Some(.{ base, segments: reversed })
@@ -2455,7 +2455,7 @@ fn rstrip_spaces(s: String) String {
   end := s.len()
 
   for end > 0 and s[end - 1] == ' ' {
-    end = end - 1
+    end = .dec()
   }
 
   s.slice(0, end)
@@ -2702,11 +2702,11 @@ fn escape_string(s: String) String {
         }
 
         result = .append(esc)
-        i = i + 1
+        i = .inc()
         seg_start = i
       },
       .None => {
-        i = i + 1
+        i = .inc()
       },
     }
   }

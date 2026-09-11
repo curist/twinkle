@@ -429,7 +429,7 @@ pub fn specialize_module_with_cap_sem(
       },
     }
     clone_id := next
-    next = next + 1
+    next = .inc()
     clone := AnfFunctionDef.{
       func_id: .{ id: clone_id },
       name: "${orig.name}$v${clone_id}",

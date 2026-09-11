@@ -139,22 +139,22 @@ fn recover_to_next_item(c: Cursor) Cursor {
 
     case k {
       .LParen => {
-        paren_depth = paren_depth + 1
+        paren_depth = .inc()
       },
       .RParen => if paren_depth > 0 {
-        paren_depth = paren_depth - 1
+        paren_depth = .dec()
       },
       .LBracket => {
-        bracket_depth = bracket_depth + 1
+        bracket_depth = .inc()
       },
       .RBracket => if bracket_depth > 0 {
-        bracket_depth = bracket_depth - 1
+        bracket_depth = .dec()
       },
       .LBrace => {
-        brace_depth = brace_depth + 1
+        brace_depth = .inc()
       },
       .RBrace => if brace_depth > 0 {
-        brace_depth = brace_depth - 1
+        brace_depth = .dec()
       } else if cur.preceded_by_newline() {
         return cur
       },
@@ -3118,11 +3118,11 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
   pos := decl_start - 1
 
   for pos > 0 and source.char_code_at(pos) != 10 {
-    pos = pos - 1
+    pos = .dec()
   }
 
   if pos > 0 {
-    pos = pos - 1
+    pos = .dec()
   }
 
   lines: Vector<String> = []
@@ -3131,7 +3131,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
     line_start := pos
 
     for line_start > 0 and source.char_code_at(line_start - 1) != 10 {
-      line_start = line_start - 1
+      line_start = .dec()
     }
 
     line := source.slice(line_start, pos + 1)
@@ -3162,7 +3162,7 @@ fn extract_module_doc(source: String) String? {
     line_end := pos
 
     for line_end < len and source.char_code_at(line_end) != 10 {
-      line_end = line_end + 1
+      line_end = .inc()
     }
 
     line := source.slice(pos, line_end)

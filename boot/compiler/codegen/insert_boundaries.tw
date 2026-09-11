@@ -47,7 +47,7 @@ type MaterializeAtomsResult = .{ atoms: Vector<Atom>, closure_lets: Vector<Closu
 
 fn alloc_local(ctx: BCtx) AllocResult {
   id := LocalId.{ id: ctx.next_local }
-  ctx.next_local = ctx.next_local + 1
+  ctx.next_local = .inc()
   .{ local: id, ctx }
 }
 
@@ -189,7 +189,7 @@ fn rewrite_func(
     }
   }
 
-  next = next + 1
+  next = .inc()
   ctx := BCtx.{
     registry,
     builtins,

@@ -19,7 +19,7 @@ pub fn new(source: String) LineIndex {
       starts = .append(i + 1)
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   .{ source, line_starts: starts }
@@ -85,7 +85,7 @@ fn line_for_offset(index: LineIndex, offset: Int) Int {
       break
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   line
@@ -114,7 +114,7 @@ fn byte_offset_to_scalars(s: String, byte_offset: Int) Int {
       return count
     }
 
-    count = count + 1
+    count = .inc()
   }
 
   count
@@ -132,7 +132,7 @@ fn scalars_to_byte_offset(s: String, scalar_count: Int) Int? {
   count := 0
 
   for cp in utf16.code_points(s) {
-    count = count + 1
+    count = .inc()
 
     if count == scalar_count {
       return .Some(cp.byte_end)

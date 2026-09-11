@@ -353,7 +353,7 @@ fn record_thread_call(s: UseScan, call_res: Int) UseScan {
 }
 
 fn bump_exit(s: UseScan) UseScan {
-  s.exit_count = s.exit_count + 1
+  s.exit_count = .inc()
   s
 }
 

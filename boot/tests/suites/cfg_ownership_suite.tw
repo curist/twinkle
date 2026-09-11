@@ -119,7 +119,7 @@ fn reciprocal_edge_mismatches(func: cfg.CfgFunction) Int {
     for succ in block.succs {
       case block_by_id(func, succ.target) {
         .Some(target_block) => if !has_pred_from(target_block, block.id, succ.args) {
-          n = n + 1
+          n = .inc()
         },
         .None => n = n + 1,
       }
@@ -128,7 +128,7 @@ fn reciprocal_edge_mismatches(func: cfg.CfgFunction) Int {
     for pred in block.preds {
       case block_by_id(func, pred.target) {
         .Some(pred_block) => if !has_succ_to(pred_block, block.id, pred.args) {
-          n = n + 1
+          n = .inc()
         },
         .None => n = n + 1,
       }
@@ -142,7 +142,7 @@ fn predless_non_entry_blocks(func: cfg.CfgFunction) Int {
   n := 0
   for block in func.blocks {
     if block.id.id != 0 and block.preds.len() == 0 {
-      n = n + 1
+      n = .inc()
     }
   }
   n

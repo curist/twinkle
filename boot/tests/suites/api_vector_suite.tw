@@ -12,7 +12,7 @@ fn sort_suite_is_sorted(xs: Vector<Int>) Bool {
       ok = false
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   ok
@@ -70,7 +70,7 @@ fn sort_suite_is_sorted_f(xs: Vector<Float>) Bool {
       ok = false
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   ok
@@ -101,7 +101,7 @@ fn stab_is_stable(xs: Vector<SortStabItem>) Bool {
       }
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   ok
@@ -117,7 +117,7 @@ fn build_seq_from(start: Int, count: Int) Vector<Int> {
 
   for i < count {
     xs = .append(start + i)
-    i = i + 1
+    i = .inc()
   }
 
   xs
@@ -171,7 +171,7 @@ fn position_via_index_read<C: IndexRead<E>, E: Eq>(c: C, target: E) Int {
       return i
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   -1
@@ -185,7 +185,7 @@ fn region_eq_via_index_read<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int) Bool {
       return false
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   true
@@ -207,7 +207,7 @@ fn build_scaled_seq(count: Int, scale: Int) Vector<Int> {
 
   for i < count {
     xs = .append(i * scale)
-    i = i + 1
+    i = .inc()
   }
 
   xs
@@ -219,7 +219,7 @@ fn assert_vec_int_eq(actual: Vector<Int>, expected: Vector<Int>) Result<Void, St
 
   for i < actual.len() {
     try assert.equal(actual[i], expected[i])
-    i = i + 1
+    i = .inc()
   }
 
   .Ok({})
@@ -231,7 +231,7 @@ fn expect_range(actual: Vector<Int>, start: Int, end: Int) Result<Void, String> 
 
   for i < actual.len() {
     try assert.equal(actual[i], start + i)
-    i = i + 1
+    i = .inc()
   }
 
   .Ok({})
@@ -484,7 +484,7 @@ pub fn suite() runner.Suite {
           e := ends[i]
           try expect_range(regular.slice(s, e), s, e)
           try expect_range(relaxed.slice(s, e), s, e)
-          i = i + 1
+          i = .inc()
         }
 
         try expect_range(regular.slice(1099, 1100), 1099, 1100)
@@ -532,9 +532,9 @@ pub fn suite() runner.Suite {
           start := 0
           for start <= n {
             try expect_range(v.slice(start, n), start, n)
-            start = start + 1
+            start = .inc()
           }
-          si = si + 1
+          si = .inc()
         }
         .Ok({})
       },
@@ -694,7 +694,7 @@ pub fn suite() runner.Suite {
 
         for i < 40 {
           grown = .append(i)
-          i = i + 1
+          i = .inc()
         }
 
         try assert.equal(seed.len(), 8)
@@ -1180,7 +1180,7 @@ pub fn suite() runner.Suite {
           try assert.equal(v.len(), expected_len)
           try assert.equal(v[v.len() - 1], expected_len - 1)
           v = .drop_last()
-          expected_len = expected_len - 1
+          expected_len = .dec()
         }
 
         try assert.equal(v.len(), 0)

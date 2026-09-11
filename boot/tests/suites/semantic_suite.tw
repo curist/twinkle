@@ -106,7 +106,7 @@ pub fn suite() runner.Suite {
       fn() {
         acc := 0
         f := fn() Int { acc }
-        acc = acc + 1
+        acc = .inc()
         try assert.equal(f(), 0)
         try assert.equal(acc, 1)
         .Ok({})

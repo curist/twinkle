@@ -85,7 +85,7 @@ fn find_header_end_bytes(buffer: Vector<Byte>) Int {
         .None => return -1,
       },
       .None => {
-        end = end - 1
+        end = .dec()
       },
     }
   }

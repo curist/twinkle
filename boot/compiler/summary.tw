@@ -480,7 +480,7 @@ fn run_scc(
     next_dirty: Dict<Int, Bool> = Dict.new()
     for id in worklist {
       if timed {
-        visits = visits + 1
+        visits = .inc()
       }
       f := case index.get(id) {
         .Some(fn0) => fn0,
@@ -497,7 +497,7 @@ fn run_scc(
       live_acc = live_cache_put(live_acc, id, res.live)
       if !same_summary(table_get(table, id), next) {
         if timed {
-          changed_summaries = changed_summaries + 1
+          changed_summaries = .inc()
         }
         table = table_put(table, id, next)
         case callers.get(id) {
@@ -514,7 +514,7 @@ fn run_scc(
       k
     }
     worklist = nd.sort()
-    rounds = rounds + 1
+    rounds = .inc()
     if trace {
       eprintln(
         "[trace:summary:scc:round] first=${if members.len() > 0 {
@@ -913,7 +913,7 @@ fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable, sem: Opti
         .None => {},
       }
     }
-    rounds = rounds + 1
+    rounds = .inc()
   }
   ret_derived := false
   for blk in f.blocks {
@@ -1130,7 +1130,7 @@ fn run_scc_variants(
             changed = true
           }
         }
-        rounds = rounds + 1
+        rounds = .inc()
       }
 
       if changed {
@@ -1160,7 +1160,7 @@ fn run_scc_variants(
         }
       }
     }
-    outer = outer + 1
+    outer = .inc()
   }
 
   // publish survivors: shell tier always (projected to shell-only paths, preserves
@@ -1666,7 +1666,7 @@ fn reachable_variants(
       }
     }
     again = st.changed
-    passes = passes + 1
+    passes = .inc()
   }
   st.reachable
 }
@@ -2025,13 +2025,13 @@ pub fn compute_for_roots_cached(
       }
     }
     if run {
-      run_sccs = run_sccs + 1
+      run_sccs = .inc()
       run_members = run_members + scc.len()
       r := run_scc(scc, index, user_ids, table, b, sem, roots, cache, empty_live_cache())
       table = r.table
       cache = r.cache
     } else {
-      skipped_sccs = skipped_sccs + 1
+      skipped_sccs = .inc()
       skipped_members = skipped_members + scc.len()
     }
   }
@@ -2123,7 +2123,7 @@ pub fn compute_for_roots_reusing(
   wi := 0
   for wi < work.len() {
     id := work[wi]
-    wi = wi + 1
+    wi = .inc()
     already := case unsafe.get(id) {
       .Some(true) => true,
       _ => false,
@@ -2163,7 +2163,7 @@ pub fn compute_for_roots_reusing(
     seed := if !is_unsafe and is_wanted {
       case carried.by_func.get(f.func_id) {
         .Some(s) => {
-          reused = reused + 1
+          reused = .inc()
           s
         },
         .None => conservative_summary(f),
@@ -2190,7 +2190,7 @@ pub fn compute_for_roots_reusing(
       case fix_cache_get(carried_fix, id) {
         .Some(fx) => {
           cache = fix_cache_put(cache, id, fx)
-          reused_fix = reused_fix + 1
+          reused_fix = .inc()
         },
         .None => {},
       }
@@ -2227,12 +2227,12 @@ pub fn compute_for_roots_reusing(
     // roots are all pre-seeded is skipped: members keep their carried seed (their
     // fixed point) and roots keep the carried fix.
     if in_wanted and (!all_safe or root_missing_fix) {
-      run_sccs = run_sccs + 1
+      run_sccs = .inc()
       r := run_scc(scc, index, user_ids, table, b, sem, roots, cache, empty_live_cache())
       table = r.table
       cache = r.cache
     } else {
-      skipped_sccs = skipped_sccs + 1
+      skipped_sccs = .inc()
     }
   }
   table = with_dedupe_helpers(table, view, b, sem)
@@ -2254,7 +2254,7 @@ pub fn compute_for_roots_reusing(
     mismatches := 0
     for f in view.functions {
       if !same_summary(table_get(table, f.func_id), table_get(fresh, f.func_id)) {
-        mismatches = mismatches + 1
+        mismatches = .inc()
         eprintln("[summary:reuse:verify] MISMATCH func=${f.func_id}")
       }
     }

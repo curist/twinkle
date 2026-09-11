@@ -260,7 +260,7 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
         }
 
         seen[vid.id] = true
-        explicit_count = explicit_count + 1
+        explicit_count = .inc()
       },
       .Wildcard => {
         if i != last_idx {
@@ -583,7 +583,7 @@ fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoT
         }
 
         seen[s] = true
-        string_count = string_count + 1
+        string_count = .inc()
       },
       .Wildcard => {
         if i != last_idx {

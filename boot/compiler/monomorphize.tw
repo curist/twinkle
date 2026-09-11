@@ -87,7 +87,7 @@ fn match_type_against(pattern: MonoType, concrete: MonoType, out: Dict<String, M
 
         for i < pp.len() and i < pc.len() {
           out = match_type_against(pp[i], pc[i], out)
-          i = i + 1
+          i = .inc()
         }
 
         match_type_against(rp, rc, out)
@@ -104,7 +104,7 @@ fn match_type_against(pattern: MonoType, concrete: MonoType, out: Dict<String, M
 
         for i < ap.len() and i < ac.len() {
           out = match_type_against(ap[i], ac[i], out)
-          i = i + 1
+          i = .inc()
         }
 
         out
@@ -353,7 +353,7 @@ fn join_parts(parts: Vector<String>) String {
 
   for i < parts.len() {
     result = .concat("_").concat(parts[i])
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -418,7 +418,7 @@ fn infer_call_subst(ctx: MonoCtx, gf: FunctionDef, args: Vector<CoreExpr>, call_
 
   for i < gf.params.len() and i < args.len() {
     subst = match_type_against(gf.params[i].ty, args[i].ty, subst)
-    i = i + 1
+    i = .inc()
   }
 
   if !subst_covers(type_params, subst) {
@@ -454,7 +454,7 @@ fn recover_call_return(
 
   for i < arg_tys.len() and i < target.params.len() {
     local = match_type_against(target.params[i].ty, arg_tys[i], local)
-    i = i + 1
+    i = .inc()
   }
 
   direct := apply_subst(target.return_ty, local)
@@ -703,7 +703,7 @@ fn recover_contract_elem(ctx: MonoCtx, recv: MonoType, contract: BuiltinContract
         _ => {},
       }
 
-      j = j + 1
+      j = .inc()
     }
   }
 
@@ -1729,7 +1729,7 @@ fn rewrite_let_spine(
   for i >= 0 {
     frame := frames[i]
     result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
-    i = i - 1
+    i = .dec()
   }
 
   result.kind
@@ -1772,7 +1772,7 @@ fn rewrite_if_spine(
       ty: frame.ty,
       span: frame.span,
     }
-    i = i - 1
+    i = .dec()
   }
 
   result.kind
@@ -1836,7 +1836,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
 
   for qi < queue.items.len() {
     item := queue.items[qi]
-    qi = qi + 1
+    qi = .inc()
 
     case func_map[item.func_id.id] {
       .Some(gf) => {
@@ -1867,7 +1867,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
 
         // Assign fresh FuncId
         new_fid := FuncId.{ id: next_func_id }
-        next_func_id = next_func_id + 1
+        next_func_id = .inc()
         spec_map[key] = new_fid
 
         // Build specialized name

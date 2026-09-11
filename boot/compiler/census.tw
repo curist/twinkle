@@ -128,7 +128,7 @@ fn empty_tally() CensusTally {
 }
 
 fn inc(fc: FamilyCount, in_place: Bool) FamilyCount {
-  fc.candidates = fc.candidates + 1
+  fc.candidates = .inc()
   fc.in_place = fc.in_place
   + if in_place {
     1

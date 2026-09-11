@@ -467,7 +467,7 @@ fn test_rt_core_host_imports() Result<Void, String> {
 
   for imp in m.imports {
     if imp.module == "twinkle_runtime" {
-      host_count = host_count + 1
+      host_count = .inc()
 
       if imp.name == "print" {
         found_print = true
@@ -729,7 +729,7 @@ fn test_rt_str_concat_uses_array_copy() Result<Void, String> {
   for instr in f.body {
     case instr {
       .ArrayCopy(_, _) => {
-        count = count + 1
+        count = .inc()
       },
       _ => {},
     }
@@ -750,7 +750,7 @@ fn test_rt_str_substring_clamps() Result<Void, String> {
   for instr in f.body {
     case instr {
       .If(_, _, _) => {
-        if_count = if_count + 1
+        if_count = .inc()
       },
       _ => {},
     }

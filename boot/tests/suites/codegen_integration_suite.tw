@@ -933,7 +933,7 @@ fn test_index_write_and_mutvec_emit_panic_oob() Result<Void, String> {
         return assert.fail("rt.arr ${f.name} is missing its __panic_oob bounds guard")
       }
 
-      guarded = guarded + 1
+      guarded = .inc()
     }
   }
 

@@ -69,7 +69,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
 
 pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
   id := LocalId.{ id: ctx.next_local }
-  ctx.next_local = ctx.next_local + 1
+  ctx.next_local = .inc()
   scope_idx := ctx.locals.len() - 1
   scope := ctx.locals[scope_idx]
   scope[name] = id
@@ -84,13 +84,13 @@ pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
 
 pub fn alloc_anon_local(ctx: LowerCtx) LocalOut {
   id := LocalId.{ id: ctx.next_local }
-  ctx.next_local = ctx.next_local + 1
+  ctx.next_local = .inc()
   .{ local: id, ctx }
 }
 
 pub fn alloc_func_id(ctx: LowerCtx) FuncIdOut {
   id := FuncId.{ id: ctx.next_func }
-  ctx.next_func = ctx.next_func + 1
+  ctx.next_func = .inc()
   .{ func_id: id, ctx }
 }
 
@@ -113,7 +113,7 @@ pub fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
       .None => {},
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   .None

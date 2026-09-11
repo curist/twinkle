@@ -28,7 +28,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
   top := stack.len()
 
   for top > 0 {
-    top = top - 1
+    top = .dec()
     entry := stack[top]
 
     case entry.doc {
@@ -52,7 +52,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           }
 
           buf = .append(" ")
-          col = col + 1
+          col = .inc()
         },
         .Break => {
           buf = .append("\n")
@@ -101,7 +101,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           )
           stack = pushed.stack
           top = pushed.top
-          idx = idx - 1
+          idx = .dec()
         }
       },
       .Group(inner, flat_width) => if flat_width >= 0 and flat_width <= width - col {
@@ -230,7 +230,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       },
       .Line => {
         // In flat mode, Line becomes a single space
-        rem = rem - 1
+        rem = .dec()
       },
       .HardLine => {
         // HardLine can never be rendered flat
@@ -248,7 +248,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
 
         for idx >= 0 {
           fit_stack = .append(docs[idx])
-          idx = idx - 1
+          idx = .dec()
         }
       },
       .Group(inner, _) => {
@@ -265,7 +265,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
 
         for idx >= 0 {
           fit_stack = .append(children[idx])
-          idx = idx - 1
+          idx = .dec()
         }
       },
     }
@@ -284,7 +284,7 @@ fn spaces(n: Int) String {
 
   for i < n {
     buf = .append(" ")
-    i = i + 1
+    i = .inc()
   }
 
   buf.join("")

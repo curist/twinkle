@@ -152,7 +152,7 @@ pub fn lower_closure(
           .None => {},
         }
 
-        i = i + 1
+        i = .inc()
       }
     },
     _ => {},

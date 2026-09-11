@@ -76,7 +76,7 @@ pub fn suite() runner.Suite {
         count := 0
 
         for _ in 0..0 {
-          count = count + 1
+          count = .inc()
         }
 
         try assert.equal(count, 0)
@@ -300,7 +300,7 @@ pub fn suite() runner.Suite {
         count := 0
 
         for _, idx in it {
-          count = count + 1
+          count = .inc()
         }
 
         try assert.equal(count, 0)

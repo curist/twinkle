@@ -58,7 +58,7 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
     for sid in pf.slots.keys() {
       case pf.slots[sid] {
         .Some(info) => if is_pvec_i64(info) {
-          n = n + 1
+          n = .inc()
         },
         .None => {},
       }

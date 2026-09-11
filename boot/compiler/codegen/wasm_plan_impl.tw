@@ -72,7 +72,7 @@ pub fn plan_wasm_types_impl(
         "function '${func.name}' capture slot S${sid.id} / L${info.source_local.id}",
       )
       reg = register_mono(reg, info.mono, ctx)
-      total_slot_reg = total_slot_reg + 1
+      total_slot_reg = .inc()
     }
 
     for sid in func.params {
@@ -83,7 +83,7 @@ pub fn plan_wasm_types_impl(
         "function '${func.name}' parameter slot S${sid.id} / L${info.source_local.id}",
       )
       reg = register_mono(reg, info.mono, ctx)
-      total_slot_reg = total_slot_reg + 1
+      total_slot_reg = .inc()
     }
 
     for sid in func.locals {
@@ -94,12 +94,12 @@ pub fn plan_wasm_types_impl(
         "function '${func.name}' local slot S${sid.id} / L${info.source_local.id}",
       )
       reg = register_mono(reg, info.mono, ctx)
-      total_slot_reg = total_slot_reg + 1
+      total_slot_reg = .inc()
     }
 
     validate_concrete_mono(func.return_mono, env, "function '${func.name}' return type")
     reg = register_mono(reg, func.return_mono, ctx)
-    total_slot_reg = total_slot_reg + 1
+    total_slot_reg = .inc()
   }
 
   t2 := date.now()
@@ -735,7 +735,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
           if ready {
             emitted[name] = true
             ordered_names = .append(name)
-            remaining = remaining - 1
+            remaining = .dec()
             progress = true
           }
         },
@@ -752,7 +752,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
           .None => {
             emitted[name] = true
             ordered_names = .append(name)
-            remaining = remaining - 1
+            remaining = .dec()
           },
         }
       }

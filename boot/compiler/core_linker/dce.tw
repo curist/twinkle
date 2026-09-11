@@ -70,7 +70,7 @@ fn bfs_reachable(index: ReachabilityIndex, queue: Vector<Int>, reachable: Dict<I
 
   for qi < state.queue.len() {
     fid := state.queue[qi]
-    qi = qi + 1
+    qi = .inc()
     refs := index.get_body_refs(fid)
     state = .add_refs(refs)
   }
@@ -204,7 +204,7 @@ pub fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vecto
         i := arms.len() - 1
         for i >= 0 {
           stack = push_expr(stack, arms[i].body)
-          i = i - 1
+          i = .dec()
         }
         stack = push_expr(stack, scrutinee)
       },
@@ -227,7 +227,7 @@ pub fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vecto
         i := fields.len() - 1
         for i >= 0 {
           stack = push_expr(stack, fields[i].value)
-          i = i - 1
+          i = .dec()
         }
       },
       .RecordGet(rec, _) => {
@@ -263,7 +263,7 @@ fn push_exprs_reverse(stack: Vector<CoreExpr>, exprs: Vector<CoreExpr>) Vector<C
 
   for i >= 0 {
     out = push_expr(out, exprs[i])
-    i = i - 1
+    i = .dec()
   }
 
   out

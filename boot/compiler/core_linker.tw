@@ -77,7 +77,7 @@ pub fn link(
     for f in m.core.functions {
       local_to_global[f.func_id.id] = next_global
       name_to_id[f.name] = next_global
-      next_global = next_global + 1
+      next_global = .inc()
     }
 
     global_ids[m.path] = name_to_id
@@ -94,7 +94,7 @@ pub fn link(
 
     for local_id in m.extern_imports.keys() {
       local_to_global[local_id] = next_global
-      next_global = next_global + 1
+      next_global = .inc()
     }
 
     defined_ids[m.path] = local_to_global
@@ -118,7 +118,7 @@ pub fn link(
 
     for i in 0..m.defined_global_count {
       local_to_global[i] = next_global_local
-      next_global_local = next_global_local + 1
+      next_global_local = .inc()
     }
 
     defined_global_ids[m.path] = local_to_global
@@ -484,7 +484,7 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
       ty: MonoType.Void,
       span: s,
     }
-    i = i - 1
+    i = .dec()
   }
 
   combined := FunctionDef.{
@@ -571,7 +571,7 @@ fn build_type_remap(
       },
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   out
@@ -721,7 +721,7 @@ fn remap_let_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr 
   for i >= 0 {
     frame := frames[i]
     result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
-    i = i - 1
+    i = .dec()
   }
 
   result
@@ -759,7 +759,7 @@ fn remap_if_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
       ty: frame.ty,
       span: frame.span,
     }
-    i = i - 1
+    i = .dec()
   }
 
   result
@@ -967,7 +967,7 @@ fn remap_let_expr(
   for i >= 0 {
     frame := frames[i]
     result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
-    i = i - 1
+    i = .dec()
   }
 
   result
@@ -1010,7 +1010,7 @@ fn remap_if_expr(
       ty: frame.ty,
       span: frame.span,
     }
-    i = i - 1
+    i = .dec()
   }
 
   result

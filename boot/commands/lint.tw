@@ -441,14 +441,14 @@ fn print_summary(findings: Vector<Finding>, explain: Bool) {
 
   for f in findings {
     if f.edits.len() > 0 {
-      fixable = fixable + 1
+      fixable = .inc()
       cur := case by_rule[f.rule] {
         .Some(n) => n,
         .None => 0,
       }
       by_rule[f.rule] = cur + 1
     } else {
-      report_only = report_only + 1
+      report_only = .inc()
     }
   }
 
@@ -538,6 +538,7 @@ pub type FixFlags = .{
   record_copy_helper: Bool,
   redundant_record_prefix: Bool,
   prefer_cond: Bool,
+  prefer_inc_dec: Bool,
 }
 
 /// A `FixFlags` with every fix disabled — the base for `--fix-<rule>` selection
@@ -554,6 +555,7 @@ pub fn no_fixes() FixFlags {
     record_copy_helper: false,
     redundant_record_prefix: false,
     prefer_cond: false,
+    prefer_inc_dec: false,
   }
 }
 
@@ -570,6 +572,7 @@ fn wants(flags: FixFlags, rule: String) Bool {
     "record-copy-helper" => flags.record_copy_helper,
     "redundant-record-prefix" => flags.redundant_record_prefix,
     "prefer-cond" => flags.prefer_cond,
+    "prefer-inc-dec" => flags.prefer_inc_dec,
     _ => false,
   }
 }
@@ -589,6 +592,7 @@ fn fix_flags_from_args(parsed: ParseResult) FixFlags {
     record_copy_helper: fix_all or parsed.has_flag("fix-record-copy-helper"),
     redundant_record_prefix: fix_all or parsed.has_flag("fix-redundant-record-prefix"),
     prefer_cond: fix_all or parsed.has_flag("fix-prefer-cond"),
+    prefer_inc_dec: fix_all or parsed.has_flag("fix-prefer-inc-dec"),
   }
 }
 
@@ -604,6 +608,7 @@ fn any(flags: FixFlags) Bool {
     or flags.record_copy_helper
     or flags.redundant_record_prefix
     or flags.prefer_cond
+    or flags.prefer_inc_dec
 }
 
 /// Edits for the selected rules, grouped by file path (skips report-only and
@@ -706,7 +711,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       }
       applied[r.path] = prior + r.count
     }
-    iterations = iterations + 1
+    iterations = .inc()
   }
 
   if applied.len() == 0 {

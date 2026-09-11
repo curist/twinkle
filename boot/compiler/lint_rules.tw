@@ -215,6 +215,27 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "prefer-inc-dec" => .Some(
+      .{
+        brief: "a self-rebinding by one can use `inc` or `dec`",
+        detailed:
+          \\A whole self-rebinding that only adds or subtracts one reads more
+          \\directly through the Int step methods:
+          \\
+          \\    // Avoid
+          \\    i = i + 1
+          \\    state.remaining = state.remaining - 1
+          \\
+          \\    // Prefer
+          \\    i = .inc()
+          \\    state.remaining = .dec()
+          \\
+          \\The auto-fix only matches exact local or field-path self-rebindings.
+          \\Indexed paths and compound arithmetic are left unchanged so the
+          \\rewrite never changes evaluation count or arithmetic grouping.
+        ,
+      },
+    ),
     "prefer-cond" => .Some(
       .{
         brief: "use `cond` for a multi-way `if`/`else if`/`else` chain",

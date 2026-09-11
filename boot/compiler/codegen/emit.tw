@@ -776,7 +776,7 @@ fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, backend
   for f in fields {
     body = .append(.LocalGet(0)).append(.RefCast(false, .Named(sym))).append(.StructGet(sym, idx))
     body = emit_box_lib_field(f.ty, backend, body)
-    idx = idx + 1
+    idx = .inc()
   }
 
   body = .append(.ArrayNewFixed("rt_types__Array", fields.len()))
@@ -798,7 +798,7 @@ fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, backend
   for f in fields {
     body = .append(.LocalGet(0)).append(.I32Const(idx)).append(.ArrayGet("rt_types__Array"))
     body = emit_unbox_lib_field(f.ty, backend, body)
-    idx = idx + 1
+    idx = .inc()
   }
 
   body = .append(.StructNew(sym))
@@ -1042,7 +1042,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       source_local: info.source_local,
     }
     param_types = .append(vt)
-    idx = idx + 1
+    idx = .inc()
   }
 
   for sid in prepared.params {
@@ -1061,7 +1061,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       source_local: info.source_local,
     }
     param_types = .append(vt)
-    idx = idx + 1
+    idx = .inc()
   }
 
   for sid in prepared.locals {
@@ -1080,14 +1080,14 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       source_local: info.source_local,
     }
     extra_locals = .append(vt)
-    idx = idx + 1
+    idx = .inc()
   }
 
   // Scratch local for intrinsic shims that need to hold an opaque host anyref
   // while constructing a typed Wasm value (Channel.recv's tagged result).
   scratch_anyref_local := idx
   extra_locals = .append(.Anyref)
-  idx = idx + 1
+  idx = .inc()
 
   // Return type. A physical-return override (typed-return bridge) wins over the
   // mono-derived (boxed) type, so a function returning a typed Vector<Int> can
@@ -1262,7 +1262,7 @@ fn collect_vector_builder_slots_op(
 
       for i >= 0 {
         cur_stack = .append(arms[i].body)
-        i = i - 1
+        i = .dec()
       }
 
       cur

@@ -34,7 +34,7 @@ fn offset_of(src: String, needle: String) Int {
       return i
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   -1

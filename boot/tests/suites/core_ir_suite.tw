@@ -260,7 +260,7 @@ fn join_names(names: Vector<String>) String {
 
   for i < names.len() {
     result = .concat(", ").concat(names[i])
-    i = i + 1
+    i = .inc()
   }
 
   result

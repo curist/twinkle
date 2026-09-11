@@ -876,11 +876,11 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
 
   // Skip to start of declaration line
   for pos > 0 and source.char_code_at(pos) != 10 {
-    pos = pos - 1
+    pos = .dec()
   }
 
   if pos > 0 {
-    pos = pos - 1
+    pos = .dec()
   } // skip the newline, now on end of previous line
 
   lines: Vector<String> = []
@@ -890,7 +890,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
     line_start := pos
 
     for line_start > 0 and source.char_code_at(line_start - 1) != 10 {
-      line_start = line_start - 1
+      line_start = .dec()
     }
 
     line := source.slice(line_start, pos + 1)

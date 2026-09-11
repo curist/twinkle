@@ -93,7 +93,7 @@ pub fn enclosing_fn(path: AstPath) FunctionDecl? {
       _ => {},
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   .None

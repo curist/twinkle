@@ -136,7 +136,7 @@ fn count_op_uses(op: AnfOp, local: LocalId) Int {
       n := 0
       for v in fvs {
         if v.id == local.id {
-          n = n + 1
+          n = .inc()
         }
       }
       n

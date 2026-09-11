@@ -136,7 +136,7 @@ fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
 
             for i >= 0 {
               stack = .append(DepthWork.{ expr: arms[i].body, depth: child_depth })
-              i = i - 1
+              i = .dec()
             }
           },
           .ALoop(loop_body) => stack = .append(DepthWork.{ expr: loop_body, depth: child_depth }),
@@ -192,7 +192,7 @@ fn run_fixed_point_simplifications(
   cap := fixed_point_cap
 
   for round < cap {
-    round = round + 1
+    round = .inc()
     ta := date.now()
     r1 := case ctx.semantics {
       .Some(sem) => dead_let_elim_with_pinned_and_semantics(cur, ctx.pinned, sem),
@@ -260,7 +260,7 @@ pub fn optimize_module_with_semantics(module: AnfModule, semantics: OptimizerSem
     total_rounds = total_rounds + result.rounds
 
     if result.at_cap {
-      funcs_at_cap = funcs_at_cap + 1
+      funcs_at_cap = .inc()
     }
 
     result.func

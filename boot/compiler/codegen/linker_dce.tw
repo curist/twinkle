@@ -78,7 +78,7 @@ fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
 
   for cursor < state.queue.len() {
     sym := state.queue[cursor]
-    cursor = cursor + 1
+    cursor = .inc()
 
     case func_map[sym] {
       .Some(f) => {

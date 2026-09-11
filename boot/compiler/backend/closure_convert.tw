@@ -33,7 +33,7 @@ pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   for _ in 0..anf.functions.len() {
     ctx := ConvCtx.{ func: anf.functions[i], env }
     state = ctx.scan_expr(ctx.func.body, state)
-    i = i - 1
+    i = .dec()
   }
 
   .{ anf: rewrite_module(anf, state.captures), captures: state.captures }
@@ -103,7 +103,7 @@ fn record_captures(ctx: ConvCtx, fid: FuncId, free_vars: Vector<LocalId>, state:
         ty: ctx.resolve_capture_type_with_captures(fv, state.captures),
       },
     )
-    next_local = next_local + 1
+    next_local = .inc()
   }
 
   case state.captures[fid.id] {

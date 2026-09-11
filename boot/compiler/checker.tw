@@ -166,7 +166,7 @@ fn lookup_local(ctx: InferCtx, name: String) MonoType? {
       .None => {},
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   .None
@@ -208,7 +208,7 @@ fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<DiagKind>)
 // ── Core engine ─────────────────────────────────────────────────────
 fn fresh_meta(ctx: InferCtx) SynthOut {
   ty := MonoType.MetaVar(ctx.next_meta)
-  ctx.next_meta = ctx.next_meta + 1
+  ctx.next_meta = .inc()
   .{ ty, ctx, diags: [] }
 }
 
@@ -3893,7 +3893,7 @@ fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
 
   // Check the body with break/continue enabled only for the loop body.
   body_ctx := cur_ctx
-  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_ctx.loop_depth = .inc()
   body_stmts := synth_block(for_stmt.body, body_ctx, cur_diags)
   out_ctx := body_stmts.ctx.pop_scope()
   out_ctx.loop_depth = ctx.loop_depth
@@ -4090,7 +4090,7 @@ fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<DiagKind
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
   body_ctx := cur_ctx
-  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_ctx.loop_depth = .inc()
   body_r := synth_block(ce.body, body_ctx, cur_diags)
   out_ctx := body_r.ctx.pop_scope()
   out_ctx.loop_depth = ctx.loop_depth
@@ -4120,7 +4120,7 @@ fn check_collect(
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
   body_ctx := cur_ctx
-  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_ctx.loop_depth = .inc()
   body_r := check_block(ce.body, expected_elem, body_ctx, cur_diags)
   out_ctx := body_r.ctx.pop_scope()
   out_ctx.loop_depth = ctx.loop_depth

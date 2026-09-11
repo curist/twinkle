@@ -569,7 +569,7 @@ pub fn analyze_typed_repr(
       _ => {
         tp_params = abi.typeable_params
         tf = new_tf
-        round = round + 1
+        round = .inc()
       },
     }
   }
@@ -647,7 +647,7 @@ pub fn analyze_typed_repr(
       cap_round >= cap => cap_done = true,
       _ => {
         capture_abi = new_cap
-        cap_round = cap_round + 1
+        cap_round = .inc()
       },
     }
   }

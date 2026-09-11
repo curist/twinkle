@@ -30,7 +30,7 @@ fn expect_vector(actual: Vector<Int>, expected: Vector<Int>) Result<Void, String
 
   for i < expected.len() {
     try assert.equal(actual[i], expected[i])
-    i = i + 1
+    i = .inc()
   }
 
   .Ok({})

@@ -150,7 +150,7 @@ pub fn suite() runner.Suite {
             found = true
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.ok(found, "expected a function token with declaration modifier for 'foo'")
@@ -177,13 +177,13 @@ pub fn suite() runner.Suite {
 
           if tok.token_type == tk_FUNCTION and tok.length == 5 {
             if (tok.modifiers & mod_DECLARATION) != 0 {
-              decl_count = decl_count + 1
+              decl_count = .inc()
             } else {
-              call_count = call_count + 1
+              call_count = .inc()
             }
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.equal(decl_count, 1)
@@ -212,7 +212,7 @@ pub fn suite() runner.Suite {
             found = true
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.ok(found, "expected a type declaration token for 'Point'")
@@ -238,10 +238,10 @@ pub fn suite() runner.Suite {
 
           if tok.token_type == tk_TYPE
             and tok.length == 3 and (tok.modifiers & mod_DECLARATION) == 0 {
-            ref_count = ref_count + 1
+            ref_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.ok(ref_count >= 1, "expected at least one type reference token for 'Msg'")
@@ -264,10 +264,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_TYPE_PARAMETER and tok.length == 1 {
-            count = count + 1
+            count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // T appears in 3 places: declaration, param type, return type
@@ -291,10 +291,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_PARAMETER and tok.length == 1 {
-            param_count = param_count + 1
+            param_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // a and b: declarations + uses in body = at least 4
@@ -319,10 +319,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_VARIABLE {
-            var_count = var_count + 1
+            var_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // x (decl), y (decl), x (use) = at least 3
@@ -347,10 +347,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_PROPERTY {
-            prop_count = prop_count + 1
+            prop_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // x and y in the type decl + p.x field access = at least 3
@@ -375,10 +375,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_ENUM_MEMBER {
-            enum_count = enum_count + 1
+            enum_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // Red, Green, Blue in decl + Red in expression = at least 4
@@ -420,7 +420,7 @@ pub fn suite() runner.Suite {
             }
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.ok(
@@ -453,10 +453,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_NAMESPACE {
-            ns_count = ns_count + 1
+            ns_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // "lib" in use statement and "lib" in lib.helper() = at least 1
@@ -502,7 +502,7 @@ pub fn suite() runner.Suite {
             found_split_type_keyword = true
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.ok(found_pair, "expected the Pair identifier to get the type token")
@@ -544,7 +544,7 @@ pub fn suite() runner.Suite {
 
           try assert.ok(line >= 0 and col >= 0, "absolute token position should stay valid")
           try assert.ok(tok.length > 0, "token length should be > 0")
-          i = i + 1
+          i = .inc()
         }
 
         .Ok({})
@@ -586,7 +586,7 @@ pub fn suite() runner.Suite {
           }
 
           try assert.ok(tok.length > 0, "token length should be > 0 at token ${i}")
-          i = i + 1
+          i = .inc()
         }
 
         .Ok({})
@@ -664,10 +664,10 @@ pub fn suite() runner.Suite {
           tok := try nth_token(data, i)
 
           if tok.token_type == tk_ENUM_MEMBER {
-            enum_count = enum_count + 1
+            enum_count = .inc()
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         // Circle, Rect in type decl + .Circle, .Rect in pattern = at least 4

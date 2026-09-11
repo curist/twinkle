@@ -102,7 +102,7 @@ fn selected_field_backed_count(p: mutable_produce.ProducedDecisions) Int {
   n := 0
   for r in p.rows {
     if r.family.contains("record_backed_") and r.reason.contains("field-backed decision produced") {
-      n = n + 1
+      n = .inc()
     }
   }
   n
@@ -524,7 +524,7 @@ pub fn suite() runner.Suite {
         full_count := 0
         for k in keys {
           if k.contains("|0:;0:0") {
-            full_count = full_count + 1
+            full_count = .inc()
           }
         }
         try assert.ok(full_count >= 4, "leaf and delegating hops must publish full tiers")

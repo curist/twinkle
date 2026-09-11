@@ -180,6 +180,31 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "select_edits: prefer-inc-dec is applied only when its flag is set",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 8,
+            message: "prefer inc",
+            rule: "prefer-inc-dec",
+            edits: [FixEdit.{ start: 8, end: 13, replacement: ".inc()" }],
+          },
+        ]
+
+        none := lint.select_edits_for_test(findings, lint.no_fixes())
+        try assert.is_false(none.has("a.tw"))
+
+        flags := lint.no_fixes()
+        flags.prefer_inc_dec = true
+        some := lint.select_edits_for_test(findings, flags)
+        selected := try some["a.tw"].ok_or("expected prefer-inc-dec edit")
+        try assert.equal(selected.len(), 1)
+        try assert.equal(selected[0].replacement, ".inc()")
+        .Ok({})
+      },
+    )
+    .test(
       "unique_analysis_diags dedupes shared dependency diagnostics",
       fn() {
         first := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
@@ -308,6 +333,7 @@ pub fn suite() runner.Suite {
           "inherent-calls",
           "redundant-print-stringify",
           "prefer-case-dispatch",
+          "prefer-inc-dec",
         ]
 
         for id in ids {

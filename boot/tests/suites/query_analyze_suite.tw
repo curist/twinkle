@@ -157,7 +157,7 @@ pub fn suite() runner.Suite {
             main_index = i
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         try assert.is_true(dep_index >= 0)

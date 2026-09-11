@@ -301,7 +301,7 @@ pub fn suite() runner.Suite {
 
         for loc in locs {
           if loc.uri == lib_uri {
-            lib_count = lib_count + 1
+            lib_count = .inc()
           }
         }
 
@@ -327,7 +327,7 @@ pub fn suite() runner.Suite {
 
         for loc in locs {
           if loc.uri == main_uri {
-            main_count = main_count + 1
+            main_count = .inc()
           }
         }
 

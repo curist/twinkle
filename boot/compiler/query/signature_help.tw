@@ -297,13 +297,13 @@ fn compute_active_parameter(info: CallInfo, byte_offset: Int, source: String) In
 
     if b == 40 or b == 91 or b == 123 {
       // ( [ {
-      depth = depth + 1
+      depth = .inc()
     } else if b == 41 or b == 93 or b == 125 {
       // ) ] }
-      depth = depth - 1
+      depth = .dec()
     } else if b == 44 and depth == 1 {
       // , at depth 1
-      commas = commas + 1
+      commas = .inc()
     }
   }
 
@@ -344,7 +344,7 @@ fn find_last_dot(s: String) Int {
       return i
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   -1

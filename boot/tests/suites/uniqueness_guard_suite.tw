@@ -30,7 +30,7 @@ type St = .{ seen: Dict<String, Int>, count: Int }
 
 fn visit(s: St, k: String) St {
   s.seen = .set(k, s.count)
-  s.count = s.count + 1
+  s.count = .inc()
   s
 }
 

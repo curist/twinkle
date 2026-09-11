@@ -345,7 +345,7 @@ fn new_ctx() BuildCtx {
 
 fn new_block(ctx: BuildCtx, name: String, params: Vector<LocalId>) NewBlockOut {
   id := bid(ctx.next_block_id)
-  ctx.next_block_id = ctx.next_block_id + 1
+  ctx.next_block_id = .inc()
   ctx.blocks = .append(id.empty_block(name, params))
   .{ ctx, id }
 }
@@ -881,7 +881,7 @@ pub fn count_terminator(func: CfgFunction, name: String) Int {
   for block in func.blocks {
     case block.terminator {
       .Some(term) => if term.terminator_name() == name {
-        n = n + 1
+        n = .inc()
       },
       .None => {},
     }
@@ -910,7 +910,7 @@ pub fn empty_fact_blocks(func: CfgFunction) Int {
       and block.exit.verdicts.keys().len() == 0
       and block.entry.verdict_reusable_shell.keys().len() == 0
       and block.exit.verdict_reusable_shell.keys().len() == 0 {
-      n = n + 1
+      n = .inc()
     }
   }
   n
@@ -938,7 +938,7 @@ pub fn count_edge_arity_mismatches(func: CfgFunction) Int {
   for block in func.blocks {
     for edge in block.succs {
       if func.edge_arity_mismatch(edge.target, edge.args) {
-        n = n + 1
+        n = .inc()
       }
     }
   }

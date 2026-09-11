@@ -48,7 +48,7 @@ fn skip_ws(input: String, i: Int) Int {
   j := i
 
   for j < input.len() and input[j].is_space() {
-    j = j + 1
+    j = .inc()
   }
 
   j
@@ -113,7 +113,7 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   has_float_part := false
 
   if j < input.len() and input[j] == '-' {
-    j = j + 1
+    j = .inc()
   }
 
   if j >= input.len() or !input[j].is_digit() {
@@ -121,32 +121,32 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   }
 
   if input[j] == '0' {
-    j = j + 1
+    j = .inc()
   } else {
     for j < input.len() and input[j].is_digit() {
-      j = j + 1
+      j = .inc()
     }
   }
 
   if j < input.len() and input[j] == '.' {
     has_float_part = true
-    j = j + 1
+    j = .inc()
 
     if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit after decimal point at ${j}")
     }
 
     for j < input.len() and input[j].is_digit() {
-      j = j + 1
+      j = .inc()
     }
   }
 
   if j < input.len() and (input[j] == 'e' or input[j] == 'E') {
     has_float_part = true
-    j = j + 1
+    j = .inc()
 
     if j < input.len() and (input[j] == '+' or input[j] == '-') {
-      j = j + 1
+      j = .inc()
     }
 
     if j >= input.len() or !input[j].is_digit() {
@@ -154,7 +154,7 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
     }
 
     for j < input.len() and input[j].is_digit() {
-      j = j + 1
+      j = .inc()
     }
   }
 
@@ -185,7 +185,7 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
   k := i + 1
 
   for k < input.len() and input[k] != '"' and input[k] != '\\' and input[k] >= 0x20 {
-    k = k + 1
+    k = .inc()
   }
 
   if k < input.len() and input[k] == '"' {
@@ -219,7 +219,7 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
       j = esc.next
     } else {
       out = .append(input[j])
-      j = j + 1
+      j = .inc()
     }
   }
 
@@ -618,7 +618,7 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
             .Err(e) => return .Err("index ${i}: ${e}"),
           }
 
-          i = i + 1
+          i = .inc()
         }
 
         .Ok(out)
@@ -667,7 +667,7 @@ pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
         .Err(_) => {},
       }
 
-      i = i + 1
+      i = .inc()
     }
 
     .Err("no decoder matched")

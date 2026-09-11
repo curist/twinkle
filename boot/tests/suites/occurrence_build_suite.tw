@@ -22,14 +22,14 @@ fn nth_offset(src: String, needle: String, n: Int) Int {
 
   for i + needle_len <= src.len() {
     if src.substring(i, i + needle_len) == needle {
-      seen = seen + 1
+      seen = .inc()
 
       if seen == n {
         return i
       }
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   -1

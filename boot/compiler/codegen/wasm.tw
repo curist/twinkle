@@ -63,7 +63,7 @@ fn reserve_wasm_buf(buf: WasmBuf, extra: Int) WasmBuf {
 
   for i < buf.len {
     next.set_u8(i, buf.buf.get_u8(i))
-    i = i + 1
+    i = .inc()
   }
 
   buf.buf.free()
@@ -86,7 +86,7 @@ fn wasm_buf_to_bytes(buf: WasmBuf) Vector<Byte> {
 fn emit_u8(buf: WasmBuf, b: Int) WasmBuf {
   out := buf.reserve_wasm_buf(1)
   out.buf.set_u8(out.len, byte(b))
-  out.len = out.len + 1
+  out.len = .inc()
   out
 }
 
@@ -96,7 +96,7 @@ fn emit_bytes(buf: WasmBuf, bytes: Vector<Byte>) WasmBuf {
 
   for b in bytes {
     out.buf.set_u8(out.len + i, b)
-    i = i + 1
+    i = .inc()
   }
 
   out.len = out.len + bytes.len()
@@ -109,7 +109,7 @@ fn emit_wasm_buf(buf: WasmBuf, bytes: WasmBuf) WasmBuf {
 
   for i < bytes.len {
     out.buf.set_u8(out.len + i, bytes.buf.get_u8(i))
-    i = i + 1
+    i = .inc()
   }
 
   out.len = out.len + bytes.len
@@ -350,7 +350,7 @@ fn build_ctx(
   for scc in ordered_sccs {
     for name in scc {
       type_idx[name] = next_type_idx
-      next_type_idx = next_type_idx + 1
+      next_type_idx = .inc()
     }
   }
 
@@ -378,12 +378,12 @@ fn build_ctx(
 
   for imp in imports {
     func_idx[imp.as_sym] = fi
-    fi = fi + 1
+    fi = .inc()
   }
 
   for f in funcs {
     func_idx[f.name] = fi
-    fi = fi + 1
+    fi = .inc()
   }
 
   // Global indices.
@@ -837,7 +837,7 @@ fn uleb_len(n: Int) Int {
   v := n >> 7
 
   for v != 0 {
-    count = count + 1
+    count = .inc()
     v = v >> 7
   }
 
@@ -865,7 +865,7 @@ fn empty_label_ctx() LabelCtx {
 }
 
 fn label_ctx_enter_if(ctx: LabelCtx) LabelCtx {
-  ctx.depth = ctx.depth + 1
+  ctx.depth = .inc()
   ctx
 }
 
@@ -1075,7 +1075,7 @@ fn find_label_depth(label_stack: Vector<String>, label: String) Int {
       return n - 1 - i
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   error("wasm: label not found in stack: '${label}'")

@@ -2281,7 +2281,7 @@ pub fn suite() runner.Suite {
         for item in parsed.value.items {
           case item {
             .Type(_) => {
-              type_count = type_count + 1
+              type_count = .inc()
             },
             _ => {},
           }

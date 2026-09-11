@@ -96,8 +96,8 @@ fn decode_unicode_escape(s: String, start: Int) EscapeResult {
     }
 
     code = code * 16 + d
-    digits = digits + 1
-    i = i + 1
+    digits = .inc()
+    i = .inc()
   }
 
   cond {

@@ -86,7 +86,7 @@ fn push_op_children(op: PreparedOp, stack: Vector<PreparedExpr>) Vector<Prepared
 
       for i >= 0 {
         cur_stack = .append(arms[i].body)
-        i = i - 1
+        i = .dec()
       }
     },
     .ALoop(body) => cur_stack = .append(body),

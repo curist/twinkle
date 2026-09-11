@@ -140,7 +140,7 @@ fn lower_cond(
       },
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   .{ expr: cur_else, ctx: cur_ctx }
@@ -272,7 +272,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       .Stmt(stmt) => case stmt {
         .Let(ls) => {
           gid := LocalId.{ id: ctx.next_global }
-          ctx.next_global = ctx.next_global + 1
+          ctx.next_global = .inc()
           ctx.module_globals[ls.name] = gid
           module_let_globals = .append(gid)
 
@@ -301,7 +301,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       .Some(existing_gid) => ctx.module_globals[name] = existing_gid,
       .None => {
         gid := LocalId.{ id: ctx.next_global }
-        ctx.next_global = ctx.next_global + 1
+        ctx.next_global = .inc()
         ctx.module_globals[name] = gid
         value_origin_cache[origin_key] = gid
         imported_value_origins[gid.id] = ExternalValueRef.{
@@ -380,7 +380,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         .Let(ls) => {
           has_init = true
           gid := module_let_globals[module_let_index]
-          module_let_index = module_let_index + 1
+          module_let_index = .inc()
           r := lower_expr(ctx, ls.value)
           ctx = r.ctx
           init_stmts = .append(
@@ -450,7 +450,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         ty: .Void,
         span: init_stmts[i].span,
       }
-      i = i - 1
+      i = .dec()
     }
 
     functions = .append(

@@ -177,7 +177,7 @@ fn block_pred_count_from(blk: cfg.CfgBlock, pred_id: Int) Int {
   n := 0
   for edge in blk.preds {
     if edge.target.id == pred_id {
-      n = n + 1
+      n = .inc()
     }
   }
   n

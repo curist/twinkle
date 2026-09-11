@@ -16,7 +16,7 @@ fn make_bytes(n: Int) Vector<Byte> {
 
   for i < n {
     out = .append(Byte.from_int(i * 31 + 7 & 0xff).unwrap())
-    i = i + 1
+    i = .inc()
   }
 
   out

@@ -61,7 +61,7 @@ fn strip_mono_suffix(tail: String) String {
       return tail.slice(0, i)
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   tail
@@ -91,7 +91,7 @@ pub fn demangle_frame_name(raw: String) String {
           break
         }
 
-        i = i + 1
+        i = .inc()
       }
 
       // Require at least one digit after `$f` and a following `_` separator.

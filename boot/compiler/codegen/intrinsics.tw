@@ -428,7 +428,7 @@ fn utf8_validate_multibyte(n: Int) Vector<Instr> {
         .If(.None, [.I32Const(0), .LocalSet(5), .Br("utf8_validate_break")], []),
       ],
     )
-    off = off + 1
+    off = .inc()
   }
 
   if n == 3 {

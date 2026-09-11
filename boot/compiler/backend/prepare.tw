@@ -343,7 +343,7 @@ fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
         }
 
         cur = body
-        d = d + 1
+        d = .inc()
       },
       _ => done = true,
     }

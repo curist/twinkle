@@ -70,7 +70,7 @@ pub fn assign_slots(
         }
         local_to_slot[cap.param_local.id] = sid
         capture_slots = .append(sid)
-        next_slot = next_slot + 1
+        next_slot = .inc()
       }
     },
     .None => {},
@@ -93,7 +93,7 @@ pub fn assign_slots(
     }
     local_to_slot[p.local.id] = sid
     param_slots = .append(sid)
-    next_slot = next_slot + 1
+    next_slot = .inc()
   }
 
   // ── 3. Body locals ──────────────────────────────────────────────────
@@ -131,7 +131,7 @@ pub fn assign_slots(
     }
     local_to_slot[lid] = sid
     local_slots = .append(sid)
-    next_slot = next_slot + 1
+    next_slot = .inc()
   }
 
   .{
@@ -205,7 +205,7 @@ fn lower_expr_at(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: Str
 
   for i >= 0 {
     result = .Let(spine[i].slot, spine[i].op, spine[i].span, result)
-    i = i - 1
+    i = .dec()
   }
 
   result

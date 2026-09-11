@@ -149,9 +149,9 @@ fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: Strin
 
   if tk.kind == .Ident {
     prefix = source.slice(tk.span.start, tk.span.end)
-    i = i - 1
+    i = .dec()
   } else if tk.kind == .Dot {
-    i = i - 1
+    i = .dec()
   } else {
     return .None
   }
@@ -181,7 +181,7 @@ fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: Strin
       _ => break,
     }
 
-    i = i - 1
+    i = .dec()
   }
 
   if !found_use {
@@ -209,7 +209,7 @@ pub fn extract_ident_before(source: String, offset: Int) String {
     ch := source.slice(start - 1, start)
 
     if ch >= "a" and ch <= "z" or ch >= "A" and ch <= "Z" or ch == "_" or ch >= "0" and ch <= "9" {
-      start = start - 1
+      start = .dec()
     } else {
       break
     }
@@ -263,7 +263,7 @@ fn classify_rebind_lhs(tokens: Vector<Token>, eq_idx: Int, source: String) LhsCl
       names = .append(source.slice(tokens[i].span.start, tokens[i].span.end))
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   lhs_offset := tokens[head_idx].span.start
@@ -287,10 +287,10 @@ fn scan_back_to_call(bytes: Vector<Byte>, offset: Int) ScanResult? {
 
     if b == 41 or b == 93 or b == 125 {
       // ) ] } — increase depth while going backward.
-      depth = depth + 1
+      depth = .inc()
     } else if b == 91 or b == 123 {
       // [ { — decrease depth; if negative, the cursor is not in a call.
-      depth = depth - 1
+      depth = .dec()
 
       if depth < 0 {
         return .None
@@ -303,13 +303,13 @@ fn scan_back_to_call(bytes: Vector<Byte>, offset: Int) ScanResult? {
         return .Some(.{ name, commas, paren_pos: pos })
       }
 
-      depth = depth - 1
+      depth = .dec()
     } else if b == 44 and depth == 0 {
       // , at the active call level.
-      commas = commas + 1
+      commas = .inc()
     }
 
-    pos = pos - 1
+    pos = .dec()
   }
 
   .None
@@ -321,7 +321,7 @@ fn extract_name_before(bytes: Vector<Byte>, paren_pos: Int) String? {
   pos := paren_pos - 1
 
   for pos >= 0 and is_whitespace(bytes[pos].to_int()) {
-    pos = pos - 1
+    pos = .dec()
   }
 
   if pos < 0 {
@@ -331,7 +331,7 @@ fn extract_name_before(bytes: Vector<Byte>, paren_pos: Int) String? {
   end := pos + 1
 
   for pos >= 0 and is_ident_or_dot(bytes[pos].to_int()) {
-    pos = pos - 1
+    pos = .dec()
   }
 
   start := pos + 1

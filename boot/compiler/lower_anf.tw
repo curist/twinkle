@@ -37,7 +37,7 @@ fn build_lets(accum: Vector<LetBinding>, tail: AnfExpr) AnfExpr {
   for i >= 0 {
     b := accum[i]
     result = .Let(b.local, b.op, b.span, result)
-    i = i - 1
+    i = .dec()
   }
 
   result
@@ -164,7 +164,7 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
         for i >= 0 {
           m = max_local_id_in_pattern(arms[i].pattern, m)
           stack = push_core_expr(stack, arms[i].body)
-          i = i - 1
+          i = .dec()
         }
         stack = push_core_expr(stack, scrutinee)
       },
@@ -181,7 +181,7 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
         i := fields.len() - 1
         for i >= 0 {
           stack = push_core_expr(stack, fields[i].value)
-          i = i - 1
+          i = .dec()
         }
       },
       .RecordGet(target, _) => stack = push_core_expr(stack, target),
@@ -219,7 +219,7 @@ fn push_core_exprs_reverse(stack: Vector<CoreExpr>, exprs: Vector<CoreExpr>) Vec
 
   for i >= 0 {
     out = push_core_expr(out, exprs[i])
-    i = i - 1
+    i = .dec()
   }
 
   out
@@ -293,7 +293,7 @@ fn collect_global_monos_expr(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int,
         i := arms.len() - 1
         for i >= 0 {
           stack = push_core_expr(stack, arms[i].body)
-          i = i - 1
+          i = .dec()
         }
         stack = push_core_expr(stack, scrut)
       },
@@ -311,7 +311,7 @@ fn collect_global_monos_expr(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int,
         i := fields.len() - 1
         for i >= 0 {
           stack = push_core_expr(stack, fields[i].value)
-          i = i - 1
+          i = .dec()
         }
       },
       .RecordGet(target, _) => stack = push_core_expr(stack, target),
@@ -697,7 +697,7 @@ fn lower_if_else_spine(expr: CoreExpr, state: LowerState, accum: Vector<LetBindi
     )
     branch_expr = build_lets(pa.accum, .Atom(.ALocal(tmp)))
     cur_state = pa.state
-    i = i - 1
+    i = .dec()
   }
 
   frame := frames[0]

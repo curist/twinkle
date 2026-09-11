@@ -1406,7 +1406,7 @@ pub fn collect_declarations_from(env: ResolvedEnv, module: Module, id_start: Int
       } else {
         seen_types[decl.name] = true
         tid := TypeId.{ id: next_id }
-        next_id = next_id + 1
+        next_id = .inc()
         cur = .add_type(
           .{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span, is_extern: false },
           decl.name,
@@ -1421,7 +1421,7 @@ pub fn collect_declarations_from(env: ResolvedEnv, module: Module, id_start: Int
                 case variant.fields[0].kind {
                   .Record(_) => {
                     synth_tid := TypeId.{ id: next_id }
-                    next_id = next_id + 1
+                    next_id = .inc()
                     display_name := "${decl.name}.${variant.name}"
                     cur = .register_type_entry(
                       .{
@@ -1477,7 +1477,7 @@ pub fn collect_declarations_from(env: ResolvedEnv, module: Module, id_start: Int
       } else {
         seen_types[decl.name] = true
         tid := TypeId.{ id: next_id }
-        next_id = next_id + 1
+        next_id = .inc()
         cur = .add_type(
           .{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true },
           decl.name,
@@ -2387,7 +2387,7 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
         }
 
         ids[exported.entry.id.id] = TypeId.{ id: next_id }
-        next_id = next_id + 1
+        next_id = .inc()
       },
     }
   }

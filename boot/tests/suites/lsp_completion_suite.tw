@@ -152,7 +152,7 @@ fn count_label(labels: Vector<String>, target: String) Int {
   n := 0
   for l in labels {
     if l == target {
-      n = n + 1
+      n = .inc()
     }
   }
 

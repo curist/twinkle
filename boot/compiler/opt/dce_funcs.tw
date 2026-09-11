@@ -158,7 +158,7 @@ pub fn sweep_dead_functions(m: AnfModule) AnfModule {
 
   for i < work.len() {
     fid := work[i]
-    i = i + 1
+    i = .inc()
 
     case by_id[fid] {
       .Some(f) => {

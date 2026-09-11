@@ -46,7 +46,7 @@ fn repeat_str(s: String, n: Int) String {
 
   for i < n {
     result = "${result}${s}"
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -89,7 +89,7 @@ fn digit_count(n: Int) Int {
   v := n
 
   for v > 0 {
-    count = count + 1
+    count = .inc()
     v = v / 10
   }
 

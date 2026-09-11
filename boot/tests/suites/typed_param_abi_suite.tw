@@ -80,7 +80,7 @@ fn typed_count(d: Dict<String, Bool>) Int {
   for k in d.keys() {
     case d[k] {
       .Some(v) => if v {
-        n = n + 1
+        n = .inc()
       },
       .None => {},
     }

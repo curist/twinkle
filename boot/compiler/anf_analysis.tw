@@ -135,7 +135,7 @@ fn collect_free_op_iter(
       for i >= 0 {
         arm_declared := collect_pattern_bindings(arms[i].pattern, declared)
         cur_stack = .append(FreeWork.{ expr: arms[i].body, declared: arm_declared })
-        i = i - 1
+        i = .dec()
       }
     },
     .ALoop(body) => {
@@ -390,7 +390,7 @@ fn push_init_op_exprs(op: AnfOp, stack: Vector<AnfExpr>) Vector<AnfExpr> {
 
       for i >= 0 {
         out = .append(arms[i].body)
-        i = i - 1
+        i = .dec()
       }
     },
     .ALoop(body) => out = .append(body),

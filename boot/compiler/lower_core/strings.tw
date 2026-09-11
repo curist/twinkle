@@ -96,7 +96,7 @@ pub fn lower_string_interp(
       ty: str_ty,
       span: s,
     }
-    i = i + 1
+    i = .inc()
   }
 
   .{ expr: acc, ctx: cur_ctx }

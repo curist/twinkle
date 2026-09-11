@@ -456,7 +456,7 @@ pub fn runtime_with_policy_and_abi(
   reg.by_name[name] = entry
   reg.by_id[fid.id] = entry
   reg.entries = .append(entry)
-  reg.next_id = reg.next_id + 1
+  reg.next_id = .inc()
   reg
 }
 
@@ -507,7 +507,7 @@ pub fn intrinsic_with_policy_and_abi(
   reg.by_name[name] = entry
   reg.by_id[fid.id] = entry
   reg.entries = .append(entry)
-  reg.next_id = reg.next_id + 1
+  reg.next_id = .inc()
   reg
 }
 

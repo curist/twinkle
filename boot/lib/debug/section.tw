@@ -91,7 +91,7 @@ fn read_uleb(bytes: Vector<Byte>, pos: Int) UlebRead {
 
   for p < n {
     byte := bytes[p].to_int()
-    p = p + 1
+    p = .inc()
     result = result | (byte & 0x7f) << shift
 
     if (byte & 0x80) == 0 {
@@ -124,7 +124,7 @@ fn read_str(bytes: Vector<Byte>, pos: Int) StrRead {
 
   for i < len {
     slice = .append(bytes[lr.pos + i])
-    i = i + 1
+    i = .inc()
   }
 
   // Invalid UTF-8 in a corrupt section degrades to failure instead of trapping.
@@ -210,7 +210,7 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
     }
 
     files = .append(.{ file_id, path: pr.value })
-    fi = fi + 1
+    fi = .inc()
   }
 
   cr := read_uleb(bytes, pos)
@@ -285,11 +285,11 @@ pub fn decode(bytes: Vector<Byte>) DebugSection? {
         },
       )
       prev = offset
-      li = li + 1
+      li = .inc()
     }
 
     funcs = .append(.{ func_idx, body_start, lines })
-    ci = ci + 1
+    ci = .inc()
   }
 
   .Some(.{ files, funcs })
@@ -318,7 +318,7 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
 
   for pos < n {
     id := module_bytes[pos].to_int()
-    pos = pos + 1
+    pos = .inc()
     lr := read_uleb(module_bytes, pos)
     content_start := lr.pos
     content_end := content_start + lr.value
@@ -338,7 +338,7 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
 
         for i < content_end {
           payload = .append(module_bytes[i])
-          i = i + 1
+          i = .inc()
         }
 
         return decode(payload)

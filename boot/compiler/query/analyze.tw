@@ -750,7 +750,7 @@ fn build_import_env(
       + interface.exports.support_functions.len() + interface.exports.values.len()
 
     if cur.timed {
-      cur.counts.import_edges = cur.counts.import_edges + 1
+      cur.counts.import_edges = .inc()
       cur.counts.import_export_entries = cur.counts.import_export_entries + export_entries
     }
 
@@ -765,18 +765,18 @@ fn build_import_env(
         .Import => case dep.items {
           .Some(_) => {
             cur.timings.import_selective = cur.timings.import_selective + dt
-            cur.counts.import_selective_edges = cur.counts.import_selective_edges + 1
+            cur.counts.import_selective_edges = .inc()
             kind_name = "selective"
           },
           .None => {
             cur.timings.import_module = cur.timings.import_module + dt
-            cur.counts.import_module_edges = cur.counts.import_module_edges + 1
+            cur.counts.import_module_edges = .inc()
             kind_name = "module"
           },
         },
         .Prelude => {
           cur.timings.import_prelude = cur.timings.import_prelude + dt
-          cur.counts.import_prelude_edges = cur.counts.import_prelude_edges + 1
+          cur.counts.import_prelude_edges = .inc()
           kind_name = "prelude"
         },
       }

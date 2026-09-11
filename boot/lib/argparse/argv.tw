@@ -27,7 +27,7 @@ pub fn normalize_argv(raw: Vector<String>) Vector<String> {
       break
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   case prog_idx {

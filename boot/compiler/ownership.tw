@@ -467,7 +467,7 @@ fn out_field_read_count(blocks: Vector<CfgBlock>, out_id: Int, fid: Int) Int {
   for blk in blocks {
     for inst in blk.instructions {
       if is_record_get_of(inst.op, out_id, fid) {
-        n = n + 1
+        n = .inc()
       }
     }
   }
@@ -720,7 +720,7 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
       // then add uses
       cur = insert_sorted(cur, u)
     }
-    i = i - 1
+    i = .dec()
   }
 
   // after_rev is high->low; reverse so live_after[i] indexes by instruction i.
@@ -728,7 +728,7 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
   j := after_rev.len() - 1
   for j >= 0 {
     live_after = .append(after_rev[j])
-    j = j - 1
+    j = .dec()
   }
 
   // Kill this block's incoming pattern-bound locals at entry: a destructured
@@ -891,9 +891,9 @@ fn cc_flatten_insts(blocks: Vector<CfgBlock>) Vector<CcFlatInst> {
   for blk in blocks {
     for inst in blk.instructions {
       out = .append(CcFlatInst.{ g, op: inst.op, result: inst.anf_local.id })
-      g = g + 1
+      g = .inc()
     }
-    g = g + 1
+    g = .inc()
   }
   out
 }
@@ -1502,7 +1502,7 @@ fn atom_is_int(a: Atom, value: Int, dmap: Dict<Int, AnfOp>) Bool {
 fn source_for_local_in_block(blk: CfgBlock, id: Int) Atom? {
   i := blk.instructions.len()
   for i > 0 {
-    i = i - 1
+    i = .dec()
     inst := blk.instructions[i]
     case inst.op {
       .AAssign(target, src) => if target.id == id {
@@ -1800,7 +1800,7 @@ fn appended_induction_element(
             case atom_local_id(args[1]) {
               .Some(eid) => if local_is_induction_element(eid, ctr, vp, dmap, facts) {
                 found = eid
-                matches = matches + 1
+                matches = .inc()
               },
               .None => {},
             }
@@ -1831,12 +1831,12 @@ fn header_counter_ok(header: CfgBlock, ctr: Int, dmap: Dict<Int, AnfOp>, bmap: D
       .None => return false,
     }
     if pred_is_loop_backedge(pred, header.id.id) {
-      back_preds = back_preds + 1
+      back_preds = .inc()
       if !atom_reaches_ctr_plus_one(pred, pe.args[ctr_index], ctr, dmap, bmap, 0) {
         return false
       }
     } else {
-      init_preds = init_preds + 1
+      init_preds = .inc()
       if !atom_is_int(pe.args[ctr_index], 0, dmap) {
         return false
       }
@@ -2068,7 +2068,7 @@ fn accumulator_from_element_append(f: CfgFunction, element: Int, ops: DictVecOps
           .ACall(_, args) => case atom_local_id(args[0]) {
             .Some(acc) => {
               found = acc
-              matches = matches + 1
+              matches = .inc()
             },
             .None => {},
           },
@@ -2259,7 +2259,7 @@ fn find_equality_evidence(
                     false_target: false_target.id,
                   },
                 )
-                matches = matches + 1
+                matches = .inc()
               },
               .None => {},
             }
@@ -2401,7 +2401,7 @@ fn block_reaching_not_flag(blk: CfgBlock, cond_atom: Atom, flag: Int) Bool {
   seen: Vector<Int> = []
   i := blk.instructions.len()
   for i > 0 {
-    i = i - 1
+    i = .dec()
     inst := blk.instructions[i]
     case inst.op {
       .AAssign(target, _) => if target.id == flag {
@@ -2546,7 +2546,7 @@ fn flag_false_definition_count(f: CfgFunction, flag: Int) Int {
       }
       case inst.op {
         .AAssign(target, .ALitBool(false)) => if target.id == flag {
-          n = n + 1
+          n = .inc()
         },
         _ => {},
       }
@@ -2605,7 +2605,7 @@ fn flag_false_definition_block(f: CfgFunction, flag: Int) Int? {
         case inst.op {
           .AInit(.ALitBool(false)) => {
             found = blk.id.id
-            matches = matches + 1
+            matches = .inc()
           },
           _ => {},
         }
@@ -2613,7 +2613,7 @@ fn flag_false_definition_block(f: CfgFunction, flag: Int) Int? {
       case inst.op {
         .AAssign(target, .ALitBool(false)) => if target.id == flag {
           found = blk.id.id
-          matches = matches + 1
+          matches = .inc()
         },
         _ => {},
       }
@@ -2753,7 +2753,7 @@ fn primitive_o3_flag(
           off_loop_sites := 0
           for site in sites {
             if !set_has_id(region, site.block) {
-              off_loop_sites = off_loop_sites + 1
+              off_loop_sites = .inc()
             }
           }
           if off_loop_sites > 1 {
@@ -2972,7 +2972,7 @@ fn grow_combinator_lineage(
   passes := 0
   for changed and passes < f.blocks.len() + 4 {
     changed = false
-    passes = passes + 1
+    passes = .inc()
     for blk in f.blocks {
       for inst in blk.instructions {
         case inst.op {
@@ -3133,7 +3133,7 @@ fn block_reaching_alias_source(blk: CfgBlock, id: Int) Atom? {
   // previous reaching definition.
   i := blk.instructions.len()
   for i > 0 {
-    i = i - 1
+    i = .dec()
     inst := blk.instructions[i]
     if inst.anf_local.id == id {
       case inst.op {
@@ -3214,7 +3214,7 @@ fn succ_edge_count_to(blk: CfgBlock, target: Int) Int {
   n := 0
   for edge in blk.succs {
     if edge.target.id == target {
-      n = n + 1
+      n = .inc()
     }
   }
   n
@@ -3386,7 +3386,7 @@ pub fn classify_dedupe_helpers_unthreaded(
   passes := 0
   for changed and passes < view.functions.len() + 1 {
     changed = false
-    passes = passes + 1
+    passes = .inc()
     for f in view.functions {
       case certs.get(f.func_id) {
         .Some(_) => {},
@@ -3501,7 +3501,7 @@ fn compute_liveness_labeled(blocks: Vector<CfgBlock>, label: String) Dict<Int, B
   max_live_width := 0
   for changed {
     changed = false
-    rounds = rounds + 1
+    rounds = .inc()
 
     // iterate in reverse block-id order (blocks are appended in ~RPO)
     idx := blocks.len() - 1
@@ -3512,7 +3512,7 @@ fn compute_liveness_labeled(blocks: Vector<CfgBlock>, label: String) Dict<Int, B
       lo: Vector<Int> = []
       for e in blk.succs {
         if timed {
-          succ_edges_seen = succ_edges_seen + 1
+          succ_edges_seen = .inc()
           lookup_steps_est = lookup_steps_est + blocks.len()
         }
         succ := block_by_id(blocks, e.target.id)
@@ -3522,7 +3522,7 @@ fn compute_liveness_labeled(blocks: Vector<CfgBlock>, label: String) Dict<Int, B
       scan := scan_block_backward(blk, lo)
       li := scan.live_in
       if timed {
-        scans = scans + 1
+        scans = .inc()
         snapshot_elems = snapshot_elems + scan.block_scan_live_after_elems()
         if li.len() > max_live_width {
           max_live_width = li.len()
@@ -3536,7 +3536,7 @@ fn compute_liveness_labeled(blocks: Vector<CfgBlock>, label: String) Dict<Int, B
         changed = true
         live[blk.id.id] = BlockLive.{ live_in: li, live_out: lo }
       }
-      idx = idx - 1
+      idx = .dec()
     }
   }
   if timed {
@@ -4287,7 +4287,7 @@ fn store_count(operands: Vector<Atom>, id: Int) Int {
   for a in operands {
     case atom_local_id(a) {
       .Some(oid) => if oid == id {
-        n = n + 1
+        n = .inc()
       },
       .None => {},
     }
@@ -5896,7 +5896,7 @@ fn fixv_isort(xs: Vector<Int>) Vector<Int> {
       tmp := out[j - 1]
       out = .set_at(j - 1, out[j])
       out = .set_at(j, tmp)
-      j = j - 1
+      j = .dec()
     }
   }
   out
@@ -6102,7 +6102,7 @@ fn loop_seed_stats(blocks: Vector<CfgBlock>, seeds: LoopSeedSet) LoopSeedStats {
       }
     }
     if header_has_seed {
-      headers = headers + 1
+      headers = .inc()
     }
   }
   .{ headers, param_seeds, nonparam_seeds }
@@ -6275,13 +6275,13 @@ fn run_fixpoint(
   max_path_prov_keys := 0
   for changed {
     changed = false
-    rounds = rounds + 1
+    rounds = .inc()
     for blk in blocks {
       do_block := all_dirty or is_dirty(dirty, blk.id.id)
       if do_block {
         dirty = .set(blk.id.id, false)
         if timed {
-          block_visits = block_visits + 1
+          block_visits = .inc()
         }
         entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
         entry_valid := join_entry_valid(blk, exit_valid, processed)
@@ -6417,7 +6417,7 @@ fn run_fixpoint(
           or !same_map(old_pp, next_pp, same_pp_local) {
           changed = true
           if timed {
-            changed_blocks = changed_blocks + 1
+            changed_blocks = .inc()
           }
           if already {
             prev_exits = .set(blk.id.id, old_own)
@@ -6523,7 +6523,7 @@ fn stabilize_seeds(
     } else {
       dirty := removed_seed_blocks(blocks, seeds, kept)
       seeds = kept
-      reruns = reruns + 1
+      reruns = .inc()
       warm_state: FixState? = if allow_incremental {
         .Some(vstate)
       } else {
@@ -6821,7 +6821,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       .None => false,
     }
     if should_analyze {
-      selected_funcs = selected_funcs + 1
+      selected_funcs = .inc()
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
       facts := entry_seed_facts_for(entry_seeds, f.func_id)
@@ -6854,7 +6854,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
     } else {
-      cleared_funcs = cleared_funcs + 1
+      cleared_funcs = .inc()
       cleared_blocks = cleared_blocks + f.blocks.len()
       cleared_insts = cleared_insts + block_instruction_count(f.blocks)
       t_clear0 := date.now()
@@ -7885,7 +7885,7 @@ fn call_result_fact(
   for ps, i in s.params {
     if i < args.len() and ps.flows_to_return and flow_get(st, args[i]).origin >= 0 {
       carrier = i
-      count = count + 1
+      count = .inc()
     }
   }
   if count != 1 {

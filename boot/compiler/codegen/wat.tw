@@ -365,7 +365,7 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
     ps := sym("p${idx}")
     v := emit_val_type(vt)
     lines = .append("    (param ${ps} ${v})")
-    idx = idx + 1
+    idx = .inc()
   }
 
   // Results
@@ -379,7 +379,7 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
     ps := sym("p${idx}")
     v := emit_val_type(vt)
     lines = .append("    (local ${ps} ${v})")
-    idx = idx + 1
+    idx = .inc()
   }
 
   // Body instructions

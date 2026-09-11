@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
         for i < 9000 {
           key := linker_stress_key(i)
           d[key] = key
-          i = i + 1
+          i = .inc()
         }
 
         try assert.equal(d.len(), 9000)
@@ -168,7 +168,7 @@ pub fn suite() runner.Suite {
             },
             key,
           )
-          i = i + 1
+          i = .inc()
         }
 
         .Ok({})
@@ -195,7 +195,7 @@ pub fn suite() runner.Suite {
         count := 0
 
         for _ in d {
-          count = count + 1
+          count = .inc()
         }
 
         try assert.equal(count, 3)
@@ -353,7 +353,7 @@ pub fn suite() runner.Suite {
         i := 0
         for i < 2 * n {
           d[i] = i * 10
-          i = i + 1
+          i = .inc()
         }
         i = 1
         for i < 2 * n {

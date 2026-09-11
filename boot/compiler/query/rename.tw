@@ -155,7 +155,7 @@ fn valid_identifier(name: String, expect_upper: Bool) Bool {
     if !is_tail {
       return false
     }
-    i = i + 1
+    i = .inc()
   }
 
   true

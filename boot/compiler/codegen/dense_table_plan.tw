@@ -82,7 +82,7 @@ pub fn dense_table_plan(arms: Vector<PreparedMatchArm>) DenseTablePlan? {
           }
         }
 
-        explicit_count = explicit_count + 1
+        explicit_count = .inc()
       },
       .Wildcard => {
         if i != last_idx or catch_all_seen {

@@ -62,7 +62,7 @@ fn kind_count(r: mutvec_region.MutVecRegion, name: String) Int {
   c := 0
   for s in r.op_sites {
     if op_kind_name(s.kind) == name {
-      c = c + 1
+      c = .inc()
     }
   }
   c
@@ -692,7 +692,7 @@ pub fn suite() runner.Suite {
           case pf.slots[sid] {
             .Some(info) => case info.repr {
               .MutVec(_) => {
-                mutvec_slots = mutvec_slots + 1
+                mutvec_slots = .inc()
 
                 // A live handle slot must be physically MutVecI64, never the
                 // route-owned frozen PVecI64 wasm type.
@@ -702,7 +702,7 @@ pub fn suite() runner.Suite {
                 )
               },
               .TypedVec(_) => {
-                pvec_slots = pvec_slots + 1
+                pvec_slots = .inc()
 
                 // The freeze-result / return slot is route-owned: it must stay
                 // PVecI64 and must never be rewritten to the MutVec wasm type.

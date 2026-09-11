@@ -138,7 +138,7 @@ fn emit_if_else_spine(
     then_body = append_result_store(then_body, result_idx, result_mono)
     cond_instrs := fns.emit_atom(frame.condition, ctx, [])
     nested = cond_instrs.append(.If(.None, then_body, nested))
-    i = i - 1
+    i = .dec()
   }
 
   buf.concat(nested)
@@ -161,7 +161,7 @@ pub fn emit_loop_op(
   // so this shadows the local binding while the caller's context is untouched, and
   // new EmitCtx fields flow through for free.
   ctx.label_stack = .append(LabelPair.{ break_label, continue_label: cont_label })
-  ctx.loop_depth = ctx.loop_depth + 1
+  ctx.loop_depth = .inc()
 
   // Loop body is a nested sub-body — use fresh []
   body_instrs := fns.emit_expr(body, expected(.Void, ctx.env), ctx, [])

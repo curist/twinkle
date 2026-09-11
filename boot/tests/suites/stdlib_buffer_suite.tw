@@ -73,7 +73,7 @@ pub fn suite() runner.Suite {
 
         for i < 8 {
           v.set(i, i * 10)
-          i = i + 1
+          i = .inc()
         }
 
         try assert.equal(v.len(), 8)

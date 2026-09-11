@@ -15,7 +15,7 @@ fn parse_hex(s: String) Int {
       _ => 0,
     }
     result = result * 16 + digit
-    i = i + 1
+    i = .inc()
   }
 
   result
@@ -66,12 +66,12 @@ pub fn parse_int_literal(raw: String) Int {
     ch := raw.slice(i, i + 1)
 
     if ch == "_" {
-      i = i + 1
+      i = .inc()
       continue
     }
 
     result = result * 10 + (raw[i].to_int() - 0x30)
-    i = i + 1
+    i = .inc()
   }
 
   if neg {
@@ -110,7 +110,7 @@ pub fn parse_float_literal(raw: String) Float {
       }
     }
 
-    i = i + 1
+    i = .inc()
   }
 
   result := int_part + frac_part

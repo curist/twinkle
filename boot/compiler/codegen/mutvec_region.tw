@@ -175,7 +175,7 @@ fn record_op(s: UseScan, site: LocalId, kind: MutVecOpKind) UseScan {
 }
 
 fn bump_exit(s: UseScan) UseScan {
-  s.exit_count = s.exit_count + 1
+  s.exit_count = .inc()
   s
 }
 
@@ -803,7 +803,7 @@ fn rewrite_func(f: AnfFunctionDef, regions: Vector<MutVecRegion>, ids: OpIds, b:
       .CollectSeed => f = rewrite_region(f, r, ids, mids, base + i),
       .ArrayLitSeed => {},
     }
-    i = i + 1
+    i = .inc()
   }
   f
 }

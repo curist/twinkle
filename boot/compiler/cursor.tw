@@ -52,7 +52,7 @@ pub fn preceded_by_newline(c: Cursor) Bool {
 }
 
 pub fn advance(c: Cursor) Cursor {
-  c.pos = c.pos + 1
+  c.pos = .inc()
   c
 }
 

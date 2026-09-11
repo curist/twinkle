@@ -70,6 +70,16 @@ fn pc_findings(src: String) Vector<lint.LintFinding> {
   }
 }
 
+fn pid_findings(src: String) Vector<lint.LintFinding> {
+  collect f in findings(src) {
+    if f.rule == "prefer-inc-dec" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
 fn apply_first_edit(src: String, finding: lint.LintFinding) String {
   edit := finding.edits[0]
   src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
@@ -94,7 +104,7 @@ fn fix_to_fixpoint(src: String) String {
     }
 
     cur = lintcmd.apply_edits(cur, edits)
-    i = i + 1
+    i = .inc()
   }
 
   cur
@@ -309,6 +319,58 @@ pub fn suite() runner.Suite {
         )
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-inc-dec: rewrites an incrementing local rebind",
+      fn() {
+        src := "fn f() Int {\n  i := 0\n  i = i + 1\n  i\n}\n"
+        fs := pid_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f() Int {\n  i := 0\n  i = .inc()\n  i\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-inc-dec: rewrites incrementing and decrementing field rebinds",
+      fn() {
+        src := "fn f(c: Counter) Counter {\n  c.up = c.up + 1\n  c.down = c.down - 1\n  c\n}\n"
+        fs := pid_findings(src)
+        try assert.equal(fs.len(), 2)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(c: Counter) Counter {\n  c.up = .inc()\n  c.down = c.down - 1\n  c\n}\n",
+        )
+        try assert.equal(
+          apply_first_edit(src, fs[1]),
+          "fn f(c: Counter) Counter {\n  c.up = c.up + 1\n  c.down = .dec()\n  c\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-inc-dec: rewrites a nested field path",
+      fn() {
+        src := "fn f(s: State) State {\n  s.inner.count = s.inner.count - 1\n  s\n}\n"
+        fs := pid_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(s: State) State {\n  s.inner.count = .dec()\n  s\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-inc-dec: ignores non-self, compound, and indexed updates",
+      fn() {
+        src := "fn f(a: Counter, b: Counter, xs: Vector<Int>, i: Int) Counter {\n  a.count = b.count + 1\n  a.count = a.count + 1 + i\n  xs[i] = xs[i] + 1\n  a\n}\n"
+        try assert.equal(pid_findings(src).len(), 0)
         .Ok({})
       },
     )

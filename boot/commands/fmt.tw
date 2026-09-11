@@ -77,7 +77,7 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
   index := 0
 
   for file in files {
-    index = index + 1
+    index = .inc()
     shown := display_path(file)
     meter = .update(index, shown)
     source := case fs.read_text(file) {
