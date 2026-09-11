@@ -41,7 +41,12 @@ fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) 
     .Return(_) => branch,
     .Break(_) => branch,
     .Continue => branch,
-    .Let(local, op, sp, body) => AnfExpr.Let(local, op, sp, splice_branch(body, result_local, continuation)),
+    .Let(local, op, sp, body) => AnfExpr.Let(
+      local,
+      op,
+      sp,
+      splice_branch(body, result_local, continuation),
+    ),
   }
 }
 

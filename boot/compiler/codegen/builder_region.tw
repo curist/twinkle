@@ -19,8 +19,8 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region_produce
 use compiler.codegen.builder_region_produce.{BuilderRegionDecision, BuilderRegionDecisionTable}
 use compiler.core_ir.{FuncId, LocalId}
-use lib.source.span
 use compiler.mono_type.{MonoType}
+use lib.source.span
 
 // ── Region representation (ported from the deleted opt/builder_region.tw) ──
 type BuilderInit = { New, FromBase(LocalId) }
@@ -106,7 +106,12 @@ fn rewrite_loop_expr(
       }
 
       new_op := rewrite_loop_op_subexpr(op, base, builder, push_id, builder_push_id)
-      AnfExpr.Let(local, new_op, sp, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
+      AnfExpr.Let(
+        local,
+        new_op,
+        sp,
+        rewrite_loop_expr(body, base, builder, push_id, builder_push_id),
+      )
     },
     _ => expr,
   }

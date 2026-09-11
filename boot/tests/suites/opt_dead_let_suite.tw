@@ -1,4 +1,3 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -10,6 +9,7 @@ use compiler.opt.copy_prop.{copy_propagate, subst_atom}
 use compiler.opt.dead_let.{dead_let_elim, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
+use lib.source.span
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
@@ -56,7 +56,12 @@ fn test_count_uses_assign_target_not_counted() Result<Void, String> {
 fn test_count_uses_closure_free_vars() Result<Void, String> {
   // Let(0, AMakeClosure(99, [1, 2]), Atom(ALocal(0)))
   // locals 1 and 2 each used once (as free vars)
-  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(1), lid(2)]), span.unknown(), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AMakeClosure(fid(99), [lid(1), lid(2)]),
+    span.unknown(),
+    .Atom(.ALocal(lid(0))),
+  )
   uses := count_uses(expr)
   try assert.equal(uses_for(uses, 1), 1)
   try assert.equal(uses_for(uses, 2), 1)
@@ -69,8 +74,9 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
   // local 1 used only as free var — excluding_free_vars count should be 0
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALitInt(10)), span.unknown(),
-    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .AInit(.ALitInt(10)),
+    span.unknown(),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Atom(.ALocal(lid(0)))),
   )
   uses := count_uses_excluding_free_vars(expr)
   try assert.equal(uses_for(uses, 1), 0)
@@ -81,7 +87,8 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
 fn test_count_uses_excluding_free_vars_nested_control_flow() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALitInt(10)), span.unknown(),
+    .AInit(.ALitInt(10)),
+    span.unknown(),
     .Let(
       lid(9),
       .ALoop(
@@ -90,11 +97,13 @@ fn test_count_uses_excluding_free_vars_nested_control_flow() Result<Void, String
           .AIf(
             .ALitBool(false),
             .Break(.None),
-            .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]),span.unknown(),  .Continue),
-          ),span.unknown(), 
+            .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Continue),
+          ),
+          span.unknown(),
           .Atom(.ALitVoid),
         ),
-      ),span.unknown(), 
+      ),
+      span.unknown(),
       .Atom(.ALitVoid),
     ),
   )
@@ -113,13 +122,15 @@ fn test_count_uses_closure_free_var_inside_match_arm() Result<Void, String> {
           pattern: .LitBool(true),
           body: .Let(
             lid(1),
-            .AInit(.ALitStr("interp")),span.unknown(), 
-            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),span.unknown(),  .Atom(.ALocal(lid(2)))),
+            .AInit(.ALitStr("interp")),
+            span.unknown(),
+            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Atom(.ALocal(lid(2)))),
           ),
         },
         AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitVoid) },
       ],
-    ), span.unknown(),
+    ),
+    span.unknown(),
     .Atom(.ALocal(lid(4))),
   )
   uses := count_uses(expr)
@@ -133,7 +144,8 @@ fn test_count_uses_multiple_refs() Result<Void, String> {
   // local 1 used twice
   expr: AnfExpr = .Let(
     lid(0),
-    .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), span.unknown(),
+    .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int),
+    span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   uses := count_uses(expr)
@@ -194,7 +206,12 @@ fn test_is_pure_unop() Result<Void, String> {
 fn test_dead_let_drops_unused_pure() Result<Void, String> {
   // Let(0, ABinOp(Add, 1, 2, Int), Atom(ALitInt(42)))
   // local 0 is unused, op is pure → should be eliminated
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int), span.unknown(), .Atom(.ALitInt(42)))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int),
+    span.unknown(),
+    .Atom(.ALitInt(42)),
+  )
   result := dead_let_elim(expr)
   try assert.is_true(result.changed)
 
@@ -233,7 +250,12 @@ fn test_dead_let_keeps_impure() Result<Void, String> {
 fn test_dead_let_keeps_int_div() Result<Void, String> {
   // Let(0, ABinOp(Div, 1, 0, Int), Atom(ALitInt(42)))
   // unused but int div is impure (may trap) → keep
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int), span.unknown(), .Atom(.ALitInt(42)))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int),
+    span.unknown(),
+    .Atom(.ALitInt(42)),
+  )
   result := dead_let_elim(expr)
   try assert.is_false(result.changed)
 
@@ -248,8 +270,9 @@ fn test_dead_let_keeps_assigned() Result<Void, String> {
   // local 5 has 0 uses but IS an assign target → should be kept
   expr: AnfExpr = .Let(
     lid(5),
-    .AInit(.ALitInt(0)), span.unknown(),
-    .Let(lid(0), .AAssign(lid(5), .ALitInt(1)),span.unknown(),  .Atom(.ALitVoid)),
+    .AInit(.ALitInt(0)),
+    span.unknown(),
+    .Let(lid(0), .AAssign(lid(5), .ALitInt(1)), span.unknown(), .Atom(.ALitVoid)),
   )
   result := dead_let_elim(expr)
 
@@ -270,13 +293,15 @@ fn test_dead_let_keeps_match_arm_binding_used_by_closure_free_var() Result<Void,
           pattern: .LitBool(true),
           body: .Let(
             lid(1),
-            .AInit(.ALitStr("interp")),span.unknown(), 
-            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]),span.unknown(),  .Atom(.ALocal(lid(2)))),
+            .AInit(.ALitStr("interp")),
+            span.unknown(),
+            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Atom(.ALocal(lid(2)))),
           ),
         },
         AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitVoid) },
       ],
-    ), span.unknown(),
+    ),
+    span.unknown(),
     .Atom(.ALocal(lid(4))),
   )
   result := dead_let_elim(expr)
@@ -291,9 +316,10 @@ fn test_dead_let_nested_in_if() Result<Void, String> {
     lid(0),
     .AIf(
       .ALitBool(true),
-      .Let(lid(1), .AInit(.ALitInt(42)),span.unknown(),  .Atom(.ALitInt(42))),
+      .Let(lid(1), .AInit(.ALitInt(42)), span.unknown(), .Atom(.ALitInt(42))),
       .Atom(.ALitInt(0)),
-    ), span.unknown(),
+    ),
+    span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   result := dead_let_elim(expr)
@@ -326,7 +352,12 @@ fn test_subst_atom_leaves_other() Result<Void, String> {
 fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
   // Let(0, AMakeClosure(99, [5]), Atom(ALocal(0)))
   // subst 5 with ALitInt(42) → free_vars should remain [5] unchanged
-  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(5)]), span.unknown(), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AMakeClosure(fid(99), [lid(5)]),
+    span.unknown(),
+    .Atom(.ALocal(lid(0))),
+  )
   result := subst_atom(expr, lid(5), .ALitInt(42))
 
   case result {
@@ -354,7 +385,12 @@ fn test_copy_prop_inlines_literal() Result<Void, String> {
 
 fn test_copy_prop_inlines_global_func() Result<Void, String> {
   // Let(1, AInit(AGlobalFunc(99)), Atom(ALocal(1)))
-  expr: AnfExpr = .Let(lid(1), .AInit(.AGlobalFunc(fid(99))), span.unknown(), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .AInit(.AGlobalFunc(fid(99))),
+    span.unknown(),
+    .Atom(.ALocal(lid(1))),
+  )
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
 
@@ -382,8 +418,9 @@ fn test_copy_prop_keeps_local_when_assigned() Result<Void, String> {
   // Source local 5 is assigned → should NOT forward
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALocal(lid(5))), span.unknown(),
-    .Let(lid(2), .AAssign(lid(5), .ALitInt(0)),span.unknown(),  .Atom(.ALocal(lid(1)))),
+    .AInit(.ALocal(lid(5))),
+    span.unknown(),
+    .Let(lid(2), .AAssign(lid(5), .ALitInt(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
   )
   result := copy_propagate(expr)
 
@@ -399,8 +436,14 @@ fn test_copy_prop_inlines_multi_use_literal() Result<Void, String> {
   // Literals are safe to duplicate → should propagate into both uses
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALitInt(42)), span.unknown(),
-    .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .AInit(.ALitInt(42)),
+    span.unknown(),
+    .Let(
+      lid(0),
+      .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int),
+      span.unknown(),
+      .Atom(.ALocal(lid(0))),
+    ),
   )
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
@@ -420,8 +463,9 @@ fn test_copy_prop_keeps_closure_only_use() Result<Void, String> {
   // local 1 used only as closure free_var → must NOT be propagated
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALitInt(10)), span.unknown(),
-    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .AInit(.ALitInt(10)),
+    span.unknown(),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), span.unknown(), .Atom(.ALocal(lid(0)))),
   )
   result := copy_propagate(expr)
   try assert.is_false(result.changed)
@@ -434,8 +478,9 @@ fn test_copy_prop_keeps_local_alias_used_by_closure() Result<Void, String> {
   // desynchronize the closure body from its capture list.
   expr: AnfExpr = .Let(
     lid(2),
-    .AInit(.ALocal(lid(1))), span.unknown(),
-    .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .AInit(.ALocal(lid(1))),
+    span.unknown(),
+    .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]), span.unknown(), .Atom(.ALocal(lid(0)))),
   )
   result := copy_propagate(expr)
   try assert.is_false(result.changed)
@@ -445,14 +490,16 @@ fn test_copy_prop_keeps_local_alias_used_by_closure() Result<Void, String> {
 fn test_copy_prop_keeps_local_alias_used_by_closure_in_if() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(2),
-    .AInit(.ALocal(lid(1))), span.unknown(),
+    .AInit(.ALocal(lid(1))),
+    span.unknown(),
     .Let(
       lid(9),
       .AIf(
         .ALitBool(false),
         .Atom(.ALitVoid),
-        .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]),span.unknown(),  .Atom(.ALocal(lid(0)))),
-      ),span.unknown(), 
+        .Let(lid(0), .AMakeClosure(fid(99), [lid(2)]), span.unknown(), .Atom(.ALocal(lid(0)))),
+      ),
+      span.unknown(),
       .Atom(.ALocal(lid(9))),
     ),
   )
@@ -466,8 +513,9 @@ fn test_copy_prop_keeps_assigned() Result<Void, String> {
   // local 1 is assigned → must NOT be propagated
   expr: AnfExpr = .Let(
     lid(1),
-    .AInit(.ALitInt(42)), span.unknown(),
-    .Let(lid(0), .AAssign(lid(1), .ALitInt(99)),span.unknown(),  .Atom(.ALocal(lid(1)))),
+    .AInit(.ALitInt(42)),
+    span.unknown(),
+    .Let(lid(0), .AAssign(lid(1), .ALitInt(99)), span.unknown(), .Atom(.ALocal(lid(1)))),
   )
   result := copy_propagate(expr)
   try assert.is_false(result.changed)
@@ -483,7 +531,12 @@ fn test_is_pure_if_pure_branches() Result<Void, String> {
 
 fn test_is_pure_if_impure_branch() Result<Void, String> {
   // AIf(cond, Let(_, ACall(...), Atom(..)), Atom(..)) — then has call → impure
-  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), span.unknown(), .Atom(.ALocal(lid(1))))
+  then_e: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(99)), []),
+    span.unknown(),
+    .Atom(.ALocal(lid(1))),
+  )
   op: AnfOp = .AIf(.ALocal(lid(0)), then_e, .Atom(.ALitInt(2)))
   assert.is_false(is_pure(op))
 }
@@ -497,7 +550,12 @@ fn test_is_pure_match_pure_arms() Result<Void, String> {
 
 fn test_is_pure_match_impure_arm() Result<Void, String> {
   // AMatch with an impure arm body → impure
-  impure_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), span.unknown(), .Atom(.ALocal(lid(1))))
+  impure_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(99)), []),
+    span.unknown(),
+    .Atom(.ALocal(lid(1))),
+  )
   arms: Vector<AnfMatchArm> = [AnfMatchArm.{ pattern: .Wildcard, body: impure_body }]
   op: AnfOp = .AMatch(.ALocal(lid(0)), arms)
   assert.is_false(is_pure(op))
@@ -508,7 +566,8 @@ fn test_dead_let_drops_unused_pure_if() Result<Void, String> {
   // Local 0 unused, AIf is structurally pure → should be eliminated
   expr: AnfExpr = .Let(
     lid(0),
-    .AIf(.ALocal(lid(5)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))), span.unknown(),
+    .AIf(.ALocal(lid(5)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+    span.unknown(),
     .Atom(.ALitVoid),
   )
   result := dead_let_elim(expr)
@@ -523,8 +582,18 @@ fn test_dead_let_drops_unused_pure_if() Result<Void, String> {
 fn test_dead_let_keeps_unused_impure_if() Result<Void, String> {
   // Let(0, AIf(cond, Let(_, ACall(...), ...), ...), Atom(ALitVoid))
   // Local 0 unused, but AIf has a call → should NOT be eliminated
-  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), span.unknown(), .Atom(.ALocal(lid(1))))
-  expr: AnfExpr = .Let(lid(0), .AIf(.ALocal(lid(5)), then_e, .Atom(.ALitInt(2))), span.unknown(), .Atom(.ALitVoid))
+  then_e: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(99)), []),
+    span.unknown(),
+    .Atom(.ALocal(lid(1))),
+  )
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(.ALocal(lid(5)), then_e, .Atom(.ALitInt(2))),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   result := dead_let_elim(expr)
 
   case result.expr {
@@ -538,7 +607,8 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
   // dead-let behavior: unused calls are still retained.
   expr: AnfExpr = .Let(
     lid(0),
-    .ACall(.AGlobalFunc(make_builtin_registry().id("vector$len")), [.ALocal(lid(9))]), span.unknown(),
+    .ACall(.AGlobalFunc(make_builtin_registry().id("vector$len")), [.ALocal(lid(9))]),
+    span.unknown(),
     .Atom(.ALitVoid),
   )
   semantics := make_prelude_optimizer_semantics(make_builtin_registry())

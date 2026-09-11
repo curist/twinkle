@@ -1,6 +1,5 @@
 //! Tests for boot/compiler/backend/verify.tw — Phase 5.
 
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -17,6 +16,7 @@ use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
+use lib.source.span
 
 fn lid(n: Int) LocalId {
   .{ id: n }
@@ -236,7 +236,12 @@ pub fn suite() runner.Suite {
     .test(
       "valid prepared module passes verification",
       fn() {
-        body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALocal(lid(0))),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         prepared := prepared_module(
           [mk_param(0, .Int)],
           body,
@@ -252,7 +257,12 @@ pub fn suite() runner.Suite {
     .test(
       "missing slot referenced from body is rejected",
       fn() {
-        body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALocal(lid(0))),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         prepared := prepared_module(
           [mk_param(0, .Int)],
           body,
@@ -298,7 +308,12 @@ pub fn suite() runner.Suite {
     .test(
       "break with value is rejected",
       fn() {
-        body: AnfExpr = .Let(lid(10), .ALoop(.Break(.Some(.ALitInt(1)))), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .ALoop(.Break(.Some(.ALitInt(1)))),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Void]), .Void)
         verify_err(prepared, "break with value is not supported in prepared backend IR")
       },
@@ -308,8 +323,14 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .AInit(.ALitVoid), span.unknown(),
-          .Let(lid(11), .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]),span.unknown(),  .Atom(.ALocal(lid(11)))),
+          .AInit(.ALitVoid),
+          span.unknown(),
+          .Let(
+            lid(11),
+            .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]),
+            span.unknown(),
+            .Atom(.ALocal(lid(11))),
+          ),
         )
         prepared := prepared_module(
           [],
@@ -325,8 +346,9 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .AIf(.ALitBool(true), .Return(.Some(.ALitInt(1))), .Return(.Some(.ALitInt(2)))), span.unknown(),
-          .Let(lid(11), .AInit(.ALocal(lid(10))),span.unknown(),  .Atom(.ALitInt(0))),
+          .AIf(.ALitBool(true), .Return(.Some(.ALitInt(1))), .Return(.Some(.ALitInt(2)))),
+          span.unknown(),
+          .Let(lid(11), .AInit(.ALocal(lid(10))), span.unknown(), .Atom(.ALitInt(0))),
         )
         prepared := prepared_module(
           [],
@@ -345,10 +367,12 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .AInit(.ALitVoid), span.unknown(),
+          .AInit(.ALitVoid),
+          span.unknown(),
           .Let(
             lid(11),
-            .AIf(.ALocal(lid(10)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),span.unknown(), 
+            .AIf(.ALocal(lid(10)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+            span.unknown(),
             .Atom(.ALocal(lid(11))),
           ),
         )
@@ -364,7 +388,12 @@ pub fn suite() runner.Suite {
     .test(
       "init value mono mismatch is rejected",
       fn() {
-        body: AnfExpr = .Let(lid(10), .AInit(.ALitBool(true)), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALitBool(true)),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
         verify_err(prepared, "init value has mono Bool, expected Int")
       },
@@ -374,7 +403,8 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .ABinOp(.Add, .ALitBool(true), .ALitInt(1), .Int), span.unknown(),
+          .ABinOp(.Add, .ALitBool(true), .ALitInt(1), .Int),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
@@ -387,10 +417,12 @@ pub fn suite() runner.Suite {
         // let r: Anyref_ = init(void); let x: Int = record_get(r, ...)
         body: AnfExpr = .Let(
           lid(10),
-          .AInit(.ALitVoid), span.unknown(),
+          .AInit(.ALitVoid),
+          span.unknown(),
           .Let(
             lid(11),
-            .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(), 
+            .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+            span.unknown(),
             .Atom(.ALocal(lid(11))),
           ),
         )
@@ -408,7 +440,8 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
+          .AMakeClosure(fid(99), [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -441,7 +474,8 @@ pub fn suite() runner.Suite {
       fn() {
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.ALocal(lid(0)), [.ALitBool(true)]), span.unknown(),
+          .ACall(.ALocal(lid(0)), [.ALitBool(true)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         prepared := prepared_module(
@@ -456,7 +490,12 @@ pub fn suite() runner.Suite {
     .test(
       "closure call arity mismatch is rejected",
       fn() {
-        body: AnfExpr = .Let(lid(10), .ACall(.ALocal(lid(0)), []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .ACall(.ALocal(lid(0)), []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         prepared := prepared_module(
           [mk_param(0, .Function([.Int], .Int))],
           body,
@@ -474,7 +513,12 @@ pub fn suite() runner.Suite {
           "caller",
           [],
           .Int,
-          .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]), span.unknown(), .Atom(.ALocal(lid(10)))),
+          .Let(
+            lid(10),
+            .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]),
+            span.unknown(),
+            .Atom(.ALocal(lid(10))),
+          ),
           mk_mono_map([10], [MonoType.Int]),
         )
         callee := mk_func_def(
@@ -541,7 +585,12 @@ pub fn suite() runner.Suite {
         env := base_env.builtin_env()
         builtins := empty_builtins()
         int_to_string := builtins.id("int$to_string")
-        body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(int_to_string, []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         func := mk_func_def(
           1,
           "f",
@@ -560,7 +609,12 @@ pub fn suite() runner.Suite {
         env := base_env.builtin_env()
         builtins := empty_builtins()
         byte_to_string := builtins.id("byte$to_string")
-        body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(byte_to_string, []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         func := mk_func_def(
           1,
           "f",
@@ -581,7 +635,12 @@ pub fn suite() runner.Suite {
         cell_update := builtins.id("cell$update")
         cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
         updater_ty := MonoType.Function([.Int], .Int)
-        body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(cell_update, []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         func := mk_func_def(
           1,
           "f",
@@ -605,7 +664,12 @@ pub fn suite() runner.Suite {
           .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]),
         )
         iter_ty := MonoType.Named(TypeId.{ id: 17 }, [MonoType.Int])
-        body: AnfExpr = .Let(lid(10), .AMakeClosure(iterator_unfold, []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(iterator_unfold, []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         func := mk_func_def(
           1,
           "f",
@@ -624,7 +688,12 @@ pub fn suite() runner.Suite {
         env := base_env.builtin_env()
         builtins := registry_with_closure_policy(empty_builtins(), "vector$len", .GenericClosure)
         vector_len := builtins.id("vector$len")
-        body: AnfExpr = .Let(lid(10), .AMakeClosure(vector_len, []), span.unknown(), .Atom(.ALocal(lid(10))))
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(vector_len, []),
+          span.unknown(),
+          .Atom(.ALocal(lid(10))),
+        )
         func := mk_func_def(
           1,
           "f",
@@ -645,7 +714,8 @@ pub fn suite() runner.Suite {
         int_to_string := builtins.id("int$to_string")
         body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(int_to_string, [lid(0)]), span.unknown(),
+          .AMakeClosure(int_to_string, [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(

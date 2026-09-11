@@ -1,4 +1,3 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -31,6 +30,7 @@ use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedVariant, TypeEntry}
 use lib.module.loader
+use lib.source.span
 
 fn lid(n: Int) LocalId {
   .{ id: n }
@@ -212,7 +212,8 @@ fn test_tail_call_emits_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
   prepared := make_one_func_module(
@@ -255,7 +256,8 @@ fn test_non_tail_call_no_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(1))),
   )
   prepared := make_one_func_module(
@@ -298,7 +300,8 @@ fn test_tail_call_void_result_no_return_call() Result<Void, String> {
   }
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
   prepared := make_one_func_module(func_id, "fire", [sid(0)], [sid(1)], slots, body, MonoType.Void)
@@ -336,17 +339,20 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
 
   then_branch := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   else_branch := PreparedExpr.Let(
     sid(3),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
   )
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AIf(PreparedAtom.ASlot(sid(0)), then_branch, else_branch), span.unknown(),
+    PreparedOp.AIf(PreparedAtom.ASlot(sid(0)), then_branch, else_branch),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -436,12 +442,14 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
 
   arm0_body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   arm1_body := PreparedExpr.Let(
     sid(3),
-    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
   )
   arms: Vector<PreparedMatchArm> = [
@@ -450,7 +458,8 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
   ]
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms), span.unknown(),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -600,7 +609,8 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 0 }, []),
     body: PreparedExpr.Let(
       sid(2),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
     ),
   }
@@ -608,7 +618,8 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 1 }, []),
     body: PreparedExpr.Let(
       sid(3),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
     ),
   }
@@ -616,14 +627,16 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 2 }, []),
     body: PreparedExpr.Let(
       sid(4),
-      PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]), span.unknown(),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+      span.unknown(),
       PreparedExpr.Atom(PreparedAtom.ASlot(sid(4))),
     ),
   }
   arms: Vector<PreparedMatchArm> = [arm0, arm1, arm2]
   body := PreparedExpr.Let(
     sid(1),
-    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms), span.unknown(),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
   )
 
@@ -722,7 +735,8 @@ fn test_tail_closure_call_emits_return_call_ref() Result<Void, String> {
 
   body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    span.unknown(),
     PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(2)))),
   )
   prepared := make_one_func_module(
@@ -777,7 +791,8 @@ fn test_non_tail_closure_call_no_return_call_ref() Result<Void, String> {
 
   body := PreparedExpr.Let(
     sid(2),
-    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]), span.unknown(),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    span.unknown(),
     PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
   )
   prepared := make_one_func_module(
@@ -1786,7 +1801,12 @@ fn compile_fixture_to_linked_wat(path: String) Result<String, String> {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
-  linked := codegen.link_program(artifacts.opt, artifacts.env, artifacts.builtins, artifacts.debug_files)
+  linked := codegen.link_program(
+    artifacts.opt,
+    artifacts.env,
+    artifacts.builtins,
+    artifacts.debug_files,
+  )
   .Ok(emit_wat(linked))
 }
 

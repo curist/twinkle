@@ -1,4 +1,3 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -7,6 +6,7 @@ use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.opt.pipeline.{optimize_module, optimize_module_with_semantics}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use lib.source.span
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
@@ -66,11 +66,18 @@ fn test_cross_round_chain() Result<Void, String> {
   // Atom(ALocal(z))
   expr: AnfExpr = .Let(
     lid(0),
-    .AInit(.ALitInt(1)), span.unknown(),
+    .AInit(.ALitInt(1)),
+    span.unknown(),
     .Let(
       lid(1),
-      .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),span.unknown(), 
-      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),span.unknown(),  .Atom(.ALocal(lid(2)))),
+      .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
+      span.unknown(),
+      .Let(
+        lid(2),
+        .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
+        span.unknown(),
+        .Atom(.ALocal(lid(2))),
+      ),
     ),
   )
   func := make_func(1, "test", expr)
@@ -98,10 +105,12 @@ fn test_cross_round_chain() Result<Void, String> {
 fn test_branch_simp_then_dead_elim() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(0),
-    .AInit(.ALitBool(true)), span.unknown(),
+    .AInit(.ALitBool(true)),
+    span.unknown(),
     .Let(
       lid(1),
-      .AIf(.ALocal(lid(0)), .Atom(.ALitInt(5)), .Atom(.ALitInt(10))),span.unknown(), 
+      .AIf(.ALocal(lid(0)), .Atom(.ALitInt(5)), .Atom(.ALitInt(10))),
+      span.unknown(),
       .Atom(.ALocal(lid(1))),
     ),
   )
@@ -178,7 +187,8 @@ fn test_multiple_functions_optimized() Result<Void, String> {
   // func1: let x = 1 + 2; Atom(x) → let x = 3; Atom(x)
   body1: AnfExpr = .Let(
     lid(0),
-    .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int), span.unknown(),
+    .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int),
+    span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   func1 := make_func(1, "f1", body1)
@@ -186,7 +196,8 @@ fn test_multiple_functions_optimized() Result<Void, String> {
   // func2: let y = 10 - 3; Atom(y) → let y = 7; Atom(y)
   body2: AnfExpr = .Let(
     lid(0),
-    .ABinOp(.Sub, .ALitInt(10), .ALitInt(3), .Int), span.unknown(),
+    .ABinOp(.Sub, .ALitInt(10), .ALitInt(3), .Int),
+    span.unknown(),
     .Atom(.ALocal(lid(0))),
   )
   func2 := make_func(2, "f2", body2)
@@ -215,7 +226,12 @@ fn test_multiple_functions_optimized() Result<Void, String> {
 // ── Test: already optimal stays unchanged ───────────────────────────
 fn test_already_optimal() Result<Void, String> {
   // let x = ACall(f, []); Atom(x) — cannot optimize
-  body: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(99)), []), span.unknown(), .Atom(.ALocal(lid(0))))
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(fid(99)), []),
+    span.unknown(),
+    .Atom(.ALocal(lid(0))),
+  )
   func := make_func(1, "test", body)
   module: AnfModule = .{
     functions: [func],
@@ -239,8 +255,9 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
   // If x is pinned, copy prop should NOT inline x into y
   init_body: AnfExpr = .Let(
     lid(0),
-    .AInit(.ALitInt(42)), span.unknown(),
-    .Let(lid(1), .AInit(.ALocal(lid(0))),span.unknown(),  .Atom(.ALocal(lid(1)))),
+    .AInit(.ALitInt(42)),
+    span.unknown(),
+    .Let(lid(1), .AInit(.ALocal(lid(0))), span.unknown(), .Atom(.ALocal(lid(1)))),
   )
   init_func := make_init_func(100, init_body)
 
@@ -270,14 +287,22 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
 fn test_nested_multi_round() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(0),
-    .AInit(.ALitInt(1)), span.unknown(),
+    .AInit(.ALitInt(1)),
+    span.unknown(),
     .Let(
       lid(1),
-      .AInit(.ALitInt(2)),span.unknown(), 
+      .AInit(.ALitInt(2)),
+      span.unknown(),
       .Let(
         lid(2),
-        .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(1)), .Int),span.unknown(), 
-        .Let(lid(3), .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int),span.unknown(),  .Atom(.ALocal(lid(3)))),
+        .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(1)), .Int),
+        span.unknown(),
+        .Let(
+          lid(3),
+          .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int),
+          span.unknown(),
+          .Atom(.ALocal(lid(3))),
+        ),
       ),
     ),
   )
@@ -302,11 +327,18 @@ fn test_nested_multi_round() Result<Void, String> {
 fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(0),
-    .AInit(.ALitInt(1)), span.unknown(),
+    .AInit(.ALitInt(1)),
+    span.unknown(),
     .Let(
       lid(1),
-      .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),span.unknown(), 
-      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),span.unknown(),  .Atom(.ALocal(lid(2)))),
+      .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
+      span.unknown(),
+      .Let(
+        lid(2),
+        .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
+        span.unknown(),
+        .Atom(.ALocal(lid(2))),
+      ),
     ),
   )
   func := make_func(1, "test", expr)

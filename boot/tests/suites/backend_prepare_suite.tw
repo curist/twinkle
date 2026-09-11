@@ -10,7 +10,6 @@
 //!   - prepared backend IR has an explicit representation-transition story
 //!   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
 
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -31,6 +30,7 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
+use lib.source.span
 
 // ── Construction helpers ─────────────────────────────────────────────
 fn lid(n: Int) LocalId {
@@ -298,7 +298,8 @@ pub fn suite() runner.Suite {
         // User functions have no ABI contracts, so no wraps/unwraps.
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -324,7 +325,8 @@ pub fn suite() runner.Suite {
         // Slot 0: Param x, Slot 1: Local t0
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -363,7 +365,8 @@ pub fn suite() runner.Suite {
         box_fid := builtins.id("box_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -407,7 +410,8 @@ pub fn suite() runner.Suite {
         box_fid := builtins.id("box_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -445,7 +449,8 @@ pub fn suite() runner.Suite {
         unbox_fid := builtins.id("unbox_it")
         body: AnfExpr = .Let(
           lid(10),
-          .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         func := mk_func_def(
@@ -485,7 +490,8 @@ pub fn suite() runner.Suite {
         store_fid := builtins.id("store_int")
         body: AnfExpr = .Let(
           lid(5),
-          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]), span.unknown(),
+          .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+          span.unknown(),
           .Atom(.ALitVoid),
         )
         func := mk_func_def(
@@ -512,7 +518,8 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
+          .AMakeClosure(fid(99), [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -550,7 +557,8 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
+          .AMakeClosure(fid(99), [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -561,7 +569,12 @@ pub fn suite() runner.Suite {
           outer_body,
           mk_mono_map([10], [MonoType.Function([], .Void)]),
         )
-        inner_body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .ALitInt(42)), span.unknown(), .Atom(.ALocal(lid(11))))
+        inner_body: AnfExpr = .Let(
+          lid(11),
+          .AAssign(lid(0), .ALitInt(42)),
+          span.unknown(),
+          .Atom(.ALocal(lid(11))),
+        )
         inner := mk_func_def(99, "inner", [], .Void, inner_body, mk_mono_map([11], [MonoType.Void]))
         converted := convert_closures(mk_module([outer, inner]), empty_env())
 
@@ -571,7 +584,10 @@ pub fn suite() runner.Suite {
             rewritten := converted.anf.functions[1]
 
             case rewritten.body {
-              .Let(_, .AAssign(target, _), _, _) => try assert.equal(target.id, caps[0].param_local.id),
+              .Let(_, .AAssign(target, _), _, _) => try assert.equal(
+                target.id,
+                caps[0].param_local.id,
+              ),
               _ => return .Err("rewritten hoisted body did not rewrite captured assign target"),
             }
 
@@ -585,7 +601,8 @@ pub fn suite() runner.Suite {
       fn() {
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMakeClosure(fid(99), [lid(0)]), span.unknown(),
+          .AMakeClosure(fid(99), [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(10))),
         )
         outer := mk_func_def(
@@ -598,7 +615,8 @@ pub fn suite() runner.Suite {
         )
         middle_body: AnfExpr = .Let(
           lid(11),
-          .AMakeClosure(fid(100), [lid(0)]), span.unknown(),
+          .AMakeClosure(fid(100), [lid(0)]),
+          span.unknown(),
           .Atom(.ALocal(lid(11))),
         )
         middle := mk_func_def(
@@ -642,7 +660,8 @@ pub fn suite() runner.Suite {
         }
         outer_body: AnfExpr = .Let(
           lid(10),
-          .AMatch(.ALocal(lid(0)), [some_arm, none_arm]), span.unknown(),
+          .AMatch(.ALocal(lid(0)), [some_arm, none_arm]),
+          span.unknown(),
           .Atom(.ALitVoid),
         )
         outer := mk_func_def(

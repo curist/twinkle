@@ -1,4 +1,3 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -12,6 +11,7 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
+use lib.source.span
 
 fn lid(id: Int) LocalId {
   .{ id }
@@ -315,7 +315,12 @@ pub fn suite() runner.Suite {
         // f() { d := Dict.new(); r := Wrapper.{ f0: d }; 0 }  -> r has [.f0]:Unique.
         // Return 0 (not r) so publication doesn't clear r's field facts.
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
-        body: AnfExpr = .Let(lid(0), dict_new_call(b), span.unknown(), .Let(lid(1), rec,span.unknown(),  .Atom(.ALitInt(0))))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(lid(1), rec, span.unknown(), .Atom(.ALitInt(0))),
+        )
         f := analyzed_func(module_of("f", body))
         try assert.is_true(has_field_path(f, 1, ff.field_path(0)))
         .Ok({})
@@ -329,7 +334,12 @@ pub fn suite() runner.Suite {
         // f() { d := Dict.new(); r := Two.{ a: d, b: d }; 0 }  -> neither field claimed.
         // Return 0 so field facts are not cleared by publication.
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(0))])
-        body: AnfExpr = .Let(lid(0), dict_new_call(b), span.unknown(), .Let(lid(1), rec,span.unknown(),  .Atom(.ALitInt(0))))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(lid(1), rec, span.unknown(), .Atom(.ALitInt(0))),
+        )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
         try assert.is_false(has_field_path(f, 1, ff.field_path(1)))
@@ -345,10 +355,16 @@ pub fn suite() runner.Suite {
         // d is aliased by keep, so it is NOT single-retention -> no claim.
         inner: AnfExpr = .Let(
           lid(2),
-          .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))]),span.unknown(), 
+          .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))]),
+          span.unknown(),
           .Atom(.ALocal(lid(1))), // return keep so d has a live alias at the record
         )
-        body: AnfExpr = .Let(lid(0), dict_new_call(b), span.unknown(), .Let(lid(1), .AInit(.ALocal(lid(0))),span.unknown(),  inner))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(lid(1), .AInit(.ALocal(lid(0))), span.unknown(), inner),
+        )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(has_field_path(f, 2, ff.field_path(0)))
         .Ok({})
@@ -371,11 +387,23 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            dict_new_call(b),span.unknown(), 
-            .Let(lid(2), mk,span.unknown(),  .Let(lid(3), dict_new_call(b),span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALitInt(0))))),
+            dict_new_call(b),
+            span.unknown(),
+            .Let(
+              lid(2),
+              mk,
+              span.unknown(),
+              .Let(
+                lid(3),
+                dict_new_call(b),
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALitInt(0))),
+              ),
+            ),
           ),
         )
         f := analyzed_func(module_of("f", body))
@@ -394,15 +422,18 @@ pub fn suite() runner.Suite {
         arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           // return a literal (not r) so r's exit field facts are observable (not published)
           .Let(
             lid(1),
-            arr,span.unknown(), 
+            arr,
+            span.unknown(),
             .Let(
               lid(2),
-              dict_new_call(b),span.unknown(), 
-              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)),span.unknown(),  .Atom(.ALitInt(0))),
+              dict_new_call(b),
+              span.unknown(),
+              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), span.unknown(), .Atom(.ALitInt(0))),
             ),
           ),
         )
@@ -420,17 +451,26 @@ pub fn suite() runner.Suite {
         arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            arr,span.unknown(), 
+            arr,
+            span.unknown(),
             .Let(
               lid(2),
-              dict_new_call(b),span.unknown(), 
+              dict_new_call(b),
+              span.unknown(),
               .Let(
                 lid(3),
-                .AInit(.ALocal(lid(2))),span.unknown(), 
-                .Let(lid(4), vec_set_call(b, lid(1), 0, lid(2)),span.unknown(),  .Atom(.ALocal(lid(3)))),
+                .AInit(.ALocal(lid(2))),
+                span.unknown(),
+                .Let(
+                  lid(4),
+                  vec_set_call(b, lid(1), 0, lid(2)),
+                  span.unknown(),
+                  .Atom(.ALocal(lid(3))),
+                ),
               ),
             ),
           ),
@@ -448,8 +488,9 @@ pub fn suite() runner.Suite {
         // f() { x := Dict.new(); r := Vector.make(3, x) } -> NO [Elem].
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
-          .Let(lid(1), vec_make_call(b, lid(0)),span.unknown(),  .Atom(.ALocal(lid(1)))),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(lid(1), vec_make_call(b, lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
         )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(has_field_path(f, 1, ff.elem_path()))
@@ -467,8 +508,14 @@ pub fn suite() runner.Suite {
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
-          .Let(lid(1), rec,span.unknown(),  .Let(lid(2), record_get(lid(1), 0),span.unknown(),  .Atom(.ALitInt(0)))),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(
+            lid(1),
+            rec,
+            span.unknown(),
+            .Let(lid(2), record_get(lid(1), 0), span.unknown(), .Atom(.ALitInt(0))),
+          ),
         )
         f := analyzed_func(module_of("f", body))
         try assert.is_true(is_shell_unique(f, 2))
@@ -485,8 +532,14 @@ pub fn suite() runner.Suite {
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
-          .Let(lid(1), rec,span.unknown(),  .Let(lid(2), record_get(lid(1), 0),span.unknown(),  .Atom(.ALocal(lid(1))))),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(
+            lid(1),
+            rec,
+            span.unknown(),
+            .Let(lid(2), record_get(lid(1), 0), span.unknown(), .Atom(.ALocal(lid(1)))),
+          ),
         )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(is_shell_unique(f, 2))
@@ -508,11 +561,18 @@ pub fn suite() runner.Suite {
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            .AInit(.ALocal(lid(0))),span.unknown(), 
-            .Let(lid(2), rec,span.unknown(),  .Let(lid(3), record_get(lid(2), 0),span.unknown(),  .Atom(.ALocal(lid(1))))),
+            .AInit(.ALocal(lid(0))),
+            span.unknown(),
+            .Let(
+              lid(2),
+              rec,
+              span.unknown(),
+              .Let(lid(3), record_get(lid(2), 0), span.unknown(), .Atom(.ALocal(lid(1)))),
+            ),
           ),
         )
         f := analyzed_func(module_of("f", body))
@@ -548,15 +608,23 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
+              record_get(lid(1), 0),
+              span.unknown(),
               // Return ALitInt(0) so L4 is NOT published; then has_field_path(f, 4, ...) is observable.
-              .Let(lid(3), set2,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALitInt(0)))),
+              .Let(
+                lid(3),
+                set2,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALitInt(0))),
+              ),
             ),
           ),
         )
@@ -590,11 +658,18 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
-            .Let(lid(2), record_get(lid(1), 0),span.unknown(),  .Let(lid(3), set2,span.unknown(),  .Atom(.ALocal(lid(1))))),
+            mk,
+            span.unknown(),
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(lid(3), set2, span.unknown(), .Atom(.ALocal(lid(1)))),
+            ),
           ),
         )
         f := analyzed_func(module_of("f", body))
@@ -632,14 +707,22 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), set2,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALocal(lid(1))))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                set2,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALocal(lid(1)))),
+              ),
             ),
           ),
         )
@@ -670,14 +753,22 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), set2,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALitInt(0)))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                set2,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALitInt(0))),
+              ),
             ),
           ),
         )
@@ -716,11 +807,18 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            rec,span.unknown(), 
-            .Let(lid(2), dict_new_call(b),span.unknown(),  .Let(lid(3), upd,span.unknown(),  .Atom(.ALocal(lid(3))))),
+            rec,
+            span.unknown(),
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              span.unknown(),
+              .Let(lid(3), upd, span.unknown(), .Atom(.ALocal(lid(3)))),
+            ),
           ),
         )
         m := module_of("f", body)
@@ -756,14 +854,22 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), dict_new_call(b),span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALocal(lid(4))))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                dict_new_call(b),
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALocal(lid(4)))),
+              ),
             ),
           ),
         )
@@ -800,14 +906,22 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), stringify,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALocal(lid(4))))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                stringify,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALocal(lid(4)))),
+              ),
             ),
           ),
         )
@@ -848,14 +962,22 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), set2,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALocal(lid(2))))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                set2,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALocal(lid(2)))),
+              ),
             ),
           ),
         )
@@ -896,23 +1018,34 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              init,span.unknown(), 
+              init,
+              span.unknown(),
               .Let(
                 lid(3),
-                record_get(lid(2), 0),span.unknown(), 
+                record_get(lid(2), 0),
+                span.unknown(),
                 .Let(
                   lid(4),
-                  set2,span.unknown(), 
+                  set2,
+                  span.unknown(),
                   .Let(
                     lid(5),
-                    upd,span.unknown(), 
-                    .Let(lid(6), .AAssign(lid(2), .ALocal(lid(5))),span.unknown(),  .Atom(.ALocal(lid(2)))),
+                    upd,
+                    span.unknown(),
+                    .Let(
+                      lid(6),
+                      .AAssign(lid(2), .ALocal(lid(5))),
+                      span.unknown(),
+                      .Atom(.ALocal(lid(2))),
+                    ),
                   ),
                 ),
               ),
@@ -957,26 +1090,38 @@ pub fn suite() runner.Suite {
         )
         body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            mk,span.unknown(), 
+            mk,
+            span.unknown(),
             .Let(
               lid(2),
-              init,span.unknown(), 
+              init,
+              span.unknown(),
               .Let(
                 lid(3),
-                record_get(lid(2), 0),span.unknown(), 
+                record_get(lid(2), 0),
+                span.unknown(),
                 .Let(
                   lid(4),
-                  set2,span.unknown(), 
+                  set2,
+                  span.unknown(),
                   .Let(
                     lid(5),
-                    upd1,span.unknown(), 
+                    upd1,
+                    span.unknown(),
                     .Let(
                       lid(6),
-                      .AAssign(lid(2), .ALocal(lid(5))),span.unknown(), 
-                      .Let(lid(7), dict_new_call(b),span.unknown(),  .Let(lid(8), upd2,span.unknown(),  .Atom(.ALocal(lid(8))))),
+                      .AAssign(lid(2), .ALocal(lid(5))),
+                      span.unknown(),
+                      .Let(
+                        lid(7),
+                        dict_new_call(b),
+                        span.unknown(),
+                        .Let(lid(8), upd2, span.unknown(), .Atom(.ALocal(lid(8)))),
+                      ),
                     ),
                   ),
                 ),
@@ -1034,21 +1179,34 @@ pub fn suite() runner.Suite {
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
 
         // Task 3: record intro with a fresh dict field.
-        intro: AnfExpr = .Let(lid(0), dict_new_call(b), span.unknown(), .Let(lid(1), rec,span.unknown(),  .Atom(.ALocal(lid(1)))))
+        intro: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(lid(1), rec, span.unknown(), .Atom(.ALocal(lid(1)))),
+        )
         try assert_downward_closed(analyzed_func(module_of("f", intro)))
 
         // Task 4: store an owned inner into an all-owned vector.
         arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
         consume: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            arr,span.unknown(), 
+            arr,
+            span.unknown(),
             .Let(
               lid(2),
-              dict_new_call(b),span.unknown(), 
-              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)),span.unknown(),  .Atom(.ALocal(lid(3)))),
+              dict_new_call(b),
+              span.unknown(),
+              .Let(
+                lid(3),
+                vec_set_call(b, lid(1), 0, lid(2)),
+                span.unknown(),
+                .Atom(.ALocal(lid(3))),
+              ),
             ),
           ),
         )
@@ -1057,8 +1215,14 @@ pub fn suite() runner.Suite {
         // Task 5: projection move (base dead after the get).
         proj: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
-          .Let(lid(1), rec,span.unknown(),  .Let(lid(2), record_get(lid(1), 0),span.unknown(),  .Atom(.ALocal(lid(2))))),
+          dict_new_call(b),
+          span.unknown(),
+          .Let(
+            lid(1),
+            rec,
+            span.unknown(),
+            .Let(lid(2), record_get(lid(1), 0), span.unknown(), .Atom(.ALocal(lid(2)))),
+          ),
         )
         try assert_downward_closed(analyzed_func(module_of("f", proj)))
 
@@ -1076,14 +1240,22 @@ pub fn suite() runner.Suite {
         )
         quartet: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            rec,span.unknown(), 
+            rec,
+            span.unknown(),
             .Let(
               lid(2),
-              record_get(lid(1), 0),span.unknown(), 
-              .Let(lid(3), set2,span.unknown(),  .Let(lid(4), upd,span.unknown(),  .Atom(.ALocal(lid(4))))),
+              record_get(lid(1), 0),
+              span.unknown(),
+              .Let(
+                lid(3),
+                set2,
+                span.unknown(),
+                .Let(lid(4), upd, span.unknown(), .Atom(.ALocal(lid(4)))),
+              ),
             ),
           ),
         )

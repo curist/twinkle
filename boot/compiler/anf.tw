@@ -4,12 +4,13 @@
 //! is bound to a named local via Let, producing flat let-chains that
 //! map directly to Wasm instructions.
 
+use lib.source.span.{Span}
+
 use .core_ir.{
   BinOp, CorePattern, ExternImport, FieldId, FuncId, GlobalId, LibExport, LocalId, Param, UnOp,
   VariantId,
 }
 use .mono_type.{MonoType, TypeId}
-use lib.source.span.{Span}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
 pub type OpKind = { Int, Float, Bool, Str }

@@ -1,4 +1,3 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -12,6 +11,7 @@ use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.summary
 use compiler.variant_id
+use lib.source.span
 
 fn lid(id: Int) LocalId {
   .{ id }
@@ -177,8 +177,9 @@ fn wrapper2_helper(b: builtins.BuiltinRegistry) AnfFunctionDef {
     1,
     .Let(
       lid(1),
-      dict_new_call(b), span.unknown(), // f1v := Dict.new() (fresh)
-      .Let(lid(2), wrapper_record2(lid(0), lid(1)),span.unknown(),  .Atom(.ALocal(lid(2)))),
+      dict_new_call(b),
+      span.unknown(), // f1v := Dict.new() (fresh)
+      .Let(lid(2), wrapper_record2(lid(0), lid(1)), span.unknown(), .Atom(.ALocal(lid(2)))),
     ),
   )
 }
@@ -193,16 +194,24 @@ grec_local: Int = 2
 // ret_path owned-from-param(0). caller() threads a fresh unique ctx through it.
 fn case_w_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
-  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))))
+  helper := fdef(
+    1,
+    "helper",
+    1,
+    .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
+  )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // ctx := Dict.new() (fresh Unique)
+    dict_new_call(b),
+    span.unknown(), // ctx := Dict.new() (fresh Unique)
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := helper(ctx)
       .Let(
         lid(2),
-        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        span.unknown(), // g := out.f0
         .Atom(.ALocal(lid(2))),
       ),
     ),
@@ -216,13 +225,20 @@ fn case_w_fixture() Vector<AnfFunctionDef> {
 // ctx. Documents the Phase 5 boundary: param-threaded state needs Phase 6
 // parameter ownership. Do NOT "fix" this by making params implicitly unique.
 fn case_w_param_fixture() Vector<AnfFunctionDef> {
-  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))))
+  helper := fdef(
+    1,
+    "helper",
+    1,
+    .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
+  )
   caller_body: AnfExpr = .Let(
     lid(1),
-    .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), span.unknown(), // out := helper(ctx-PARAM)
+    .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+    span.unknown(), // out := helper(ctx-PARAM)
     .Let(
       lid(2),
-      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+      span.unknown(), // g := out.f0
       .Atom(.ALocal(lid(2))),
     ),
   )
@@ -234,19 +250,28 @@ fn case_w_param_fixture() Vector<AnfFunctionDef> {
 // publish-on-fail publishes it again -- idempotently (no crash, stays Shared).
 fn case_w_shared_arg_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
-  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))))
+  helper := fdef(
+    1,
+    "helper",
+    1,
+    .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
+  )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(),
+    dict_new_call(b),
+    span.unknown(),
     .Let(
       lid(1),
-      .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),span.unknown(),  // publish ctx -> Shared BEFORE the call
+      .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),
+      span.unknown(), // publish ctx -> Shared BEFORE the call
       .Let(
         lid(2),
-        .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx), ctx already Shared
+        .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+        span.unknown(), // out := helper(ctx), ctx already Shared
         .Let(
           lid(3),
-          .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(), 
+          .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+          span.unknown(),
           .Atom(.ALocal(lid(3))),
         ),
       ),
@@ -259,19 +284,28 @@ fn case_w_shared_arg_fixture() Vector<AnfFunctionDef> {
 // last-use at the call -> the recovery gate fails on last-use and publishes ctx.
 fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
-  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))))
+  helper := fdef(
+    1,
+    "helper",
+    1,
+    .Let(lid(1), wrapper_record(lid(0)), span.unknown(), .Atom(.ALocal(lid(1)))),
+  )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // ctx := Dict.new() (fresh Unique)
+    dict_new_call(b),
+    span.unknown(), // ctx := Dict.new() (fresh Unique)
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := helper(ctx)
       .Let(
         lid(2),
-        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        span.unknown(), // g := out.f0
         .Let(
           lid(3),
-          .AInit(.ALocal(lid(0))),span.unknown(),  // keep := ctx (reads ctx AFTER the call)
+          .AInit(.ALocal(lid(0))),
+          span.unknown(), // keep := ctx (reads ctx AFTER the call)
           .Atom(.ALocal(lid(2))),
         ),
       ),
@@ -289,16 +323,20 @@ fn case_w_sibling_fixture() Vector<AnfFunctionDef> {
   helper := wrapper2_helper(b)
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // ctx := Dict.new() (fresh Unique)
+    dict_new_call(b),
+    span.unknown(), // ctx := Dict.new() (fresh Unique)
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := helper(ctx)
       .Let(
         lid(2),
-        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        span.unknown(), // g := out.f0
         .Let(
           lid(3),
-          .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }),span.unknown(),  // ty := out.f1 (sibling)
+          .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }),
+          span.unknown(), // ty := out.f1 (sibling)
           .Atom(.ALocal(lid(2))), // return g
         ),
       ),
@@ -315,16 +353,20 @@ fn case_w_published_out_fixture() Vector<AnfFunctionDef> {
   helper := wrapper2_helper(b)
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // ctx := Dict.new()
+    dict_new_call(b),
+    span.unknown(), // ctx := Dict.new()
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := helper(ctx)
       .Let(
         lid(2),
-        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        span.unknown(), // g := out.f0
         .Let(
           lid(3),
-          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))),span.unknown(),  // publish out
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))),
+          span.unknown(), // publish out
           .Atom(.ALocal(lid(2))), // return g
         ),
       ),
@@ -343,22 +385,27 @@ fn case_w_out_liveout_fixture() Vector<AnfFunctionDef> {
   helper := wrapper2_helper(b)
   then_branch: AnfExpr = .Let(
     lid(4),
-    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }), span.unknown(), // ty := out.f1 (in successor)
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }),
+    span.unknown(), // ty := out.f1 (in successor)
     .Atom(.ALitInt(0)),
   )
   else_branch: AnfExpr = .Atom(.ALitInt(0))
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // ctx := Dict.new()
+    dict_new_call(b),
+    span.unknown(), // ctx := Dict.new()
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := helper(ctx)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := helper(ctx)
       .Let(
         lid(2),
-        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(),  // g := out.f0
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+        span.unknown(), // g := out.f0
         .Let(
           lid(3),
-          .AIf(.ALitBool(true), then_branch, else_branch),span.unknown(),  // out live into then-branch
+          .AIf(.ALitBool(true), then_branch, else_branch),
+          span.unknown(), // out live into then-branch
           .Atom(.ALocal(lid(2))), // return g
         ),
       ),
@@ -379,8 +426,9 @@ fn payload_src_fixture() Vector<AnfFunctionDef> {
   wild_arm: AnfMatchArm = .{ pattern: .Wildcard, body: .Atom(.ALitInt(0)) }
   body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // s := Dict.new()
-    .Let(lid(7), .AMatch(.ALocal(lid(0)), [ok_arm, wild_arm]),span.unknown(),  .Atom(.ALitInt(0))),
+    dict_new_call(b),
+    span.unknown(), // s := Dict.new()
+    .Let(lid(7), .AMatch(.ALocal(lid(0)), [ok_arm, wild_arm]), span.unknown(), .Atom(.ALitInt(0))),
   )
   [fdef(1, "f", 0, body)]
 }
@@ -423,10 +471,12 @@ fn ok_load_helper() AnfFunctionDef {
     1,
     .Let(
       lid(1),
-      .ARecord(TypeId.{ id: 5 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }]), span.unknown(), // inner := Record{f0: s}
+      .ARecord(TypeId.{ id: 5 }, [.{ field: .{ id: 0 }, value: .ALocal(lid(0)) }]),
+      span.unknown(), // inner := Record{f0: s}
       .Let(
         lid(2),
-        .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]),span.unknown(),  // v := .Ok(inner)
+        .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]),
+        span.unknown(), // v := .Ok(inner)
         .Atom(.ALocal(lid(2))),
       ),
     ),
@@ -456,16 +506,19 @@ fn case_r_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
   ok_body: AnfExpr = .Let(
     lid(20),
-    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), span.unknown(), // state := v.f0
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),
+    span.unknown(), // state := v.f0
     .Return(.Some(.ALocal(lid(20)))),
   )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // acc := Dict.new() (fresh Unique)
+    dict_new_call(b),
+    span.unknown(), // acc := Dict.new() (fresh Unique)
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := load(acc)
-      .Let(lid(2), case_r_match(ok_body),span.unknown(),  .Return(.Some(.ALitInt(0)))),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), span.unknown(), .Return(.Some(.ALitInt(0)))),
     ),
   )
   [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
@@ -478,26 +531,32 @@ fn case_r_live_scrutinee_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
   ok_body: AnfExpr = .Let(
     lid(20),
-    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), span.unknown(), // state := v.f0
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),
+    span.unknown(), // state := v.f0
     .Atom(.ALitInt(0)),
   )
   then_branch: AnfExpr = .Let(
     lid(30),
-    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), span.unknown(), // reads out in a successor
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),
+    span.unknown(), // reads out in a successor
     .Atom(.ALitInt(0)),
   )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // acc := Dict.new()
+    dict_new_call(b),
+    span.unknown(), // acc := Dict.new()
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := load(acc)
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := load(acc)
       .Let(
         lid(2),
-        case_r_match(ok_body),span.unknown(), 
+        case_r_match(ok_body),
+        span.unknown(),
         .Let(
           lid(3),
-          .AIf(.ALitBool(true), then_branch, .Atom(.ALitInt(0))),span.unknown(), 
+          .AIf(.ALitBool(true), then_branch, .Atom(.ALitInt(0))),
+          span.unknown(),
           .Return(.Some(.ALitInt(0))),
         ),
       ),
@@ -513,20 +572,24 @@ fn case_r_inarm_read_fixture() Vector<AnfFunctionDef> {
   b := b_reg()
   ok_body: AnfExpr = .Let(
     lid(20),
-    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), span.unknown(), // state := v.f0
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),
+    span.unknown(), // state := v.f0
     .Let(
       lid(21),
-      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),span.unknown(),  // re-read out inside the arm
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }),
+      span.unknown(), // re-read out inside the arm
       .Return(.Some(.ALitInt(0))),
     ),
   )
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // acc := Dict.new()
+    dict_new_call(b),
+    span.unknown(), // acc := Dict.new()
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := load(acc)
-      .Let(lid(2), case_r_match(ok_body),span.unknown(),  .Return(.Some(.ALitInt(0)))),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), span.unknown(), .Return(.Some(.ALitInt(0)))),
     ),
   )
   [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
@@ -550,11 +613,18 @@ fn case_r_tag_isolation_fixture() Vector<AnfFunctionDef> {
   }
   caller_body: AnfExpr = .Let(
     lid(0),
-    dict_new_call(b), span.unknown(), // acc := Dict.new()
+    dict_new_call(b),
+    span.unknown(), // acc := Dict.new()
     .Let(
       lid(1),
-      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(),  // out := load(acc)
-      .Let(lid(2), .AMatch(.ALocal(lid(1)), [ok_arm, err_arm]),span.unknown(),  .Return(.Some(.ALitInt(0)))),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+      span.unknown(), // out := load(acc)
+      .Let(
+        lid(2),
+        .AMatch(.ALocal(lid(1)), [ok_arm, err_arm]),
+        span.unknown(),
+        .Return(.Some(.ALitInt(0))),
+      ),
     ),
   )
   [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
@@ -734,10 +804,12 @@ pub fn suite() runner.Suite {
         // caller() { ctx := Dict.new(); out := h(ctx); out }
         caller_body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(), 
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            span.unknown(),
             .Atom(.ALocal(lid(1))),
           ),
         )
@@ -760,16 +832,23 @@ pub fn suite() runner.Suite {
           1,
           "h",
           1,
-          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), span.unknown(), .Atom(.ALocal(lid(0)))),
+          .Let(
+            lid(1),
+            .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),
+            span.unknown(),
+            .Atom(.ALocal(lid(0))),
+          ),
         )
 
         // caller() { x := Dict.new(); out := h(x); out }
         caller_body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(), 
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            span.unknown(),
             .Atom(.ALocal(lid(1))),
           ),
         )
@@ -793,7 +872,8 @@ pub fn suite() runner.Suite {
           1,
           .Let(
             lid(1),
-            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }), span.unknown(),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            span.unknown(),
             .Atom(.ALocal(lid(1))),
           ),
         )
@@ -801,10 +881,12 @@ pub fn suite() runner.Suite {
         // be() { e := Dict.new(); r := at(e); r }  -- e is fresh Unique + last-use at the call.
         be_body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(), 
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            span.unknown(),
             .Atom(.ALocal(lid(1))),
           ),
         )
@@ -825,7 +907,8 @@ pub fn suite() runner.Suite {
           1,
           .Let(
             lid(1),
-            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }), span.unknown(),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            span.unknown(),
             .Atom(.ALocal(lid(1))),
           ),
         )
@@ -834,13 +917,16 @@ pub fn suite() runner.Suite {
         // so it is not last-use at the call -> arg not unique -> generic -> no owned verdict.
         br_body: AnfExpr = .Let(
           lid(0),
-          dict_new_call(b), span.unknown(),
+          dict_new_call(b),
+          span.unknown(),
           .Let(
             lid(1),
-            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),span.unknown(), 
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            span.unknown(),
             .Let(
               lid(2),
-              .ARecordGet(.ALocal(lid(0)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),span.unknown(), 
+              .ARecordGet(.ALocal(lid(0)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+              span.unknown(),
               .Atom(.ALocal(lid(1))),
             ),
           ),

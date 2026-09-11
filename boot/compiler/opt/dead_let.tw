@@ -3,9 +3,9 @@
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
 use compiler.core_ir.{LocalId}
-use lib.source.span.{Span}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
+use lib.source.span.{Span}
 
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
 

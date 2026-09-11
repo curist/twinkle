@@ -214,7 +214,8 @@ pub fn test_plan_primitive_func() Result<Void, String> {
     MonoType.Int,
     .Let(
       mk_local(2),
-      .ABinOp(.Add, .ALocal(mk_local(0)), .ALocal(mk_local(1)), .Int), span.unknown(),
+      .ABinOp(.Add, .ALocal(mk_local(0)), .ALocal(mk_local(1)), .Int),
+      span.unknown(),
       .Atom(.ALocal(mk_local(2))),
     ),
     mono,
@@ -258,7 +259,8 @@ pub fn test_plan_record_type() Result<Void, String> {
           FieldAtom.{ field: .{ id: 0 }, value: .ALitInt(1) },
           FieldAtom.{ field: .{ id: 1 }, value: .ALitInt(2) },
         ],
-      ), span.unknown(),
+      ),
+      span.unknown(),
       .Atom(.ALocal(mk_local(0))),
     ),
     mono,
@@ -296,11 +298,13 @@ pub fn test_plan_string_literals() Result<Void, String> {
     MonoType.String,
     .Let(
       mk_local(0),
-      .AInit(.ALitStr("hello")), span.unknown(),
+      .AInit(.ALitStr("hello")),
+      span.unknown(),
       .Let(
         mk_local(1),
-        .AInit(.ALitStr("world")),span.unknown(), 
-        .Let(mk_local(2), .AInit(.ALitStr("hello")),span.unknown(),  .Atom(.ALocal(mk_local(0)))),
+        .AInit(.ALitStr("world")),
+        span.unknown(),
+        .Let(mk_local(2), .AInit(.ALitStr("hello")), span.unknown(), .Atom(.ALocal(mk_local(0)))),
       ),
     ),
     mono,
@@ -336,11 +340,13 @@ pub fn test_plan_string_offsets() Result<Void, String> {
     MonoType.String,
     .Let(
       mk_local(0),
-      .AInit(.ALitStr("ab")), span.unknown(),
+      .AInit(.ALitStr("ab")),
+      span.unknown(),
       .Let(
         mk_local(1),
-        .AInit(.ALitStr("cde")),span.unknown(), 
-        .Let(mk_local(2), .AInit(.ALitStr("f")),span.unknown(),  .Atom(.ALocal(mk_local(0)))),
+        .AInit(.ALitStr("cde")),
+        span.unknown(),
+        .Let(mk_local(2), .AInit(.ALitStr("f")), span.unknown(), .Atom(.ALocal(mk_local(0)))),
       ),
     ),
     mono,
@@ -398,7 +404,12 @@ pub fn test_plan_closure() Result<Void, String> {
     "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]), span.unknown(), .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      span.unknown(),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -432,7 +443,12 @@ pub fn test_plan_closure_registers_func_type() Result<Void, String> {
     "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]), span.unknown(), .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      span.unknown(),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -480,10 +496,12 @@ pub fn test_plan_capture_types() Result<Void, String> {
     MonoType.Function([MonoType.Int], MonoType.Int),
     .Let(
       mk_local(1),
-      .AInit(.ALitStr("hello")), span.unknown(),
+      .AInit(.ALitStr("hello")),
+      span.unknown(),
       .Let(
         mk_local(2),
-        .AMakeClosure(mk_func(200), [mk_local(0), mk_local(1)]),span.unknown(), 
+        .AMakeClosure(mk_func(200), [mk_local(0), mk_local(1)]),
+        span.unknown(),
         .Atom(.ALocal(mk_local(2))),
       ),
     ),
@@ -538,7 +556,12 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
     "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]), span.unknown(), .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      span.unknown(),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -589,7 +612,8 @@ pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Vo
     MonoType.Int,
     .Let(
       mk_local(10),
-      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]), span.unknown(),
+      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(10))),
     ),
     apply_mono,
@@ -603,7 +627,8 @@ pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Vo
     MonoType.Int,
     .Let(
       mk_local(11),
-      .ACall(.AGlobalFunc(mk_func(200)), [.AGlobalFunc(mk_func(300)), .ALitInt(7)]), span.unknown(),
+      .ACall(.AGlobalFunc(mk_func(200)), [.AGlobalFunc(mk_func(300)), .ALitInt(7)]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(11))),
     ),
     caller_mono,
@@ -661,7 +686,8 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
       .ACall(
         .AGlobalFunc(mk_func(200)),
         [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int$to_string"))],
-      ), span.unknown(),
+      ),
+      span.unknown(),
       .Atom(.ALocal(mk_local(11))),
     ),
     caller_mono,
@@ -721,13 +747,16 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
       .ACall(
         .AGlobalFunc(mk_func(200)),
         [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int$to_string"))],
-      ), span.unknown(),
+      ),
+      span.unknown(),
       .Let(
         mk_local(12),
-        .ACall(.AGlobalFunc(bi.id(builtins, "int$to_string")), [.ALitInt(7)]),span.unknown(), 
+        .ACall(.AGlobalFunc(bi.id(builtins, "int$to_string")), [.ALitInt(7)]),
+        span.unknown(),
         .Let(
           mk_local(13),
-          .ACall(.AGlobalFunc(bi.id(builtins, "__println_string")), [.ALocal(mk_local(12))]),span.unknown(), 
+          .ACall(.AGlobalFunc(bi.id(builtins, "__println_string")), [.ALocal(mk_local(12))]),
+          span.unknown(),
           .Atom(.ALocal(mk_local(11))),
         ),
       ),
@@ -780,7 +809,12 @@ pub fn test_plan_runtime_imports() Result<Void, String> {
     "main",
     [],
     MonoType.Void,
-    .Let(mk_local(0), .ACall(.AGlobalFunc(print_id), [.ALitStr("hi")]), span.unknown(), .Atom(.ALitVoid)),
+    .Let(
+      mk_local(0),
+      .ACall(.AGlobalFunc(print_id), [.ALitStr("hi")]),
+      span.unknown(),
+      .Atom(.ALitVoid),
+    ),
     mono,
   )
   anf := mk_module([f])
@@ -823,7 +857,8 @@ pub fn test_plan_optional_type() Result<Void, String> {
     opt_ty,
     .Let(
       mk_local(0),
-      .AVariant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.ALitInt(42)]), span.unknown(),
+      .AVariant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.ALitInt(42)]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(0))),
     ),
     mono,
@@ -892,7 +927,8 @@ pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() R
     MonoType.Int,
     .Let(
       mk_local(2),
-      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]), span.unknown(),
+      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(2))),
     ),
     mono1(2, MonoType.Int),
@@ -904,7 +940,8 @@ pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() R
     MonoType.Int,
     .Let(
       mk_local(11),
-      .ABinOp(.Add, .ALocal(mk_local(10)), .ALocal(mk_local(10)), .Int), span.unknown(),
+      .ABinOp(.Add, .ALocal(mk_local(10)), .ALocal(mk_local(10)), .Int),
+      span.unknown(),
       .Atom(.ALocal(mk_local(11))),
     ),
     mono1(11, MonoType.Int),
@@ -916,7 +953,8 @@ pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() R
     MonoType.Int,
     .Let(
       mk_local(20),
-      .ACall(.AGlobalFunc(mk_func(3)), [.AGlobalFunc(mk_func(4)), .ALitInt(21)]), span.unknown(),
+      .ACall(.AGlobalFunc(mk_func(3)), [.AGlobalFunc(mk_func(4)), .ALitInt(21)]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(20))),
     ),
     mono1(20, MonoType.Int),
@@ -943,8 +981,9 @@ pub fn test_plan_module_globals() Result<Void, String> {
     MonoType.Void,
     .Let(
       mk_local(0),
-      .AInit(.ALitInt(42)), span.unknown(),
-      .Let(mk_local(1), .AInit(.ALitStr("hello")),span.unknown(),  .Atom(.ALitVoid)),
+      .AInit(.ALitInt(42)),
+      span.unknown(),
+      .Let(mk_local(1), .AInit(.ALitStr("hello")), span.unknown(), .Atom(.ALitVoid)),
     ),
     init_mono,
   )
@@ -957,7 +996,12 @@ pub fn test_plan_module_globals() Result<Void, String> {
     "get_val",
     [],
     MonoType.Int,
-    .Let(mk_local(10), .AInit(.AGlobalLocal(GlobalId.{ id: 0 })), span.unknown(), .Atom(.ALocal(mk_local(10)))),
+    .Let(
+      mk_local(10),
+      .AInit(.AGlobalLocal(GlobalId.{ id: 0 })),
+      span.unknown(),
+      .Atom(.ALocal(mk_local(10))),
+    ),
     user_mono,
   )
   global_monos: Dict<Int, MonoType> = Dict.new()
@@ -1050,7 +1094,8 @@ pub fn test_plan_ignores_mutable_decision_targets() Result<Void, String> {
     MonoType.Vector(MonoType.Int),
     .Let(
       mk_local(0),
-      .ACall(.AGlobalFunc(set_id), [.ALocal(mk_local(1)), .ALitInt(0), .ALitInt(9)]), span.unknown(),
+      .ACall(.AGlobalFunc(set_id), [.ALocal(mk_local(1)), .ALitInt(0), .ALitInt(9)]),
+      span.unknown(),
       .Atom(.ALocal(mk_local(0))),
     ),
     mono,

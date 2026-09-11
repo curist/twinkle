@@ -90,7 +90,6 @@ pub fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Ve
 }
 
 pub host_read_file_result_helper_sym := "host_read_file_result_helper"
-
 pub host_read_file_string_result_helper_sym := "host_read_file_string_result_helper"
 
 pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Instr> {

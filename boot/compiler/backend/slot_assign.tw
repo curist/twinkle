@@ -150,7 +150,12 @@ pub fn assign_slots(
 
 type LowerValue = { ExprValue(PreparedExpr), OpValue(PreparedOp) }
 
-type LowerWork = { ExprWork(AnfExpr), OpWork(AnfOp), FinishLet(SlotId, Span), FinishIf(PreparedAtom) }
+type LowerWork = {
+  ExprWork(AnfExpr),
+  OpWork(AnfOp),
+  FinishLet(SlotId, Span),
+  FinishIf(PreparedAtom),
+}
 
 type LowerSpineEntry = .{ slot: SlotId, op: PreparedOp, span: Span }
 

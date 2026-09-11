@@ -1,10 +1,10 @@
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.opt.defer_elim.{eliminate_defers}
+use lib.source.span
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
@@ -88,7 +88,12 @@ fn test_basic_defer_at_function_exit() Result<Void, String> {
   // Expected: defer body inlined before terminal atom
   //   let _1 = call(f, [])
   //   atom(void)
-  defer_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(10)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(10)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   input: AnfExpr = .Let(lid(0), .ADefer(defer_body), span.unknown(), .Atom(.ALitVoid))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -130,7 +135,12 @@ fn test_defer_fires_at_return() Result<Void, String> {
   // Expected: defer inlined before return
   //   let _1 = call(cleanup, [])
   //   return(some(42))
-  defer_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(20)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(20)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   input: AnfExpr = .Let(lid(0), .ADefer(defer_body), span.unknown(), .Return(.Some(.ALitInt(42))))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -153,9 +163,24 @@ fn test_lifo_ordering() Result<Void, String> {
   //
   // Expected (LIFO): second fires before first
   //   call(second, []) ; call(first, []) ; atom(void)
-  defer1: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), span.unknown(), .Atom(.ALitVoid))
-  defer2: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), span.unknown(), .Atom(.ALitVoid))
-  input: AnfExpr = .Let(lid(0), .ADefer(defer1), span.unknown(), .Let(lid(1), .ADefer(defer2),span.unknown(),  .Atom(.ALitVoid)))
+  defer1: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  defer2: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  input: AnfExpr = .Let(
+    lid(0),
+    .ADefer(defer1),
+    span.unknown(),
+    .Let(lid(1), .ADefer(defer2), span.unknown(), .Atom(.ALitVoid)),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -195,8 +220,18 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
   //     break(some(42))
   //   }
   //   atom(local(0))
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), span.unknown(), .Atom(.ALitVoid))
-  loop_body: AnfExpr = .Let(lid(2), .ADefer(defer_body), span.unknown(), .Break(.Some(.ALitInt(42))))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(
+    lid(2),
+    .ADefer(defer_body),
+    span.unknown(),
+    .Break(.Some(.ALitInt(42))),
+  )
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALocal(lid(0))))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -209,7 +244,10 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
 
       // inner: Let(10, ACall(30, []), Break(Some(42)))
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f), _), _, .Break(.Some(.ALitInt(42)))) => assert.equal(f.id, 30),
+        .Let(_, .ACall(.AGlobalFunc(f), _), _, .Break(.Some(.ALitInt(42)))) => assert.equal(
+          f.id,
+          30,
+        ),
         _ => assert.is_true(false),
       }
     },
@@ -225,7 +263,12 @@ fn test_defer_in_loop_fires_at_continue() Result<Void, String> {
   //     continue
   //   }
   //   atom(void)
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Let(lid(2), .ADefer(defer_body), span.unknown(), .Continue)
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALitVoid))
   func := make_func(input)
@@ -251,7 +294,12 @@ fn test_defer_in_loop_fires_at_iteration_end() Result<Void, String> {
   //     atom(void)      // <-- loop iteration end
   //   }
   //   atom(void)
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Let(lid(2), .ADefer(defer_body), span.unknown(), .Atom(.ALitVoid))
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALitVoid))
   func := make_func(input)
@@ -281,13 +329,29 @@ fn test_return_in_loop_fires_all_defers() Result<Void, String> {
   //
   // Expected: return gets both fn_cleanup(100) and loop_cleanup(200)
   // LIFO: loop_cleanup fires first (innermost), then fn_cleanup
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), span.unknown(), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), span.unknown(), .Atom(.ALitVoid))
-  loop_body: AnfExpr = .Let(lid(3), .ADefer(loop_defer), span.unknown(), .Return(.Some(.ALitInt(1))))
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(
+    lid(3),
+    .ADefer(loop_defer),
+    span.unknown(),
+    .Return(.Some(.ALitInt(1))),
+  )
   input: AnfExpr = .Let(
     lid(2),
-    .ADefer(fn_defer), span.unknown(),
-    .Let(lid(0), .ALoop(loop_body),span.unknown(),  .Atom(.ALitVoid)),
+    .ADefer(fn_defer),
+    span.unknown(),
+    .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALitVoid)),
   )
   func := make_func(input)
   result := eliminate_defers(func)
@@ -325,13 +389,20 @@ fn test_defer_no_fire_in_if_branch() Result<Void, String> {
   //
   // The if branches are sub-expressions — Atom(1) and Atom(2) should
   // NOT trigger defer. Defer only fires at the final atom(local(1)).
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(50)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(50)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   input: AnfExpr = .Let(
     lid(0),
-    .ADefer(defer_body), span.unknown(),
+    .ADefer(defer_body),
+    span.unknown(),
     .Let(
       lid(1),
-      .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),span.unknown(), 
+      .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+      span.unknown(),
       .Atom(.ALocal(lid(1))),
     ),
   )
@@ -371,13 +442,15 @@ fn test_capture_semantics() Result<Void, String> {
   //   atom(void)
   defer_body: AnfExpr = .Let(
     lid(10),
-    .ACall(.AGlobalFunc(fid(60)), [.ALocal(lid(0))]), span.unknown(),
+    .ACall(.AGlobalFunc(fid(60)), [.ALocal(lid(0))]),
+    span.unknown(),
     .Atom(.ALitVoid),
   )
   input: AnfExpr = .Let(
     lid(1),
-    .ADefer(defer_body), span.unknown(),
-    .Let(lid(2), .AAssign(lid(0), .ALitInt(99)),span.unknown(),  .Atom(.ALitVoid)),
+    .ADefer(defer_body),
+    span.unknown(),
+    .Let(lid(2), .AAssign(lid(0), .ALitInt(99)), span.unknown(), .Atom(.ALitVoid)),
   )
   params := [Param.{ local: lid(0), ty: .Int }]
   func := make_func_with_params(params, input)
@@ -427,12 +500,18 @@ fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
   //     atom(void)   // loop iteration end — should NOT fire fn_cleanup
   //   }
   //   atom(void)     // function exit — fires fn_cleanup
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), span.unknown(), .Atom(.ALitVoid))
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Atom(.ALitVoid)
   input: AnfExpr = .Let(
     lid(0),
-    .ADefer(fn_defer), span.unknown(),
-    .Let(lid(1), .ALoop(loop_body),span.unknown(),  .Atom(.ALitVoid)),
+    .ADefer(fn_defer),
+    span.unknown(),
+    .Let(lid(1), .ALoop(loop_body), span.unknown(), .Atom(.ALitVoid)),
   )
   func := make_func(input)
   result := eliminate_defers(func)
@@ -469,10 +548,20 @@ fn test_defer_in_if_branch_block_scoped() Result<Void, String> {
   //     ,
   //       atom(void))
   //   atom(void)   ← outer terminal: no defers
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(50)), []), span.unknown(), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(50)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   then_branch: AnfExpr = .Let(lid(1), .ADefer(defer_body), span.unknown(), .Atom(.ALitVoid))
   else_branch: AnfExpr = .Atom(.ALitVoid)
-  input: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_branch, else_branch), span.unknown(), .Atom(.ALitVoid))
+  input: AnfExpr = .Let(
+    lid(0),
+    .AIf(.ALitBool(true), then_branch, else_branch),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -504,13 +593,24 @@ fn test_break_fires_only_loop_defers() Result<Void, String> {
   //
   // Expected: break inlines only loop defer (200).
   //   fn defer (100) fires at function tail (atom(local(0))), not at break.
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), span.unknown(), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), span.unknown(), .Atom(.ALitVoid))
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Let(lid(3), .ADefer(loop_defer), span.unknown(), .Break(.None))
   input: AnfExpr = .Let(
     lid(2),
-    .ADefer(fn_defer), span.unknown(),
-    .Let(lid(0), .ALoop(loop_body),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .ADefer(fn_defer),
+    span.unknown(),
+    .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALocal(lid(0)))),
   )
   func := make_func(input)
   result := eliminate_defers(func)
@@ -519,7 +619,10 @@ fn test_break_fires_only_loop_defers() Result<Void, String> {
     .Let(_, .ALoop(inner), _, tail) => {
       // Loop body: Let(_, call(200), Break(none)) — only loop defer at break
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f_loop), _), _, .Break(.None)) => try assert.equal(f_loop.id, 200),
+        .Let(_, .ACall(.AGlobalFunc(f_loop), _), _, .Break(.None)) => try assert.equal(
+          f_loop.id,
+          200,
+        ),
         _ => try assert.is_true(false),
       }
 
@@ -545,13 +648,24 @@ fn test_continue_fires_only_loop_defers() Result<Void, String> {
   //
   // Expected: continue inlines only loop defer (200).
   //   fn defer (100) fires at function tail (atom(local(0))), not at continue.
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), span.unknown(), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), span.unknown(), .Atom(.ALitVoid))
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    span.unknown(),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Let(lid(3), .ADefer(loop_defer), span.unknown(), .Continue)
   input: AnfExpr = .Let(
     lid(2),
-    .ADefer(fn_defer), span.unknown(),
-    .Let(lid(0), .ALoop(loop_body),span.unknown(),  .Atom(.ALocal(lid(0)))),
+    .ADefer(fn_defer),
+    span.unknown(),
+    .Let(lid(0), .ALoop(loop_body), span.unknown(), .Atom(.ALocal(lid(0)))),
   )
   func := make_func(input)
   result := eliminate_defers(func)
