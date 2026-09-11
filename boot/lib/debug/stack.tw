@@ -73,56 +73,57 @@ fn same_module(a: String?, b: String?) Bool {
   }
 }
 
+// Parse the wasm-frame body (everything after the leading "at "), returning
+// `.None` for any shape that isn't a `wasm-function[i]:0xNN` frame. Each parse
+// step bails via `try`, so a failure at any point reads as "not a Wasm frame".
+fn parse_wasm_frame(rest: String) Frame? {
+  marker := "wasm-function["
+  wf := try rest.index_of(marker)
+  after_wf := rest.slice(wf + marker.len(), rest.len())
+
+  idx_end := try after_wf.index_of("]")
+  rest_after_idx := after_wf.slice(idx_end, after_wf.len())
+
+  ox := try rest_after_idx.index_of("0x")
+
+  func_index: Int? = Int.from_string(after_wf.slice(0, idx_end))
+  code_offset := parse_hex_prefix(rest_after_idx.slice(ox + 2, rest_after_idx.len()))
+  module_token: String? = case rest.index_of("wasm://") {
+    .Some(ws) => {
+      tok := rest.slice(ws, wf)
+
+      case tok.strip_suffix(":") {
+        .Some(t) => .Some(t),
+        .None => .Some(tok),
+      }
+    },
+    .None => .None,
+  }
+  name: String? = if rest.starts_with("wasm-function[") {
+    .None
+  } else {
+    case rest.index_of(" (") {
+      .Some(p) => .Some(rest.slice(0, p)),
+      .None => .None,
+    }
+  }
+
+  .Some(.{ module_token, code_offset, func_index, name })
+}
+
 fn parse_frame_line(raw: String) LineKind {
   line := raw.trim()
+  prefix := "at "
 
-  if !line.starts_with("at ") {
+  if !line.starts_with(prefix) {
     return .Skip
   }
 
-  rest := line.slice(3, line.len())
+  rest := line.slice(prefix.len(), line.len())
 
-  case rest.index_of("wasm-function[") {
+  case parse_wasm_frame(rest) {
+    .Some(fr) => .Wasm(fr),
     .None => .JsFrame,
-    .Some(wf) => {
-      after_wf := rest.slice(wf + 14, rest.len()) // 14 == len("wasm-function[")
-
-      case after_wf.index_of("]") {
-        .None => .JsFrame,
-        .Some(idx_end) => {
-          rest_after_idx := after_wf.slice(idx_end, after_wf.len())
-
-          case rest_after_idx.index_of("0x") {
-            .None => .JsFrame,
-            .Some(ox) => {
-              func_index: Int? = Int.from_string(after_wf.slice(0, idx_end))
-              code_offset := parse_hex_prefix(rest_after_idx.slice(ox + 2, rest_after_idx.len()))
-              module_token: String? = case rest.index_of("wasm://") {
-                .Some(ws) => {
-                  tok := rest.slice(ws, wf)
-
-                  case tok.strip_suffix(":") {
-                    .Some(t) => .Some(t),
-                    .None => .Some(tok),
-                  }
-                },
-                .None => .None,
-              }
-              name: String? = if rest.starts_with("wasm-function[") {
-                .None
-              } else {
-                case rest.index_of(" (") {
-                  .Some(p) => .Some(rest.slice(0, p)),
-                  .None => .None,
-                }
-              }
-
-              .Wasm(.{ module_token, code_offset, func_index, name })
-            },
-          }
-        },
-      }
-    },
   }
 }
 
@@ -131,26 +132,23 @@ fn parse_frame_line(raw: String) LineKind {
 pub fn parse_v8_stack(stack: String) Vector<Frame> {
   frames: Vector<Frame> = []
   started := false
-  done := false
   group_token: String? = .None
 
   for raw in stack.lines() {
-    if !done {
-      case parse_frame_line(raw) {
-        .Skip => {},
-        .JsFrame => if started {
-          done = true
-        },
-        .Wasm(fr) => if !started {
-          started = true
-          group_token = fr.module_token
-          frames = .append(fr)
-        } else if same_module(fr.module_token, group_token) {
-          frames = .append(fr)
-        } else {
-          done = true
-        },
-      }
+    case parse_frame_line(raw) {
+      .Skip => {},
+      .JsFrame => if started {
+        break // JS boundary closes the group
+      },
+      .Wasm(fr) => if !started {
+        started = true
+        group_token = fr.module_token
+        frames = .append(fr)
+      } else if same_module(fr.module_token, group_token) {
+        frames = .append(fr)
+      } else {
+        break // different module closes the group
+      },
     }
   }
 
