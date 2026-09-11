@@ -25,14 +25,12 @@ pub type Frame = .{ module_token: String?, code_offset: Int, func_index: Int?, n
 type LineKind = { Skip, JsFrame, Wasm(Frame) }
 
 fn hex_digit_val(c: Byte) Int? {
-  ci := c.to_int()
-
-  if ci >= 0x30 and ci <= 0x39 {
-    .Some(ci - 0x30)
-  } else if ci >= 0x61 and ci <= 0x66 {
-    .Some(ci - 0x61 + 10)
-  } else if ci >= 0x41 and ci <= 0x46 {
-    .Some(ci - 0x41 + 10)
+  if c >= '0' and c <= '9' {
+    .Some(c - '0')
+  } else if c >= 'a' and c <= 'f' {
+    .Some(c - 'a' + 10)
+  } else if c >= 'A' and c <= 'F' {
+    .Some(c - 'A' + 10)
   } else {
     .None
   }
