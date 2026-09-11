@@ -761,15 +761,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "prefer-cond: keeps braced blocks for multi-statement branches",
+      "prefer-cond: does not flag a chain with a multi-statement branch",
       fn() {
-        src := "fn f(n: Int) Int {\n  if n < 0 {\n    x := 0\n    x\n  } else if n == 0 {\n    1\n  } else {\n    2\n  }\n}\n"
-        fs := pc_findings(src)
-        try assert.equal(fs.len(), 1)
-        try assert.equal(
-          apply_first_edit(src, fs[0]),
-          "fn f(n: Int) Int {\n  cond {\n    n < 0 => {\n    x := 0\n    x\n  },\n    n == 0 => 1,\n    _ => 2,\n  }\n}\n",
+        fs := pc_findings(
+          "fn f(n: Int) Int {\n  if n < 0 {\n    x := 0\n    x\n  } else if n == 0 {\n    1\n  } else {\n    2\n  }\n}\n",
         )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-cond: does not flag an imperative chain with a break branch",
+      fn() {
+        fs := pc_findings(
+          "fn f(n: Int) Void {\n  for true {\n    if n < 0 {\n      print(\"neg\")\n    } else if n == 0 {\n      print(\"zero\")\n    } else {\n      break\n    }\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )

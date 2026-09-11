@@ -867,15 +867,28 @@ fn prefer_case_dispatch_finding(expr: Expr, arms: Vector<CondArm>, source: Strin
 }
 
 // ── prefer-cond ──────────────────────────────────────────────────────
-type CondChainArm = .{ condition: Expr, then_block: Block }
+type CondChainArm = .{ condition: Expr, body: Expr }
 
-type CondChain = .{ arms: Vector<CondChainArm>, else_block: Block }
+type CondChain = .{ arms: Vector<CondChainArm>, else_body: Expr }
+
+// A block's sole value expression, but only when it is *just* that expression —
+// no leading statements, no tail-less trailing statement (`break`/`return`/`…`).
+// This is the gate that keeps prefer-cond to value dispatch: an imperative
+// branch (side-effecting statements, or an early `break`/`return`) has no such
+// tail and leaves the chain unconverted.
+fn block_value_expr(b: Block) Expr? {
+  if b.stmts.len() == 0 {
+    b.tail
+  } else {
+    .None
+  }
+}
 
 // Walk an `if`/`else if`/… chain from its head expression, collecting the
-// ordered (condition, then-block) arms and the terminal `else` block. Returns
-// `.None` unless the chain actually ends in a plain `else { … }` (a
-// `.BlockExpr` else branch): `cond` needs a total set of arms, so a chain with
-// no `else`, or one whose else is some other expression, is left alone.
+// ordered (condition, body) arms and the terminal `else` body. Returns `.None`
+// unless the chain ends in a plain `else { … }` (a `.BlockExpr` else branch)
+// and *every* branch is a single value expression — `cond` needs a total set of
+// arms, and only a value-dispatch chain reads better as `cond`.
 fn extract_if_chain(expr: Expr) CondChain? {
   arms: Vector<CondChainArm> = []
   cur := expr
@@ -883,13 +896,17 @@ fn extract_if_chain(expr: Expr) CondChain? {
   for true {
     case cur.kind {
       .If(cond_e, then_b, else_e) => {
-        arms = .append(.{ condition: cond_e, then_block: then_b })
+        body := try block_value_expr(then_b)
+        arms = .append(.{ condition: cond_e, body })
 
         case else_e {
           .None => return .None,
           .Some(e) => case e.kind {
             .If(_, _, _) => cur = e,
-            .BlockExpr(b) => return .Some(.{ arms, else_block: b }),
+            .BlockExpr(b) => {
+              else_body := try block_value_expr(b)
+              return .Some(.{ arms, else_body })
+            },
             _ => return .None,
           },
         }
@@ -901,31 +918,17 @@ fn extract_if_chain(expr: Expr) CondChain? {
   .None
 }
 
-// Render a then/else block as a `cond` arm body: inline a single tail-only
-// expression (`c => .Some(x)`), otherwise keep the braced block verbatim so
-// statements, early returns, and comments survive the rewrite.
-fn render_block_as_arm_body(b: Block, source: String) String {
-  case b.tail {
-    .Some(t) => if b.stmts.len() == 0 {
-      source.slice(t.span.start, t.span.end)
-    } else {
-      source.slice(b.span.start, b.span.end)
-    },
-    .None => source.slice(b.span.start, b.span.end),
-  }
-}
-
 fn render_cond(chain: CondChain, indent: String, source: String) String {
   arm_indent := "${indent}  "
   lines: Vector<String> = ["cond {"]
 
   for arm in chain.arms {
     cond_src := source.slice(arm.condition.span.start, arm.condition.span.end)
-    body := render_block_as_arm_body(arm.then_block, source)
+    body := source.slice(arm.body.span.start, arm.body.span.end)
     lines = .append("${arm_indent}${cond_src} => ${body},")
   }
 
-  else_body := render_block_as_arm_body(chain.else_block, source)
+  else_body := source.slice(chain.else_body.span.start, chain.else_body.span.end)
   lines = .append("${arm_indent}_ => ${else_body},")
   lines = .append("${indent}}")
   lines.join("\n")

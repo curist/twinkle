@@ -240,11 +240,13 @@ pub fn describe(rule: String) RuleInfo? {
           \\      _ => .None,
           \\    }
           \\
-          \\The rewrite only fires on chains that end in a plain `else` (so the
-          \\`cond` is total, with a `_` arm) and have at least one `else if` (a
-          \\3+ arm `cond`). A two-way `if`/`else` and an `if` without a final
-          \\`else` are left alone. A single-expression branch inlines to
-          \\`cond => expr`; a branch with statements keeps its `{ … }` block.
+          \\The rewrite only fires on a value-dispatch chain: it must end in a
+          \\plain `else` (so the `cond` is total, with a `_` arm), have at least
+          \\one `else if` (a 3+ arm `cond`), and every branch must be a single
+          \\value expression. A two-way `if`/`else`, an `if` without a final
+          \\`else`, and imperative chains — branches with multiple statements or
+          \\an early `break`/`return` — are left alone, since those read fine as
+          \\`if`/`else if` and would not be pure `cond` arms.
         ,
       },
     ),
