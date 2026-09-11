@@ -60,6 +60,16 @@ fn rp_findings(src: String) Vector<lint.LintFinding> {
   }
 }
 
+fn pc_findings(src: String) Vector<lint.LintFinding> {
+  collect f in findings(src) {
+    if f.rule == "prefer-cond" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
 fn apply_first_edit(src: String, finding: lint.LintFinding) String {
   edit := finding.edits[0]
   src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
@@ -713,6 +723,52 @@ pub fn suite() runner.Suite {
         try assert.equal(
           apply_first_edit(src, fs[0]),
           "fn f(tag: Tag, method_name: String) Int? {\n  case tag {\n    .Read => case method_name {\n      \"len\" => .Some(1),\n      _ => .None,\n    },\n    _ => .None,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-cond: fixes a 3-arm if/else if/else chain, inlining single-expr arms",
+      fn() {
+        src := "fn f(n: Int) Int {\n  if n < 0 {\n    0\n  } else if n == 0 {\n    1\n  } else {\n    2\n  }\n}\n"
+        fs := pc_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "prefer-cond")
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(n: Int) Int {\n  cond {\n    n < 0 => 0,\n    n == 0 => 1,\n    _ => 2,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-cond: does not flag a two-way if/else (only 2 arms)",
+      fn() {
+        fs := pc_findings("fn f(b: Bool) Int {\n  if b {\n    1\n  } else {\n    2\n  }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-cond: does not flag an if/else if chain without a trailing else",
+      fn() {
+        fs := pc_findings(
+          "fn f(n: Int) Void {\n  if n < 0 {\n    print(\"neg\")\n  } else if n == 0 {\n    print(\"zero\")\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-cond: keeps braced blocks for multi-statement branches",
+      fn() {
+        src := "fn f(n: Int) Int {\n  if n < 0 {\n    x := 0\n    x\n  } else if n == 0 {\n    1\n  } else {\n    2\n  }\n}\n"
+        fs := pc_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(n: Int) Int {\n  cond {\n    n < 0 => {\n    x := 0\n    x\n  },\n    n == 0 => 1,\n    _ => 2,\n  }\n}\n",
         )
         .Ok({})
       },

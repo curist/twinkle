@@ -866,19 +866,134 @@ fn prefer_case_dispatch_finding(expr: Expr, arms: Vector<CondArm>, source: Strin
   )
 }
 
+// ── prefer-cond ──────────────────────────────────────────────────────
+type CondChainArm = .{ condition: Expr, then_block: Block }
+
+type CondChain = .{ arms: Vector<CondChainArm>, else_block: Block }
+
+// Walk an `if`/`else if`/… chain from its head expression, collecting the
+// ordered (condition, then-block) arms and the terminal `else` block. Returns
+// `.None` unless the chain actually ends in a plain `else { … }` (a
+// `.BlockExpr` else branch): `cond` needs a total set of arms, so a chain with
+// no `else`, or one whose else is some other expression, is left alone.
+fn extract_if_chain(expr: Expr) CondChain? {
+  arms: Vector<CondChainArm> = []
+  cur := expr
+
+  for true {
+    case cur.kind {
+      .If(cond_e, then_b, else_e) => {
+        arms = .append(.{ condition: cond_e, then_block: then_b })
+
+        case else_e {
+          .None => return .None,
+          .Some(e) => case e.kind {
+            .If(_, _, _) => cur = e,
+            .BlockExpr(b) => return .Some(.{ arms, else_block: b }),
+            _ => return .None,
+          },
+        }
+      },
+      _ => return .None,
+    }
+  }
+
+  .None
+}
+
+// Render a then/else block as a `cond` arm body: inline a single tail-only
+// expression (`c => .Some(x)`), otherwise keep the braced block verbatim so
+// statements, early returns, and comments survive the rewrite.
+fn render_block_as_arm_body(b: Block, source: String) String {
+  case b.tail {
+    .Some(t) => if b.stmts.len() == 0 {
+      source.slice(t.span.start, t.span.end)
+    } else {
+      source.slice(b.span.start, b.span.end)
+    },
+    .None => source.slice(b.span.start, b.span.end),
+  }
+}
+
+fn render_cond(chain: CondChain, indent: String, source: String) String {
+  arm_indent := "${indent}  "
+  lines: Vector<String> = ["cond {"]
+
+  for arm in chain.arms {
+    cond_src := source.slice(arm.condition.span.start, arm.condition.span.end)
+    body := render_block_as_arm_body(arm.then_block, source)
+    lines = .append("${arm_indent}${cond_src} => ${body},")
+  }
+
+  else_body := render_block_as_arm_body(chain.else_block, source)
+  lines = .append("${arm_indent}_ => ${else_body},")
+  lines = .append("${indent}}")
+  lines.join("\n")
+}
+
+fn prefer_cond_finding(expr: Expr, source: String) LintFinding? {
+  chain := try extract_if_chain(expr)
+
+  // Require at least two conditions before the `else` (one `else if`), so the
+  // rewrite only fires on genuinely multi-way chains — a 3+ arm `cond`.
+  if chain.arms.len() < 2 {
+    return .None
+  }
+
+  indent := leading_line_indent(source, expr.span.start)
+  replacement := chain.render_cond(indent, source)
+  .Some(
+    .{
+      span: expr.span,
+      message: "an `if`/`else if` chain ending in `else` reads better as `cond`",
+      rule: "prefer-cond",
+      edits: [FixEdit.{ start: expr.span.start, end: expr.span.end, replacement }],
+    },
+  )
+}
+
+// Lint an `if` chain: detect the prefer-cond rewrite once at the head, then lint
+// every condition, then-block, and the terminal else by walking the chain
+// directly instead of recursing through `lint_expr` on each `else if` — so a
+// nested `else if` is never re-detected as its own (shorter) chain.
+fn lint_if_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+
+  case prefer_cond_finding(expr, ctx.source) {
+    .Some(f) => out = .append(f),
+    .None => {},
+  }
+
+  cur := expr
+
+  for true {
+    case cur.kind {
+      .If(c, then_b, else_e) => {
+        out = .concat(lint_expr(c, ctx))
+        out = .concat(lint_block(then_b, ctx))
+
+        case else_e {
+          .None => return out,
+          .Some(e) => case e.kind {
+            .If(_, _, _) => cur = e,
+            _ => {
+              out = .concat(lint_expr(e, ctx))
+              return out
+            },
+          },
+        }
+      },
+      _ => return out,
+    }
+  }
+
+  out
+}
+
 fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
   case expr.kind {
     .BlockExpr(b) => lint_block(b, ctx),
-    .If(c, then_b, else_e) => {
-      out := lint_expr(c, ctx)
-      out = .concat(lint_block(then_b, ctx))
-
-      case else_e {
-        .Some(e) => out = .concat(lint_expr(e, ctx)),
-        .None => {},
-      }
-      out
-    },
+    .If(_, _, _) => lint_if_expr(expr, ctx),
     .Case(scrut, arms) => {
       out := lint_expr(scrut, ctx)
 

@@ -215,6 +215,39 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "prefer-cond" => .Some(
+      .{
+        brief: "use `cond` for a multi-way `if`/`else if`/`else` chain",
+        detailed:
+          \\A chain of `if`/`else if` branches ending in `else` is a multi-way
+          \\conditional written the long way. `cond` lists the branches as flat
+          \\arms sharing one `=>` column, so the reader sees the alternatives at a
+          \\glance instead of unwinding nested `else if` blocks:
+          \\
+          \\    // Avoid
+          \\    if c >= '0' and c <= '9' {
+          \\      .Some(c - '0')
+          \\    } else if c >= 'a' and c <= 'f' {
+          \\      .Some(c - 'a' + 10)
+          \\    } else {
+          \\      .None
+          \\    }
+          \\
+          \\    // Prefer
+          \\    cond {
+          \\      c >= '0' and c <= '9' => .Some(c - '0'),
+          \\      c >= 'a' and c <= 'f' => .Some(c - 'a' + 10),
+          \\      _ => .None,
+          \\    }
+          \\
+          \\The rewrite only fires on chains that end in a plain `else` (so the
+          \\`cond` is total, with a `_` arm) and have at least one `else if` (a
+          \\3+ arm `cond`). A two-way `if`/`else` and an `if` without a final
+          \\`else` are left alone. A single-expression branch inlines to
+          \\`cond => expr`; a branch with statements keeps its `{ … }` block.
+        ,
+      },
+    ),
     _ => .None,
   }
 }

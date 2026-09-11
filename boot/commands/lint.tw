@@ -495,6 +495,7 @@ fn select_edits(
   fix_case_dispatch: Bool,
   fix_record_copy: Bool,
   fix_redundant_prefix: Bool,
+  fix_prefer_cond: Bool,
 ) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
@@ -508,6 +509,7 @@ fn select_edits(
       or f.rule == "prefer-case-dispatch" and fix_case_dispatch
       or f.rule == "record-copy-helper" and fix_record_copy
       or f.rule == "redundant-record-prefix" and fix_redundant_prefix
+      or f.rule == "prefer-cond" and fix_prefer_cond
 
     if selected and f.edits.len() > 0 {
       existing := case edits_by_file[f.path] {
@@ -547,6 +549,7 @@ pub fn select_edits_for_test(
   fix_case_dispatch: Bool,
   fix_record_copy: Bool,
   fix_redundant_prefix: Bool,
+  fix_prefer_cond: Bool,
 ) Dict<String, Vector<FixEdit>> {
   select_edits(
     findings,
@@ -559,6 +562,7 @@ pub fn select_edits_for_test(
     fix_case_dispatch,
     fix_record_copy,
     fix_redundant_prefix,
+    fix_prefer_cond,
   )
 }
 
@@ -580,6 +584,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_case_dispatch := fix_all or parsed.has_flag("fix-prefer-case-dispatch")
   fix_record_copy := fix_all or parsed.has_flag("fix-record-copy-helper")
   fix_redundant_prefix := fix_all or parsed.has_flag("fix-redundant-record-prefix")
+  fix_prefer_cond := fix_all or parsed.has_flag("fix-prefer-cond")
   explain := parsed.has_flag("explain")
   color := default_config().color
   any_apply := fix_unused
@@ -591,6 +596,7 @@ pub fn run_lint_command(parsed: ParseResult) {
     or fix_case_dispatch
     or fix_record_copy
     or fix_redundant_prefix
+    or fix_prefer_cond
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -637,6 +643,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       fix_case_dispatch,
       fix_record_copy,
       fix_redundant_prefix,
+      fix_prefer_cond,
     )
 
     if edits.len() == 0 {
