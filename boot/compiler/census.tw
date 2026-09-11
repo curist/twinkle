@@ -128,16 +128,14 @@ fn empty_tally() CensusTally {
 }
 
 fn inc(fc: FamilyCount, in_place: Bool) FamilyCount {
-  .{
-    name: fc.name,
-    candidates: fc.candidates + 1,
-    in_place: fc.in_place
-      + if in_place {
-        1
-      } else {
-        0
-      },
+  fc.candidates = fc.candidates + 1
+  fc.in_place = fc.in_place
+  + if in_place {
+    1
+  } else {
+    0
   }
+  fc
 }
 
 /// Reduce sites into per-family totals.

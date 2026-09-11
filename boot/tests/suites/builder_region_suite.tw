@@ -13,27 +13,25 @@ use compiler.mono_type.{MonoType}
 use compiler.pipeline
 use lib.source.span
 
-// A param-seeded (`acc := prefix`, an `AInit(.ALocal)` seed) builder-region loop,
-// used by the Plan 3 string-param round-trip test to exercise the non-empty
-// local-seed rewrite end-to-end through the compiled pipeline.
+// A param-seeded builder-region loop, used by the Plan 3 string-param
+// round-trip test to exercise the non-empty seed rewrite end-to-end through
+// the compiled pipeline.
 fn seeded_concat(prefix: String, chunks: Vector<String>) String {
-  acc := prefix
   for c in chunks {
-    acc = .concat(c)
+    prefix = .concat(c)
   }
-  acc
+  prefix
 }
 
-// A non-empty vector param seed (`acc := base`, an `AInit(.ALocal)` seed),
-// exercised end-to-end by the Plan 3 vector-half round-trip test. When compiled
-// by a twk that has the vector-half rewrite, `acc := base` lowers to
-// vector$builder_from(base); the base value must remain observably unchanged.
+// A non-empty vector param seed exercised end-to-end by the Plan 3 vector-half
+// round-trip test. When compiled by a twk that has the vector-half rewrite, the
+// seed lowers to vector$builder_from(base); the caller's base value must remain
+// observably unchanged.
 fn seeded_append(base: Vector<Int>, xs: Vector<Int>) Vector<Int> {
-  acc := base
   for x in xs {
-    acc = .append(x)
+    base = .append(x)
   }
-  acc
+  base
 }
 
 fn candidates_for(src: String) Vector<detect.RegionCandidate> {

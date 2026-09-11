@@ -453,17 +453,11 @@ pub fn runtime_with_policy_and_abi(
     abi: builtin_abi,
     closure_policy,
   }
-  by_name := reg.by_name
-  by_id := reg.by_id
-  by_name[name] = entry
-  by_id[fid.id] = entry
-  .{
-    by_name,
-    by_id,
-    by_canonical: reg.by_canonical,
-    entries: reg.entries.append(entry),
-    next_id: reg.next_id + 1,
-  }
+  reg.by_name[name] = entry
+  reg.by_id[fid.id] = entry
+  reg.entries = .append(entry)
+  reg.next_id = reg.next_id + 1
+  reg
 }
 
 pub fn runtime_with_abi(
@@ -510,17 +504,11 @@ pub fn intrinsic_with_policy_and_abi(
     abi: builtin_abi,
     closure_policy,
   }
-  by_name := reg.by_name
-  by_id := reg.by_id
-  by_name[name] = entry
-  by_id[fid.id] = entry
-  .{
-    by_name,
-    by_id,
-    by_canonical: reg.by_canonical,
-    entries: reg.entries.append(entry),
-    next_id: reg.next_id + 1,
-  }
+  reg.by_name[name] = entry
+  reg.by_id[fid.id] = entry
+  reg.entries = .append(entry)
+  reg.next_id = reg.next_id + 1
+  reg
 }
 
 pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {

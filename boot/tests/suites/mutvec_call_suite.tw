@@ -270,7 +270,7 @@ fn elem_repr_name(e: ElemRepr) String {
 fn synth_param_func() AnfFunctionDef {
   h := LocalId.{ id: 1 }
   .{
-    func_id: FuncId.{ id: 9001 },
+    func_id: .{ id: 9001 },
     name: "synth_param",
     is_init: false,
     params: [Param.{ local: h, ty: MonoType.Vector(MonoType.Bool) }],
@@ -302,7 +302,7 @@ fn synth_call_result_func() AnfFunctionDef {
     ),
   )
   .{
-    func_id: FuncId.{ id: 9002 },
+    func_id: .{ id: 9002 },
     name: "synth_call_result",
     is_init: false,
     params: [],
@@ -432,7 +432,7 @@ fn synth_caller_multi_exit() AnfFunctionDef {
 
 fn synth_caller_def(body: AnfExpr) AnfFunctionDef {
   .{
-    func_id: FuncId.{ id: 9200 },
+    func_id: .{ id: 9200 },
     name: "synth_caller",
     is_init: false,
     params: [],
@@ -448,7 +448,7 @@ fn synth_region_for(handle: LocalId) mutvec_call_region.MutVecCallRegion {
 
 fn synth_clone_def(recv: LocalId, idx: LocalId, val: LocalId, body: AnfExpr) AnfFunctionDef {
   .{
-    func_id: FuncId.{ id: 9100 },
+    func_id: .{ id: 9100 },
     name: "synth_set_at__Bool$v9100",
     is_init: false,
     params: [

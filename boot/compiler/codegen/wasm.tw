@@ -1785,7 +1785,7 @@ fn emit_wasm_parts(
       .{ file_id: df.file_id, path: df.path }
     }
     dbg_bytes := section.encode(.{ files: used_files, funcs: enriched })
-    dbg_payload := empty_wasm_buf().emit_name(section.section_name()).emit_bytes(dbg_bytes)
+    dbg_payload := empty_wasm_buf().emit_name(section.section_name).emit_bytes(dbg_bytes)
     buf = .emit_section_into(0x00, dbg_payload)
   }
 

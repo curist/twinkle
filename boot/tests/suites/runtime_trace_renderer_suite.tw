@@ -46,7 +46,7 @@ fn uleb(n: Int) Vector<Byte> {
 // then a single custom section (id 0) named "twinkle.debug", exactly as the
 // codegen emits it — so `decode_module` has to walk the section framing.
 fn wrap_module(dbg_bytes: Vector<Byte>) Vector<Byte> {
-  name := section.section_name().utf8_bytes()
+  name := section.section_name.utf8_bytes()
 
   content: Vector<Byte> = []
   content = append_all(content, uleb(name.len()))

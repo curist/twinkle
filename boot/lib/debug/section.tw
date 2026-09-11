@@ -37,10 +37,7 @@ pub type FileEntry = .{ file_id: Int, path: String }
 
 pub type DebugSection = .{ files: Vector<FileEntry>, funcs: Vector<FuncDebug> }
 
-// Custom-section name and payload version.
-pub fn section_name() String {
-  "twinkle.debug"
-}
+pub section_name: String = "twinkle.debug"
 
 version: Int = 3
 
@@ -316,7 +313,7 @@ pub fn decode_module(module_bytes: Vector<Byte>) DebugSection? {
     return .None
   }
 
-  target := section_name()
+  target := section_name
   pos := 8
 
   for pos < n {
