@@ -52,7 +52,11 @@ fn dce_renumbers_funcids_compactly() {
     let (core_module, _) =
         twinkle::module::compile_entry(&path).expect("compile_entry should succeed");
 
-    let ids: Vec<u32> = core_module.functions.iter().map(|f| f.func_id.0).collect();
+    // Compaction covers both defined functions and preserved extern-import
+    // declarations (extern imports are kept as DCE roots and consume FuncIds
+    // interleaved with functions), so check that their union is dense.
+    let mut ids: Vec<u32> = core_module.functions.iter().map(|f| f.func_id.0).collect();
+    ids.extend(core_module.extern_imports.keys().map(|id| id.0));
 
     // IDs should be compact starting from USER_FUNC_START (41)
     let mut sorted_ids = ids.clone();

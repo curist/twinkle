@@ -5,11 +5,10 @@
 // sums the distances; part 2 scores each left ID by how often it appears on
 // the right. A worked demo of the skeleton: solve against the sample first,
 // then lock in the real-input answer once `make pull` + `make solve` confirm it.
-use @std.math
-
 use @std.testing.assert as assert
-use lib.aoc
 use @std.testing as runner
+
+use lib.aoc
 
 type Cols = .{ left: Vector<Int>, right: Vector<Int> }
 
@@ -34,7 +33,7 @@ pub fn part1(input: String) Int {
   total := 0
 
   for x, i in l {
-    total = total + math.abs(x - r[i])
+    total = total + (x - r[i]).abs()
   }
 
   total
@@ -64,7 +63,8 @@ pub fn suite() {
   dir := aoc.day_dir(2024, 1)
   sample := aoc.read_sample(dir)
 
-  runner.suite("2024 day01")
+  runner
+    .suite("2024 day01")
     .test("part1 sample", fn() { assert.equal(part1(sample), 11) })
     .test("part2 sample", fn() { assert.equal(part2(sample), 31) })
     .test(

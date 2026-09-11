@@ -593,7 +593,7 @@ pub fn suite() runner.Suite {
       fn() {
         // `math.pi`/`math.e` are module-level `pub` value bindings, not
         // functions, so they must surface alongside the module's functions.
-        valid := "use @std.math\nresult := math.abs(3)\n"
+        valid := "use @std.math\nresult := math.random()\n"
         incomplete := "use @std.math\nresult := math.\n"
         step := open_then_complete(valid, incomplete, 1, 15)
         labels := try completion_labels(step)
@@ -602,7 +602,7 @@ pub fn suite() runner.Suite {
           return .Err("expected math value bindings 'pi' and 'e', got: ${labels}")
         }
 
-        if !has_label(labels, "abs") {
+        if !has_label(labels, "random") {
           return .Err("expected math functions alongside values, got: ${labels}")
         }
 

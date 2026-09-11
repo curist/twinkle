@@ -3,7 +3,6 @@
 // compare against the persistent `nbody`. Same arithmetic order, so the scaled
 // energy checksum is identical.
 use @std.buffer
-use @std.math
 
 pi := 3.141592653589793
 solar_mass := 4.0 * pi * pi
@@ -113,7 +112,7 @@ fn advance(buf: buffer.Buffer, dt: Float) {
       dy := biy - buf.get_f64(off(j, 1))
       dz := biz - buf.get_f64(off(j, 2))
       d2 := dx * dx + dy * dy + dz * dz
-      mag := dt / (d2 * math.sqrt(d2))
+      mag := dt / (d2 * d2.sqrt())
       jmass := buf.get_f64(off(j, 6))
       buf.set_f64(off(j, 3), buf.get_f64(off(j, 3)) + dx * bimass * mag)
       buf.set_f64(off(j, 4), buf.get_f64(off(j, 4)) + dy * bimass * mag)
@@ -151,7 +150,7 @@ fn energy(buf: buffer.Buffer) Float {
       dx := buf.get_f64(off(i, 0)) - buf.get_f64(off(j, 0))
       dy := buf.get_f64(off(i, 1)) - buf.get_f64(off(j, 1))
       dz := buf.get_f64(off(i, 2)) - buf.get_f64(off(j, 2))
-      dist := math.sqrt(dx * dx + dy * dy + dz * dz)
+      dist := (dx * dx + dy * dy + dz * dz).sqrt()
       e = e - buf.get_f64(off(i, 6)) * buf.get_f64(off(j, 6)) / dist
       j = j + 1
     }
@@ -174,5 +173,5 @@ pub fn run(size: Int) Int {
     advance(buf, 0.01)
     i = i + 1
   }
-  math.round(energy(buf) * 100000000.0).to_int()
+  (energy(buf) * 100000000.0).round().to_int()
 }
