@@ -16,10 +16,10 @@ use compiler.builder_region_detect.{atom_is_local, op_references_deep}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
-use lib.source.span
 use compiler.elem_family.{elem_family_suffix, mutvec_families}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{next_local_id}
+use lib.source.span
 
 pub type MutVecProducer = { CollectSeed, MakeSeed, ArrayLitSeed }
 
@@ -292,6 +292,53 @@ fn classify_leaf_use(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseSc
   }
 }
 
+// ── Foreign-rebind rejection ──
+// `h = val` is a legitimate threading step iff `val` is the handle itself or a
+// local whose defining op references the handle (e.g. `set_unsafe(h, ..)`,
+// `h.append(..)`). A rebind to a *fresh* producer (`collect`, `Vector.make`) is a
+// re-initialization: it would leave a new PVec value in what the repr pass types
+// as the MutVec handle slot, which the backend verifier rejects as a "physical
+// vector repr mismatch". Such regions fall back to persistent (boxed).
+fn handle_has_foreign_rebind(e: AnfExpr, h: LocalId, defs: Dict<Int, AnfOp>) Bool {
+  case e {
+    .Let(_, op, _, body) => op_has_foreign_rebind(op, h, defs)
+      or handle_has_foreign_rebind(body, h, defs),
+    _ => false,
+  }
+}
+
+fn op_has_foreign_rebind(op: AnfOp, h: LocalId, defs: Dict<Int, AnfOp>) Bool {
+  case op {
+    .AAssign(target, val) => target.id == h.id and !rebind_threads_handle(val, h, defs),
+    .AIf(_, t, e) => handle_has_foreign_rebind(t, h, defs) or handle_has_foreign_rebind(e, h, defs),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if handle_has_foreign_rebind(arm.body, h, defs) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(b) => handle_has_foreign_rebind(b, h, defs),
+    .ADefer(b) => handle_has_foreign_rebind(b, h, defs),
+    _ => false,
+  }
+}
+
+fn rebind_threads_handle(val: Atom, h: LocalId, defs: Dict<Int, AnfOp>) Bool {
+  case val {
+    .ALocal(t) => if t.id == h.id {
+      true
+    } else {
+      case defs.get(t.id) {
+        .Some(op) => op_references_deep(op, h),
+        .None => false,
+      }
+    },
+    _ => false,
+  }
+}
+
 // ── Eligibility ──
 // The mutvec family suffix a handle is claimable for, driven off its element
 // MonoType (`.Vector(.Int)` -> `"_i64"`), or `.None` when no family has mutvec
@@ -314,6 +361,12 @@ fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) M
   }
   scan := scan_uses(f.body, h, ids, empty_scan())
   if !scan.supported {
+    return .None
+  }
+
+  // Reject handles re-initialized from a fresh producer (see above): the repr
+  // handoff can only type a single MutVec slot, so a PVec re-init would mismatch.
+  if handle_has_foreign_rebind(f.body, h, defs) {
     return .None
   }
 
