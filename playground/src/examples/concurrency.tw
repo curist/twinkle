@@ -25,13 +25,14 @@ println("worker totals: ${a.await()} and ${b.await()}")
 // backpressure: send suspends once the buffer is full until a recv drains it.
 ch: Channel<Int> = Channel.bounded(2)
 
-// Producer task: emit a few squares, then close the channel to signal "done".
+// Producer task: emit a few squares. `defer` schedules the close to run
+// however the task exits, so the channel is always signaled "done".
 producer := Task.spawn(fn() {
+  defer ch.close()
   for i in 1..6 {
     println("send ${i * i}")
     ch.send(i * i)
   }
-  ch.close()
 })
 
 // A channel is iterable: the loop receives until the channel is closed and
