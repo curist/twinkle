@@ -96,6 +96,18 @@ Cooperative task handle. Tasks run on the same program thread and switch only at
 | `Task.await` | `fn<T>(task: Task<T>) T` | Suspend until `task` completes, then return its result; propagates a task failure as a trap |
 | `Task.yield` | `fn() Void` | Yield control to the scheduler so another runnable task can make progress |
 
+### `Channel<T>`
+
+Typed channel for passing values between tasks. Send and receive are task points: they suspend the current task and let the scheduler run others. A channel is iterable with `for value in ch { ... }`, which receives until the channel is closed and drained.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Channel.new` | `fn<T>() Channel<T>` | Unbuffered rendezvous channel (a send and a receive hand off directly) |
+| `Channel.bounded` | `fn<T>(capacity: Int) Channel<T>` | Buffered channel with a fixed capacity; `capacity >= 1` (0 or negative traps — use `Channel.new()` for unbuffered) |
+| `.send(v)` | `fn<T>(ch: Channel<T>, value: T) Bool` | Send `value`, suspending under backpressure; returns `false` if the channel is closed |
+| `.recv()` | `fn<T>(ch: Channel<T>) T?` | Receive the next value, or `.None` once the channel is closed and drained |
+| `.close()` | `fn<T>(ch: Channel<T>) Void` | Close the channel; closing an already-closed channel is a no-op |
+
 ### `Range`
 Record with fields `{ start: Int, end: Int, step: Int }`. Iterable in `for` loops.
 
