@@ -424,6 +424,12 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
           ctx = r.ctx
           init_stmts = .append(r.expr)
         },
+        .Defer(ds) => {
+          has_init = true
+          r := lower_expr(ctx, ds.expr)
+          ctx = r.ctx
+          init_stmts = .append(.{ kind: .Defer(r.expr), ty: .Void, span: ds.span })
+        },
         _ => {},
       },
       _ => {},

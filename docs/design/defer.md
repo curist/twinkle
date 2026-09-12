@@ -42,6 +42,10 @@ the `defer` statement. Multiple defers in the same block execute in LIFO order:
 // prints: 3, 2, 1
 ```
 
+The top-level initialization sequence of a module acts as an implicit block. A
+top-level `defer` therefore runs after the module's final top-level statement,
+when its initialization completes.
+
 ### Exit paths
 
 | Exit path | Triggers defer? |

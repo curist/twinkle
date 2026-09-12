@@ -1025,7 +1025,9 @@ fn write_file(path: String, data: String) !IoError {
 ```
 
 * **Scope:** tied to the nearest enclosing `{ ... }`, not the function. A `defer`
-  in a loop body runs at the end of each iteration (and on `break`).
+  in a loop body runs at the end of each iteration (and on `break`). At module
+  scope, the top-level initialization sequence acts as an implicit enclosing
+  block, so its defers run when that sequence completes.
 * **Ordering:** multiple defers in a block run LIFO.
 * **Capture:** variables are captured by value at declaration time (like closures).
 * **Triggers:** normal completion, `return` (unwinds all enclosing blocks),

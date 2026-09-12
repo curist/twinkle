@@ -1,9 +1,20 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+top_level_buf := Cell.new("")
+defer append(top_level_buf, "deferred")
+append(top_level_buf, "body")
+
 pub fn suite() runner.Suite {
   runner
     .suite("defer")
+    .test(
+      "top-level defer fires after module initialization",
+      fn() {
+        try assert.equal(top_level_buf.get(), "body,deferred")
+        .Ok({})
+      },
+    )
     .test(
       "basic LIFO order",
       fn() {
