@@ -126,19 +126,19 @@ pub fn mono_eq(a: MonoType, b: MonoType) Bool {
       _ => false,
     },
     .Vector(inner_a) => case b {
-      .Vector(inner_b) => mono_eq(inner_a, inner_b),
+      .Vector(inner_b) => inner_a.mono_eq(inner_b),
       _ => false,
     },
     .Dict(ka, va) => case b {
-      .Dict(kb, vb) => mono_eq(ka, kb) and mono_eq(va, vb),
+      .Dict(kb, vb) => ka.mono_eq(kb) and va.mono_eq(vb),
       _ => false,
     },
     .Function(pa, ra) => case b {
-      .Function(pb, rb) => mono_vec_eq(pa, pb) and mono_eq(ra, rb),
+      .Function(pb, rb) => mono_vec_eq(pa, pb) and ra.mono_eq(rb),
       _ => false,
     },
     .Optional(inner_a) => case b {
-      .Optional(inner_b) => mono_eq(inner_a, inner_b),
+      .Optional(inner_b) => inner_a.mono_eq(inner_b),
       _ => false,
     },
     .ExternRef(tid_a) => case b {
@@ -146,7 +146,7 @@ pub fn mono_eq(a: MonoType, b: MonoType) Bool {
       _ => false,
     },
     .Result(ok_a, err_a) => case b {
-      .Result(ok_b, err_b) => mono_eq(ok_a, ok_b) and mono_eq(err_a, err_b),
+      .Result(ok_b, err_b) => ok_a.mono_eq(ok_b) and err_a.mono_eq(err_b),
       _ => false,
     },
     .MetaVar(id_a) => case b {
@@ -170,7 +170,7 @@ fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
   }
 
   for item, i in a {
-    if !mono_eq(item, b[i]) {
+    if !item.mono_eq(b[i]) {
       return false
     }
   }
@@ -181,22 +181,22 @@ fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
 pub fn contains_meta(ty: MonoType) Bool {
   case ty {
     .MetaVar(_) => true,
-    .Vector(inner) => contains_meta(inner),
-    .Dict(k, v) => contains_meta(k) or contains_meta(v),
+    .Vector(inner) => inner.contains_meta(),
+    .Dict(k, v) => k.contains_meta() or v.contains_meta(),
     .Function(params, ret) => {
       for p in params {
-        if contains_meta(p) {
+        if p.contains_meta() {
           return true
         }
       }
 
-      contains_meta(ret)
+      ret.contains_meta()
     },
-    .Optional(inner) => contains_meta(inner),
-    .Result(ok, err) => contains_meta(ok) or contains_meta(err),
+    .Optional(inner) => inner.contains_meta(),
+    .Result(ok, err) => ok.contains_meta() or err.contains_meta(),
     .Named(_, args) => {
       for a in args {
-        if contains_meta(a) {
+        if a.contains_meta() {
           return true
         }
       }
