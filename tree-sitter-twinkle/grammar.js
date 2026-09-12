@@ -70,6 +70,7 @@ module.exports = grammar({
     _top_level_statement: $ => choice(
       $.top_level_let_binding,
       $.for_statement,
+      $.defer_statement,
       $._expression,
     ),
 

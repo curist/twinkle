@@ -2318,6 +2318,10 @@
           "named": true
         },
         {
+          "type": "defer_statement",
+          "named": true
+        },
+        {
           "type": "extern_block",
           "named": true
         },

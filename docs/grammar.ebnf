@@ -6,7 +6,8 @@
  *   - FunctionDecl: `fn name(...) [ReturnType] { ... }`  (supports mutual recursion)
  *   - Value binding: `name [: Type] = Expr` or `name := Expr` (no mutual recursion)
  * - Function *types* use `fn(...) Type` syntax (no `->`).
- * - Top-level value bindings and expression statements are allowed at module scope.
+ * - Top-level value bindings, loops, defers, and expression statements are allowed
+ *   at module scope.
  * - Named record literals use `TypeName.{ ... }` to avoid ambiguity with blocks.
  * - Sum types (enums) are defined with `type T = { Variant1, Variant2(T), ... }`.
  * - Constructors are referenced as `TypeName.Variant` in expressions, with `.Variant`
@@ -31,8 +32,7 @@ TopLevel =
    - Top-level is a sequence of declarations + executable statements.
    - TypeDecl and FunctionDecl are available everywhere in the module (no
      forward-declaration restriction).
-   - TopLevelStmt (value bindings and expression statements) execute in
-     source order at module initialization time.
+   - TopLevelStmt executes in source order at module initialization time.
    - There is no special entry-point function; the init sequence is the program.
      A fn named `main` has no distinguished status. *)
 
@@ -490,6 +490,8 @@ Statement =
 
 TopLevelStmt =
       [ "pub" ] LetBinding   (* value binding, optionally exported; no rebinding at module scope *)
+    | ForStmt
+    | DeferStmt
     | Expr ;                  (* side-effecting expression; type must be Void *)
 
 LetBinding =
@@ -504,6 +506,8 @@ DeferStmt =
     "defer" Expr ;
 (* Implementation note:
    - `defer expr` schedules `expr` to run when the enclosing block exits.
+   - At module scope, the top-level initialization sequence acts as the enclosing
+     block, so deferred expressions run when module initialization completes.
    - The expression is captured by value at the declaration site (consistent
      with closure capture semantics).
    - Multiple defers in the same block execute in LIFO order.
