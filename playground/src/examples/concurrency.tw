@@ -58,6 +58,7 @@ feeder := Task.spawn(fn() {
     jobs.send(n)
   }
 })
+defer feeder.await()
 
 // Once every worker has finished, close `results` so the drain below ends.
 closer := Task.spawn(fn() {
@@ -66,13 +67,12 @@ closer := Task.spawn(fn() {
   }
   results.close()
 })
+defer closer.await()
 
 // Results arrive as workers find them, interleaved across the pool.
 found: Vector<Int> = []
 for p in results {
   found = .append(p)
 }
-feeder.await()
-closer.await()
 
 println("found ${found.len()} primes")
