@@ -17,7 +17,8 @@ import { command, run, load } from '@twinkle-lang/twinkle/web'
 // ---------------------------------------------------------------------------
 
 const timer = {
-  sleep_ms: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // ms arrives as a BigInt (Twinkle Int is i64); setTimeout needs a Number.
+  sleep_ms: (ms) => new Promise((resolve) => setTimeout(resolve, Number(ms) > 0 ? Number(ms) : 0)),
 }
 
 const http = {
