@@ -4,8 +4,9 @@
 > `superpowers:subagent-driven-development`) to implement this plan
 > task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. The
 > workstreams below are **independent** — each ships on its own and can be
-> sequenced or split into its own plan. Do WS-A/WS-B (quick wins) before the
-> design-first workstreams.
+> sequenced or split into its own plan. WS-A is a quick doc win. WS-B was
+> reclassified after diagnosis (2026-09-12) from a quick fix to a core
+> type-inference change — see its section.
 
 ## Goal
 
@@ -116,8 +117,8 @@ What already works and is tested:
 
 | Order | Workstream | Type | Ship independently? |
 |-------|------------|------|---------------------|
-| 1 | WS-A: Document `Channel` in API.md | Doc | Yes |
-| 2 | WS-B: Fix `Task<Void>` await inference | Bug | Yes |
+| 1 | WS-A: Document `Channel` in API.md | Doc | Yes — **DONE** |
+| 2 | WS-B: Fix inferred-return propagation through closures | Bug (core inference) | Yes |
 | 3 | WS-C: Recoverable task failure (`try_await`) | Feature | Yes |
 | 4 | WS-D: `send`-on-closed ergonomics | Decision + small change | Yes |
 | 5 | WS-E: `select` over channels | Design-first feature | Yes (after design) |
@@ -160,38 +161,75 @@ analysis for this plan) were surprised it was absent.
 
 ---
 
-## WS-B: Fix `Task<Void>` await inference
+## WS-B: Fix inferred-return-type propagation through closure arguments
+
+> **Reclassified (2026-09-12): NOT a quick win.** Originally scoped as a small
+> `Task<Void>` await-defaulting fix. Diagnosis showed the true root cause is a
+> general type-inference ordering bug in `checker.tw`, not Task-specific.
+> Touching core inference requires full self-host re-verification and carries
+> real regression risk — treat this as its own careful workstream, not a
+> drive-by patch.
 
 **Why:** `a := Task.spawn(fn() { side_effect() })` then `a.await()` fails
-typecheck with `"cannot infer type / ambiguous type"` when the awaited result is
-`Void` and discarded — `T` in `Task<T>` never gets pinned. Fire-and-forget and
+typecheck with `"cannot infer type / ambiguous type"`. Fire-and-forget and
 "spawn a side-effecting task then await it for completion" are normal patterns.
-Today they're only expressible by giving the spawned fn a bogus return value
-(the playground example had to do this; `task_suite.tw` sidesteps it by always
-annotating `fn() Int`/`fn() String`).
+Today they're only expressible by giving the spawned fn a return type/value (the
+playground example did this; `task_suite.tw` sidesteps it by always annotating
+`fn() Int` / `fn() String`).
 
-**Repro (should compile after the fix):**
+**Verified root cause (2026-09-12).** The bug is **not** about `Void`, `await`,
+or `Task` specifically. It reproduces with a plain user generic:
 ```tw
-fn side_effect(id: Int) {
-  println("task ${id}")
-}
-a := Task.spawn(fn() { side_effect(1) })
-a.await()
+fn side(id: Int) { println("t${id}") }   // NO return annotation → inferred Void
+fn run<T>(f: fn() T) T { f() }
+run(fn() { side(1) })                     // ← "ambiguous type" on the closure
 ```
-Actual today: `cannot infer type for this expression ... ambiguous type` at
-`a.await()`.
+The trigger is precise: **a closure whose *tail expression* is a call to a
+function with an *inferred* (unannotated) return type, passed to a generic where
+that return drives instantiation, leaves the type variable unsolved.** The
+callee's return meta-var and the closure's expected-return meta-var get unified
+as two still-unresolved metas, and the callee-body resolution does not propagate
+back to the call site's meta.
 
-**Files (diagnosis-gated):**
-- Investigate: `boot/compiler/checker.tw` (bidirectional inference / meta-var
-  resolution for generic builtin calls). The likely root cause is that
-  `await<T>` returns `T`, and with the result discarded and the closure body
-  `Void`, `T`'s meta-var is never constrained to `Void` and is reported
-  ambiguous instead of defaulting. Compare how a discarded `T`-returning generic
-  call is defaulted elsewhere.
-- Test: `boot/tests/suites/task_suite.tw`.
+Confirmed by differential testing — all of these **work** (so they define the
+workarounds and bound the bug):
+- Annotate the callee's return: `fn side(...) Void { ... }` ✓
+- Annotate the closure: `fn() Void { side(1) }` ✓
+- Callee with an already-annotated return (e.g. `Task.yield()`) ✓
+- Closure body with **no tail expression** (a `for`-loop or a trailing
+  statement, e.g. `fn() { side(1) 0 }`) — the no-tail path unifies `Void` with
+  the expected type directly ✓ (this is why the worker-pool example's
+  loop-bodied worker closures compiled)
+- An int-literal / any concrete-typed tail ✓
 
-- [ ] **Step 1: Add a failing test** to `task_suite.tw`'s `suite()` chain:
+And these **fail** (same root cause): `fn() { side(1) }` (single void-call
+tail), `fn() { side(1) side(2) }` (void-call tail after a statement),
+`Task.spawn(fn(){side(1)}).await()` (chained), `collect ... { Task.spawn(fn(){
+side(id) }) }` then `for t in ts { t.await() }`.
+
+**Where it lives (traced):** `boot/compiler/checker.tw`. The relevant chain is
+`check_closure` (no-annotation branch, ~3056/3135) → `check_block` tail
+(~5025) → `check_expr` `.Call` path (~2988) → `synth_call` `.Ident` non-local
+branch (~1745) → `pre_unify_return` (~569). For a non-generic callee,
+`instantiate` (~1462) returns `sig.ret` directly; when `sig.ret` is an
+unresolved return meta (unannotated function), `pre_unify_return` unifies it
+with the closure's expected meta, but the callee-body's later resolution of that
+return meta does not reach the call-site's finalize sweep (~5567), which then
+reports the closure's `fn() ?T` type as ambiguous. **The fix almost certainly
+belongs in return-type inference ordering** — resolve an unannotated function's
+return type before (or so it transitively propagates to) call sites that consume
+it via generic instantiation — not in `await`/`Task`.
+
+**Files (diagnosis complete; fix design still open):**
+- `boot/compiler/checker.tw` — inference ordering / return-meta resolution.
+- Test: `boot/tests/suites/task_suite.tw` (Task-facing case) **and**
+  `boot/tests/suites/checker_suite.tw` (the general user-generic case, since the
+  bug is not Task-specific).
+
+- [ ] **Step 1: Add failing tests** — both a Task case in `task_suite.tw` and the
+  general case in `checker_suite.tw`:
   ```tw
+  // task_suite.tw
   .test(
     "spawn and await a void task",
     fn() {
@@ -203,34 +241,35 @@ Actual today: `cannot infer type for this expression ... ambiguous type` at
     },
   )
   ```
+  Plus a `checker_suite.tw` case asserting `run(fn() { side(1) })` (inferred-Void
+  callee) type-checks clean, matching the suite's existing check-success harness.
 
-- [ ] **Step 2: Run it and confirm it fails at typecheck.**
-  Run: `target/twk run boot/tests/main.tw` (or the narrower suite entry).
-  Expected: compile error `ambiguous type` at `t.await()`.
+- [ ] **Step 2: Run and confirm both fail** with `ambiguous type`:
+  `target/twk run boot/tests/main.tw`.
 
-- [ ] **Step 3: Diagnose.** Use `target/twk ir /tmp/repro.tw` and the checker to
-  find where `T` for the discarded `await` is left as an unresolved meta-var.
-  Determine whether the fix belongs in: (a) defaulting an unconstrained
-  return-position meta-var to `Void` when the value is discarded at statement
-  position, or (b) propagating the spawned closure's `Void` body type into
-  `Task<T>`'s `T` at `spawn`. Prefer (b) if `spawn`'s closure already pins `T` in
-  the non-void case — that means the void case is the outlier.
+- [ ] **Step 3: Design the fix** against the traced root cause above. The
+  candidate is a return-type-inference ordering change so an unannotated callee's
+  resolved return type reaches call sites (e.g. resolve leaf/non-recursive
+  function returns before checking consumers, or ensure the shared subst carries
+  the resolution to finalize). Because this is core inference used by the whole
+  compiler, prototype on a throwaway `target/twk build boot/main.tw -o /tmp/dbg.wasm`
+  and exercise the repros via `BOOT_WASM=/tmp/dbg.wasm` before committing.
+  **Do not hot-patch — a wrong change here can silently mis-type the whole
+  compiler.**
 
-- [ ] **Step 4: Implement the minimal fix** in `boot/compiler/checker.tw` at the
-  location found in Step 3. (Exact edit depends on diagnosis — do not guess
-  before Step 3.)
+- [ ] **Step 4: Implement** the ordering fix in `boot/compiler/checker.tw`.
 
-- [ ] **Step 5: Verify** the new test passes and existing task/channel suites
-  still pass: `make boot-test`.
+- [ ] **Step 5: Verify** the new tests pass and nothing regresses:
+  `make boot-test` (full suite — a change this central must run all of it).
 
-- [ ] **Step 6: Self-host check.** The fix is in the boot compiler's checker
-  (`boot/compiler/checker.tw`); the failing test lives in `boot/tests/` and is
-  not compiled by stage0. stage0 (Rust, `src/`) has its own independent checker
-  — it needs the same fix **only if** boot source reachable from `boot/main.tw`
-  relies on void-task await, which it does not today (existing call sites
-  annotate `fn() Int` etc.). So `make stage2` should pass unchanged; run it to
-  confirm the checker change didn't regress the self-host fixed point. Mirror the
-  fix in stage0 only if `make stage2` breaks.
+- [ ] **Step 6: Self-host check.** Run `make stage2` — the fixed point
+  (stage3 == stage4) is the real guard that a central inference change didn't
+  perturb codegen. The fix changes the boot compiler's own checker; existing boot
+  source doesn't rely on the buggy pattern (unannotated-return closures into
+  generics currently wouldn't compile), so the stage0 (Rust) → stage1 build
+  should be unaffected. stage0's Rust checker likely has the analogous gap, but
+  it only matters if boot source *adopts* the pattern — mirror the fix in `src/`
+  only if `make stage2` breaks.
 
 - [ ] **Step 7: Commit.**
   ```bash
@@ -447,10 +486,12 @@ a cancel channel).
 
 - **Coverage:** all six analysis items map to a workstream (1→WS-B, 2→WS-E,
   3→WS-C, 4→WS-F, 5→WS-D, 6→WS-A). ✓
-- **No fabricated steps:** WS-A/WS-B/WS-C have concrete steps because their shape
-  is known; WS-D/WS-E/WS-F are explicitly design-gated because their
-  implementation depends on an unmade decision — writing step-by-step code there
-  would be placeholder guesswork, which this plan deliberately avoids.
+- **No fabricated steps:** WS-A (done) and WS-C have concrete steps; WS-B has a
+  complete, verified diagnosis but its *fix design* is left open (a core
+  inference change that must not be guessed); WS-D/WS-E/WS-F are design-gated
+  because their implementation depends on an unmade decision. Writing
+  step-by-step code for the open items would be placeholder guesswork, which this
+  plan deliberately avoids.
 - **Type consistency:** signatures (`try_await<T>(Task<T>) Result<T, String>`,
   `join_all`) are proposed, not yet locked — flagged as design decisions, not
   presented as final APIs to code against blindly.
