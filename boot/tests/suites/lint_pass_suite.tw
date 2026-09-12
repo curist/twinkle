@@ -12,7 +12,7 @@ use lib.source.report.{FixEdit}
 
 fn findings(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)
-  lint.lint_module(parsed.value, base_env.builtin_env(), src)
+  lint.lint_module(parsed.value, base_env.builtin_env(), Dict.new(), src)
 }
 
 // Findings for a single rule — the suite runs the whole rule set, so other
@@ -100,7 +100,7 @@ fn rr_findings_typed(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)
   resolved := base_env.builtin_env().resolve(parsed.value)
   checked := checker.check(parsed.value, resolved.env, false)
-  all := lint.lint_module(parsed.value, checked.env, src)
+  all := lint.lint_module(parsed.value, checked.env, checked.type_map, src)
 
   collect f in all {
     if f.rule == "redundant-rebinding" {
@@ -583,8 +583,8 @@ pub fn suite() runner.Suite {
     .test(
       "redundant-rebinding: rewrites a computed candidate with matching annotations",
       fn() {
-        src := "fn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
-        fs := rr_findings(src)
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
+        fs := rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 2)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
@@ -612,8 +612,8 @@ pub fn suite() runner.Suite {
     .test(
       "redundant-rebinding: renames every forward occurrence",
       fn() {
-        src := "fn f() Int {\n  state: Int = initial()\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
-        fs := rr_findings(src)
+        src := "fn step(x: Int) Int {\n  x\n}\nfn combine(a: Int, b: Int) Int {\n  a\n}\nfn f() Int {\n  state: Int = 0\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
+        fs := rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
 
         // Binding rewrite plus one edit per forward read.
@@ -832,7 +832,7 @@ pub fn suite() runner.Suite {
             .Stmt(public_stmt) => {
               decl.body.stmts[1] = public_stmt
               module.items[0] = .Function(decl)
-              fs := lint.lint_module(module, base_env.builtin_env(), src)
+              fs := lint.lint_module(module, base_env.builtin_env(), Dict.new(), src)
               numbered := collect f in fs {
                 if f.rule == "redundant-rebinding" {
                   f
