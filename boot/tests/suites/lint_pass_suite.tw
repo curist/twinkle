@@ -834,13 +834,43 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-rebinding: reports the narrow loop-seed shape without edits",
+      "redundant-rebinding: rewrites the loop-seed shape by threading the base",
       fn() {
-        fs := rr_findings(
-          "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = step(item, cur)\n  }\n  cur\n}\n",
-        )
+        src := "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = step(item, cur)\n  }\n  cur\n}\n"
+        fs := rr_findings(src)
         try assert.equal(fs.len(), 1)
-        try assert.equal(fs[0].edits.len(), 0)
+        try assert.is_true(fs[0].edits.len() > 0)
+
+        // The seed is deleted and every `cur` — the body target, its reads, and
+        // the block tail — is rethreaded onto the base name.
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("cur"))
+        try assert.is_true(fixed.contains("acc = step(item, acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: loop seed rewrites every body update",
+      fn() {
+        src := "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = step(item, cur)\n    cur = adjust(cur)\n  }\n  cur\n}\n"
+        fs := rr_findings(src)
+        try assert.equal(fs.len(), 1)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("cur"))
+        try assert.is_true(fixed.contains("acc = step(item, acc)"))
+        try assert.is_true(fixed.contains("acc = adjust(acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: loop seed declines an uncertain body RHS",
+      fn() {
+        // An `if`-valued update makes the read collector fail closed, so the
+        // whole shape is left report-only rather than partially rewritten.
+        fs := rr_findings(
+          "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = if item > 0 { cur } else { cur }\n  }\n  cur\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )

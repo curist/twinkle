@@ -418,11 +418,11 @@ fn scan_use_op(ctx: ScanCtx, op: AnfOp, local: LocalId, s: UseScan) UseScan {
       } else {
         s
       }
-      cur := s0
+
       for arm in arms {
-        cur = ctx.scan_uses_at(arm.body, cur, false)
+        s0 = ctx.scan_uses_at(arm.body, s0, false)
       }
-      cur
+      s0
     },
     .ALoop(body) => ctx.scan_uses_at(body, s, false),
     .ADefer(body) => ctx.scan_uses_at(body, s, false),

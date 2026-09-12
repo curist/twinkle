@@ -1969,6 +1969,45 @@ fn shape_two_loop_is_valid(fs: ForStmt, tmp: String, base: String) Bool {
   updates > 0
 }
 
+/// Build the delete-and-rethread edits for a validated Shape-2 loop-seed
+/// candidate: delete the seed (`cur := base`) whole, then rename every `cur` —
+/// each body rebind target, its reads, and the block tail — to `base`. The
+/// spans come straight from the already-validated shape, so no source text or
+/// type gate is needed. Returns `[]` (report-only) if a body read fails the
+/// closed collector; `shape_two_loop_is_valid` already proves each read
+/// Complete, so that branch stays defensive.
+fn shape_two_edits(block: Block, ls: LetStmt, base: String, fs: ForStmt) Vector<FixEdit> {
+  edits: Vector<FixEdit> = [FixEdit.{ start: ls.span.start, end: ls.span.end, replacement: "" }]
+
+  for stmt in fs.body.stmts {
+    case stmt {
+      .Let(upd) => {
+        edits = .append(
+          FixEdit.{ start: upd.name_span.start, end: upd.name_span.end, replacement: base },
+        )
+        case expr_ident_spans(upd.value, "cur") {
+          .Complete(found) => {
+            for sp in found {
+              edits = .append(FixEdit.{ start: sp.start, end: sp.end, replacement: base })
+            }
+          },
+          .Uncertain => return [],
+        }
+      },
+      _ => return [],
+    }
+  }
+
+  case block.tail {
+    .Some(tail) => edits = .append(
+      FixEdit.{ start: tail.span.start, end: tail.span.end, replacement: base },
+    ),
+    .None => return [],
+  }
+
+  edits
+}
+
 fn shape_two_redundant_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
   if ls.is_rebind or ls.is_pub or ls.name != "cur" {
     return .None
@@ -2000,7 +2039,15 @@ fn shape_two_redundant_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
 
   case block.stmts[i + 1] {
     .For(fs) => if shape_two_loop_is_valid(fs, "cur", base) {
-      .Some(redundant_rebinding_finding(ls.span, "cur", base, false, []))
+      .Some(
+        redundant_rebinding_finding(
+          ls.span,
+          "cur",
+          base,
+          false,
+          shape_two_edits(block, ls, base, fs),
+        ),
+      )
     } else {
       .None
     },
