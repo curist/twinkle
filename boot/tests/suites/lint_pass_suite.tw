@@ -508,11 +508,58 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: reports a pure alias forward thread",
+      "numbered-rebinding: rewrites a pure alias by deleting the seed and renaming",
       fn() {
-        fs := nr_findings("fn f() Int {\n  acc := 0\n  acc2 := acc\n  consume(acc2)\n}\n")
+        src := "fn f() Int {\n  acc := 0\n  acc2 := acc\n  consume(acc2)\n}\n"
+        fs := nr_findings(src)
         try assert.equal(fs.len(), 1)
-        try assert.equal(fs[0].edits.len(), 0)
+
+        // Whole-statement delete plus one forward rename; no type gate needed.
+        try assert.equal(fs[0].edits.len(), 2)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("acc2"))
+        try assert.is_true(fixed.contains("consume(acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "numbered-rebinding: rewrites a computed candidate with matching annotations",
+      fn() {
+        src := "fn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
+        fs := nr_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 2)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("acc2"))
+        try assert.is_true(fixed.contains("acc = step(acc)"))
+        try assert.is_true(fixed.contains("consume(acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "numbered-rebinding: renames every forward occurrence",
+      fn() {
+        src := "fn f() Int {\n  state: Int = initial()\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
+        fs := nr_findings(src)
+        try assert.equal(fs.len(), 1)
+
+        // Binding rewrite plus one edit per forward read.
+        try assert.equal(fs[0].edits.len(), 3)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("state_next"))
+        try assert.is_true(fixed.contains("combine(state, state)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "numbered-rebinding: pure-alias deletion preserves an intervening comment",
+      fn() {
+        src := "fn f() Int {\n  acc := 0\n  acc2 := acc\n  // keep me\n  consume(acc2)\n}\n"
+        fs := nr_findings(src)
+        try assert.equal(fs.len(), 1)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_true(fixed.contains("// keep me"))
+        try assert.is_false(fixed.contains("acc2"))
         .Ok({})
       },
     )

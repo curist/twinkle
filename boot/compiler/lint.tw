@@ -1757,32 +1757,99 @@ fn is_numbered_sibling(tmp: String, base: String) Bool {
 
 /// Gate 3: the nearest preceding statement that binds `name` must be a fresh,
 /// private declaration in this exact block. Parameters, outer locals, and a
-/// preceding rebind do not qualify.
-fn has_same_block_declaration(block: Block, before: Int, name: String) Bool {
+/// preceding rebind do not qualify. Returns the declaration so gate 7 can read
+/// its annotation.
+fn same_block_declaration(block: Block, before: Int, name: String) LetStmt? {
   i := before
 
   for i >= 0 {
     case block.stmts[i] {
       .Let(ls) => if ls.name == name {
-        return !ls.is_rebind and !ls.is_pub
+        return if !ls.is_rebind and !ls.is_pub {
+          .Some(ls)
+        } else {
+          .None
+        }
       },
       _ => {},
     }
     i = .dec()
   }
 
-  false
+  .None
 }
 
-fn numbered_rebinding_finding(span: Span, tmp: String, base: String) LintFinding {
-  report_finding(
+fn has_same_block_declaration(block: Block, before: Int, name: String) Bool {
+  case same_block_declaration(block, before, name) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+/// Gate 7: two annotations are interchangeable only when their source slices are
+/// byte-identical. A deliberately syntactic proof — the original program already
+/// checked `rhs` at exactly this spelling, so the rebind needs no fresh check.
+fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool {
+  source.slice(a.span.start, a.span.end) == source.slice(b.span.start, b.span.end)
+}
+
+fn numbered_rebinding_finding(span: Span, tmp: String, base: String, edits: Vector<FixEdit>) LintFinding {
+  .{
     span,
-    "`${tmp}` only advances `${base}`; rebind `${base}` and keep threading that name",
-    "numbered-rebinding",
-  )
+    message: "`${tmp}` only advances `${base}`; rebind `${base}` and keep threading that name",
+    rule: "numbered-rebinding",
+    edits,
+  }
 }
 
-fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
+/// Gates 7–8. Build the collapse edits for a validated Shape-1 candidate, or `[]`
+/// (report-only) when a safe source rewrite can't be proven. A pure alias
+/// (`tmp := base`) deletes the whole statement and needs no type gate; a computed
+/// RHS rebinds `base` in place, which requires byte-identical annotations and a
+/// comment-free binding prefix.
+fn numbered_rebinding_edits(
+  ls: LetStmt,
+  base: String,
+  base_decl: LetStmt,
+  forward: Vector<Span>,
+  source: String,
+) Vector<FixEdit> {
+  is_alias := case ls.value.kind {
+    .Ident(n) => n == base,
+    _ => false,
+  }
+
+  binding_edit: FixEdit = if is_alias {
+    .{ start: ls.span.start, end: ls.span.end, replacement: "" }
+  } else {
+    ann_ok := case ls.ty {
+      .Some(tmp_ty) => case base_decl.ty {
+        .Some(base_ty) => same_source_type(tmp_ty, base_ty, source),
+        .None => false,
+      },
+      .None => false,
+    }
+    if !ann_ok {
+      return []
+    }
+
+    prefix := source.slice(ls.name_span.start, ls.value.span.start)
+    if prefix.contains("//") {
+      return []
+    }
+
+    .{ start: ls.name_span.start, end: ls.value.span.start, replacement: "${base} = " }
+  }
+
+  edits: Vector<FixEdit> = [binding_edit]
+  for sp in forward {
+    edits = .append(FixEdit.{ start: sp.start, end: sp.end, replacement: base })
+  }
+
+  edits
+}
+
+fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt, source: String) LintFinding? {
   if ls.is_rebind or ls.is_pub {
     return .None
   }
@@ -1805,11 +1872,22 @@ fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
     return .None
   }
 
-  if !forward_ident_spans(block, i, ls.name).has_complete_ident() {
-    return .None
+  forward := case forward_ident_spans(block, i, ls.name) {
+    .Complete(found) => if found.len() > 0 {
+      found
+    } else {
+      return .None
+    },
+    .Uncertain => return .None,
   }
 
-  .Some(numbered_rebinding_finding(ls.span, ls.name, base))
+  base_decl := case same_block_declaration(block, i - 1, base) {
+    .Some(decl) => decl,
+    .None => return .None,
+  }
+
+  edits := numbered_rebinding_edits(ls, base, base_decl, forward, source)
+  .Some(numbered_rebinding_finding(ls.span, ls.name, base, edits))
 }
 
 fn shape_two_loop_is_valid(fs: ForStmt, tmp: String, base: String) Bool {
@@ -1883,7 +1961,7 @@ fn shape_two_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
 
   case block.stmts[i + 1] {
     .For(fs) => if shape_two_loop_is_valid(fs, "cur", base) {
-      .Some(numbered_rebinding_finding(ls.span, "cur", base))
+      .Some(numbered_rebinding_finding(ls.span, "cur", base, []))
     } else {
       .None
     },
@@ -1897,7 +1975,7 @@ fn lint_numbered_rebinding(block: Block, source: String) Vector<LintFinding> {
   for stmt, i in block.stmts {
     case stmt {
       .Let(ls) => {
-        case shape_one_numbered_finding(block, i, ls) {
+        case shape_one_numbered_finding(block, i, ls, source) {
           .Some(finding) => out = .append(finding),
           .None => {},
         }

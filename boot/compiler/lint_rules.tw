@@ -40,8 +40,10 @@ pub fn describe(rule: String) RuleInfo? {
           \\    acc = step(item, acc)
           \\    consume(acc)
           \\
-          \\The report-only detector fails closed when it cannot enumerate every
-          \\read or when the old value may still be live.
+          \\The detector fails closed when it cannot enumerate every read or when
+          \\the old value may still be live. `--fix-numbered-rebinding` rewrites a
+          \\candidate only when the annotations prove the rebind's type and no
+          \\comment sits in the edited prefix; otherwise it stays report-only.
         ,
       },
     ),

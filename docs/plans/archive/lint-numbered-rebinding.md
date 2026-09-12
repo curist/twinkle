@@ -3,10 +3,24 @@
 > **For agentic workers:** implement the "Implementation plan (brief)" section
 > task-by-task; each step is independently shippable and self-host-verified.
 
-**Status: DRAFT / not started (review-hardened 2026-09-12).** Turns Pattern B of
+**Status: IMPLEMENTED (2026-09-12).** Turns Pattern B of
 [lint-rebinding-fixers.md](lint-rebinding-fixers.md) into a concrete design.
 Adds a `twk lint` rule `numbered-rebinding` (report-only first) with a
 machine-applicable auto-fix under `--fix-numbered-rebinding`.
+
+- **Task 1 — detection (report-only):** landed `e39c88e6` (gates 1–6, Shape 2
+  detect-only, unit fixtures).
+- **Task 2 — Shape 1 auto-fix:** `same_source_type`, gate-7/8 edit builder
+  (`numbered_rebinding_edits`), `--fix-numbered-rebinding` flag wired across the
+  six touch points, fixer + command-selection fixtures.
+- **Task 3 — boot self-application:** dogfooded on `boot/`; the eight real hits
+  all stay **report-only** (none carry the byte-identical annotations gate 7
+  requires), so the fixer is a safe no-op on boot source and `make boot-test`
+  self-host stays a byte-identical fixed point. Dogfooding note: the open
+  underscore-suffix heuristic surfaces one mild false-ceremony match
+  (`arm_body`/`arm` in `codegen/emit/match.tw`); left as-is because it stays
+  report-only and tightening the suffix set risks dropping legitimate
+  `state_next`-style successors.
 
 ## Goal
 
