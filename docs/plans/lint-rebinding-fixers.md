@@ -142,6 +142,18 @@ tail-return of the temp).
 generalized from field/index paths to threaded accumulators; may share the
 report-only detector.
 
+**Spec.** Scoped in [lint-numbered-rebinding.md](lint-numbered-rebinding.md)
+(rule `numbered-rebinding`, report-only detector first then Shape-1 auto-fix
+under `--fix-numbered-rebinding`; Shape-2 loop seed detect-only in v1). The
+"needs a full liveness pass" framing here is overstated: detection reuses the
+existing fail-closed `source_used_after` helper, and the language's
+rebind-type rule (`checker.tw:5247`) turns two of three failure modes (partial
+rename, type-changing rebind) into loud compile errors. The one silent mode is
+owned by a **pair** of gates — the rewritten name must be declared in the
+candidate's own block (so every observing read is local) *and* dead after the
+binding; a subagent review caught that the block-local liveness check alone is
+unsound for candidates nested inside outer-scope names.
+
 ---
 
 ## Pattern C — Full-record reconstruction → single-field rebind (extend `inline-record-copy`)
