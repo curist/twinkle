@@ -1696,8 +1696,17 @@ fn append_unique_name(names: Vector<String>, name: String) Vector<String> {
   names.append(name)
 }
 
-/// Lexical bases admitted by the numbered/suffixed sibling heuristic. A name
-/// can yield more than one base; semantic gates must reduce this to one.
+/// The closed set of successor markers. A ceremony sibling carries one of these
+/// as a leading `marker_` prefix or a trailing `_marker` suffix. Kept as a single
+/// source so the affix spellings are never repeated.
+sibling_markers := ["next", "new", "cur"]
+
+/// Lexical bases admitted by the numbered/marker sibling heuristic. A name
+/// can yield more than one base; semantic gates must reduce this to one. The
+/// markers are a closed set (see `sibling_markers`), matched as either a leading
+/// `marker_` prefix or a trailing `_marker` suffix, plus trailing digits — an
+/// open `_anything` suffix is deliberately excluded so sub-part names like
+/// `arm_body` are not treated as advances of `arm`.
 fn sibling_base_candidates(tmp: String) Vector<String> {
   out: Vector<String> = []
 
@@ -1709,15 +1718,13 @@ fn sibling_base_candidates(tmp: String) Vector<String> {
     out = append_unique_name(out, tmp.slice(0, digit_start))
   }
 
-  i := 1
-  for i + 1 < tmp.len() {
-    if tmp[i] == 0x5F {
-      out = append_unique_name(out, tmp.slice(0, i))
+  for word in sibling_markers {
+    suffix := "_${word}"
+    if tmp.ends_with(suffix) and tmp.len() > suffix.len() {
+      out = append_unique_name(out, tmp.slice(0, tmp.len() - suffix.len()))
     }
-    i = .inc()
-  }
 
-  for prefix in ["new_", "next_", "cur_"] {
+    prefix := "${word}_"
     if tmp.starts_with(prefix) and tmp.len() > prefix.len() {
       out = append_unique_name(out, tmp.slice(prefix.len(), tmp.len()))
     }
@@ -1726,19 +1733,22 @@ fn sibling_base_candidates(tmp: String) Vector<String> {
   out
 }
 
-/// True only for the three v1 ceremony spellings: trailing digits, a non-empty
-/// underscore suffix, or one of the closed leading markers.
+/// True only for the closed ceremony spellings: trailing digits (`acc`→`acc2`),
+/// a trailing closed marker (`state`→`state_next`), or a leading closed marker
+/// (`slots`→`new_slots`). An arbitrary `_suffix` is not a sibling.
 fn is_numbered_sibling(tmp: String, base: String) Bool {
   if base == "" or tmp == base {
     return false
   }
 
-  if tmp.starts_with(base) {
-    rest := tmp.slice(base.len(), tmp.len())
-    if rest.starts_with("_") and rest.len() > 1 {
+  for word in sibling_markers {
+    if tmp == "${word}_${base}" or tmp == "${base}_${word}" {
       return true
     }
+  }
 
+  if tmp.starts_with(base) {
+    rest := tmp.slice(base.len(), tmp.len())
     if rest.len() > 0 {
       all_digits := true
       for b in rest {
@@ -1752,7 +1762,7 @@ fn is_numbered_sibling(tmp: String, base: String) Bool {
     }
   }
 
-  tmp == "new_${base}" or tmp == "next_${base}" or tmp == "cur_${base}"
+  false
 }
 
 /// Gate 3: the nearest preceding statement that binds `name` must be a fresh,
@@ -1855,7 +1865,7 @@ fn redundant_rebinding_edits(
   edits
 }
 
-/// The unique numbered/suffixed sibling base for a *computed* candidate, or
+/// The unique numbered/marker sibling base for a *computed* candidate, or
 /// `.None` when zero or several survive gates 2–4. Only the computed shape needs
 /// this heuristic: a fresh name that merely renames the value it advances
 /// (`acc`→`acc2`) is ceremony, whereas a meaningful rename (`items`→`sorted`) is

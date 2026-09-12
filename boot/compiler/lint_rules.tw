@@ -37,7 +37,7 @@ pub fn describe(rule: String) RuleInfo? {
           \\    b := a
           \\    consume(b)
           \\
-          \\    // Avoid — numbered/suffixed advance
+          \\    // Avoid — numbered/marker advance
           \\    acc2 := step(item, acc)
           \\    consume(acc2)
           \\
@@ -47,9 +47,11 @@ pub fn describe(rule: String) RuleInfo? {
           \\    consume(acc)
           \\
           \\A pure alias fires regardless of naming; a computed advance fires only
-          \\when the fresh name is a numbered/suffixed sibling of the value it
-          \\advances, so meaningful renames like `sorted := sort(items)` are left
-          \\alone. The detector fails closed when it cannot enumerate every read or
+          \\when the fresh name is a numbered sibling (trailing digits) or carries a
+          \\closed successor marker (leading `new_`/`next_`/`cur_` or trailing
+          \\`_new`/`_next`/`_cur`) of the value it advances, so meaningful renames
+          \\like `sorted := sort(items)` — and sub-part names like `arm_body` — are
+          \\left alone. The detector fails closed when it cannot enumerate every read or
           \\when the old value may still be live. `--fix-redundant-rebinding`
           \\rewrites a candidate only when a safe source edit is provable (a pure
           \\alias deletes the seed; a computed advance needs byte-identical
