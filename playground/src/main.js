@@ -16,16 +16,45 @@ console.log(
 document.getElementById('compiler-version').textContent = `v${__TWINKLE_COMPILER_VERSION__}`
 
 // ---------------------------------------------------------------------------
-// Examples — fetched from ./examples/<name>.tw
+// Examples — bundled at build time from ./examples/<name>.tw
 // ---------------------------------------------------------------------------
-const exampleCache = new Map()
+// import.meta.glob inlines every example's source into the bundle (eager +
+// ?raw), so switching examples needs no network fetch. The `<select>` options
+// are generated from EXAMPLES below rather than hand-written in index.html, so
+// the list stays in one place.
+const exampleSources = import.meta.glob('./examples/*.tw', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
 
-async function loadExample(name) {
-  if (exampleCache.has(name)) return exampleCache.get(name)
-  const resp = await fetch(`./examples/${name}.tw`)
-  const text = await resp.text()
-  exampleCache.set(name, text)
-  return text
+// Key each source by bare name (fizzbuzz, http_fetch, …).
+const exampleCode = new Map(
+  Object.entries(exampleSources).map(([path, src]) => [
+    path.slice(path.lastIndexOf('/') + 1, -'.tw'.length),
+    src,
+  ]),
+)
+
+// Curated order + display labels for the dropdown. Only names listed here are
+// shown; any listed name must have a matching src/examples/<name>.tw file.
+const EXAMPLES = [
+  ['fizzbuzz', 'FizzBuzz'],
+  ['primes', 'Primes'],
+  ['closures', 'Closures'],
+  ['word_count', 'Word Count'],
+  ['todo', 'Todo List'],
+  ['bst', 'Binary Search Tree'],
+  ['caesar', 'Caesar Cipher'],
+  ['extern_ffi', 'Extern FFI'],
+  ['twinkle', 'Twinkle'],
+  ['benchmark', 'Benchmark'],
+  ['async_timer', 'Async Timer'],
+  ['http_fetch', 'HTTP Fetch'],
+]
+
+function loadExample(name) {
+  return exampleCode.get(name) ?? ''
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +182,17 @@ function updateExampleUrl(name) {
   history.replaceState(null, '', url)
 }
 
+// Populate the dropdown from EXAMPLES (single source of truth for the list).
+for (const [name, label] of EXAMPLES) {
+  const option = document.createElement('option')
+  option.value = name
+  option.textContent = label
+  examples.appendChild(option)
+}
+
 const initialExample = selectedExampleFromUrl()
 examples.value = initialExample
-loadExample(initialExample).then(code => jar.updateCode(code))
+jar.updateCode(loadExample(initialExample))
 
 // Sync line number scroll with editor
 editorEl.addEventListener('scroll', () => { lineNumbers.scrollTop = editorEl.scrollTop })
@@ -178,7 +215,7 @@ examples.addEventListener('change', async () => {
   if (running) stop()
   output.innerHTML = ''
   updateExampleUrl(examples.value)
-  const code = await loadExample(examples.value)
+  const code = loadExample(examples.value)
   if (code) jar.updateCode(code)
 })
 
