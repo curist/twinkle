@@ -549,6 +549,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-rebinding: an arbitrary `_suffix` name is not a computed sibling",
+      fn() {
+        // `arm_body` is a sub-part of `arm`, not an advance of it — only the
+        // closed markers (_next/_new/_cur) count as trailing successor suffixes.
+        src := "fn f() Int {\n  arm := pick()\n  arm_body := lower(arm)\n  consume(arm_body)\n}\n"
+        fs := rr_findings(src)
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-rebinding: rewrites a computed candidate with matching annotations",
       fn() {
         src := "fn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
@@ -761,8 +772,11 @@ pub fn suite() runner.Suite {
     .test(
       "redundant-rebinding: declines ambiguous sibling bases",
       fn() {
+        // `new_state_next` is a sibling of both `state_next` (leading `new_`) and
+        // `new_state` (trailing `_next`); with both declared and read, the base is
+        // ambiguous and the finding is declined.
         fs := rr_findings(
-          "fn f() Int {\n  new := 1\n  slots := 2\n  new_slots := combine(new, slots)\n  consume(new_slots)\n}\n",
+          "fn f() Int {\n  new_state := 1\n  state_next := 2\n  new_state_next := combine(new_state, state_next)\n  consume(new_state_next)\n}\n",
         )
         try assert.equal(fs.len(), 0)
         .Ok({})

@@ -1594,7 +1594,12 @@ impl<'a> EmitCtx<'a> {
                 }
             }
             AnfOp::AVariant { .. } => Some(ref_named(true, T_VARIANT)),
-            AnfOp::AArrayLit(_) => Some(ref_named(true, T_ARRAY)),
+            // An array literal always lowers to a PVec value (see
+            // `emit_array_literal`), never a bare $Array leaf. Reporting $Array
+            // here mistypes a binding whose mono type is unknown (e.g. an
+            // optimizer-hoisted module-global init), so the always-PVec value is
+            // cast down to $Array and traps at runtime.
+            AnfOp::AArrayLit(_) => Some(ref_named(true, T_PVEC)),
             AnfOp::AInit { value } => self.infer_atom_valtype(value),
             AnfOp::AAssign { .. } | AnfOp::ADefer(_) => Some(ValType::I32),
             AnfOp::ALoop { body } => self.infer_loop_result_valtype(body),
