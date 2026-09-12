@@ -3,9 +3,11 @@ use @std.testing as runner
 
 use commands.lint as lintcmd
 use compiler.base_env
+use compiler.checker
 use compiler.lint
 use compiler.lint_rules
 use compiler.parser
+use compiler.resolver
 use lib.source.report.{FixEdit}
 
 fn findings(src: String) Vector<lint.LintFinding> {
@@ -82,6 +84,25 @@ fn pid_findings(src: String) Vector<lint.LintFinding> {
 
 fn rr_findings(src: String) Vector<lint.LintFinding> {
   collect f in findings(src) {
+    if f.rule == "redundant-rebinding" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
+// Like `rr_findings`, but runs resolve + check first so lint_module receives a
+// real (zonked) type_map. Snippets passed here MUST be type-complete — every
+// called helper defined — or the computed-advance gate fails closed on the
+// resulting ErrorType.
+fn rr_findings_typed(src: String) Vector<lint.LintFinding> {
+  parsed := parser.parse(src, 0)
+  resolved := base_env.builtin_env().resolve(parsed.value)
+  checked := checker.check(parsed.value, resolved.env, false)
+  all := lint.lint_module(parsed.value, checked.env, src)
+
+  collect f in all {
     if f.rule == "redundant-rebinding" {
       f
     } else {
@@ -568,6 +589,21 @@ pub fn suite() runner.Suite {
         try assert.equal(fs[0].edits.len(), 2)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
         try assert.is_false(fixed.contains("acc2"))
+        try assert.is_true(fixed.contains("acc = step(acc)"))
+        try assert.is_true(fixed.contains("consume(acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: inferred computed advance with matching types is fixable",
+      fn() {
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n"
+        fs := rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+
+        // Binding rewrite (`acc2 := ` -> `acc = `) plus one forward rename.
+        try assert.equal(fs[0].edits.len(), 2)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
         try assert.is_true(fixed.contains("acc = step(acc)"))
         try assert.is_true(fixed.contains("consume(acc)"))
         .Ok({})
