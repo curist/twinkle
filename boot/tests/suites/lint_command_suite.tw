@@ -268,6 +268,36 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "select_edits: redundant-rebinding selects the loop-seed delete-and-rethread edits",
+      fn() {
+        // Shape 2 emits a whole-statement delete (empty replacement) for the
+        // seed plus renames of the body target, its reads, and the tail. The
+        // delete edit must participate in selection alongside the renames.
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "rethread cur onto acc",
+            rule: "redundant-rebinding",
+            edits: [
+              FixEdit.{ start: 10, end: 20, replacement: "" },
+              FixEdit.{ start: 35, end: 38, replacement: "acc" },
+              FixEdit.{ start: 50, end: 53, replacement: "acc" },
+              FixEdit.{ start: 60, end: 63, replacement: "acc" },
+            ],
+          },
+        ]
+
+        flags := lint.no_fixes()
+        flags.redundant_rebinding = true
+        some := lint.select_edits_for_test(findings, flags)
+        selected := try some["a.tw"].ok_or("expected loop-seed edits")
+        try assert.equal(selected.len(), 4)
+        try assert.equal(selected[0].replacement, "")
+        .Ok({})
+      },
+    )
+    .test(
       "unique_analysis_diags dedupes shared dependency diagnostics",
       fn() {
         first := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
