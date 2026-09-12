@@ -2,9 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the `redundant-rebinding` computed-advance auto-fix (`acc2 := step(acc)` → `acc = step(acc)`) safe for type-inferred (`:=`) bindings by proving `typeof(acc2) == typeof(acc)` from the checker's inferred types instead of byte-identical source annotations.
+**Goal:** Make the `redundant-rebinding` computed-advance auto-fix (`acc2 := step(acc)` → `acc = step(acc)`) safe for type-inferred (`:=`) pairs using checker initializer evidence, while retaining the annotation proof for annotated pairs.
 
-**Architecture:** The checker already publishes `CheckResult.type_map: Dict<Int, MonoType>` (keyed by `Expr.id`, zonked at finalize). Thread it into `lint_module` alongside the `env` the linter already receives, and replace the syntactic `ann_ok` gate in `redundant_rebinding_edits` with a `mono_eq` comparison of the temp's and base's result types, failing closed on missing/error/meta types.
+**Architecture:** The checker already publishes `CheckResult.type_map: Dict<Int, MonoType>` (keyed by `Expr.id`, zonked at finalize). Thread it into `lint_module` alongside the `env` the linter already receives. Require equal initializer types with missing/error/meta guards for every computed advance. Inferred/inferred pairs need no further type proof; annotated/annotated pairs additionally require byte-identical annotation source via `same_source_type`; mixed pairs decline.
+
+**Correction recorded during implementation:** the original plan proposed replacing
+annotation comparison entirely. Checker call-mode can retain synthesized initializer
+types while locals bind to their annotations: equal `fn() Never` initializers can
+produce locals annotated `fn() Int` and `fn() String`. Initializer equality alone
+therefore does not prove annotated rebinding safety. The corrected steps below
+retain `same_source_type` and both mixed-pair guards. The final review also requires
+typed test fixtures to reject setup errors through `Result`.
 
 **Tech Stack:** Twinkle boot compiler (`boot/*.tw`). `target/twk test` compiles the suite from current source, so edits to `boot/compiler/*.tw` are exercised without rebundling. Heavy verification via `make stage2` / `make boot-test`.
 
@@ -27,7 +35,7 @@ Design spec: [lint-redundant-rebinding-type-gate.md](lint-redundant-rebinding-ty
 - `boot/compiler/mono_type.tw` — **new home** for the structural `mono_eq`/`mono_vec_eq` and `contains_meta` predicates (beside `ty_to_string`).
 - `boot/compiler/backend/verify_common.tw` — drops its local `mono_eq`/`mono_vec_eq` (moved to `mono_type`).
 - `boot/compiler/backend/verify_expr.tw`, `boot/compiler/backend/verify_slots.tw` — repoint their `mono_eq` import to `compiler.mono_type`.
-- `boot/compiler/lint.tw` — thread `type_map` through the redundant-rebinding walk; replace the `ann_ok` gate with the type comparison; delete now-dead `same_source_type`.
+- `boot/compiler/lint.tw` — thread `type_map` through the redundant-rebinding walk; add initializer comparison and retain `same_source_type` for annotated pairs; decline mixed pairs.
 - `boot/compiler/query/analyze.tw` — pass `checked.type_map` at the `lint_module` call site.
 - `boot/tests/suites/lint_pass_suite.tw` — add a checker-backed `rr_findings_typed` helper; migrate the computed-advance edit tests to type-complete snippets; add the unlock + soundness + fail-closed tests.
 
@@ -223,18 +231,18 @@ importing from backend/. Pure relocation; no behavior change."
 
 ---
 
-## Task 2: Thread `type_map`, replace the annotation gate, migrate the annotated tests
+## Task 2: Thread `type_map`, extend the annotation gate, migrate the annotated tests
 
 Changing `lint_module`'s signature immediately breaks the two existing *annotated* edit-asserting tests (they run parse-only and now have no `type_map`). To keep this task green, it also adds the checker-backed helper and migrates those two tests. Task 3 is then purely additive.
 
 **Files:**
-- Modify: `boot/compiler/lint.tw` (imports; `LintCtx`; `empty_lint_ctx`; `lint_module`; `lint_block`; `lint_redundant_rebinding`; `shape_one_redundant_finding`; `redundant_rebinding_edits`; delete `same_source_type`)
+- Modify: `boot/compiler/lint.tw` (imports; `LintCtx`; `empty_lint_ctx`; `lint_module`; `lint_block`; `lint_redundant_rebinding`; `shape_one_redundant_finding`; `redundant_rebinding_edits`; retain `same_source_type`)
 - Modify: `boot/compiler/query/analyze.tw:960` (pass `checked.type_map`)
 - Modify: `boot/tests/suites/lint_pass_suite.tw` (parse-only callers pass empty `type_map`; add `rr_findings_typed`; migrate the two annotated edit tests)
 
 **Interfaces:**
-- Consumes: `mono_eq`, `contains_meta`, `MonoType` from `compiler.mono_type` (Task 1); `checker.check(module, env, lint_mode) CheckResult`; `base_env.builtin_env().resolve(module)`.
-- Produces: `pub fn lint_module(module: Module, env: ResolvedEnv, type_map: Dict<Int, MonoType>, source: String) Vector<LintFinding>` (new signature every caller matches); `rr_findings_typed(src) Vector<lint.LintFinding>` test helper (consumed by Task 3).
+- Consumes: `mono_eq`, `contains_meta`, `MonoType` from `compiler.mono_type` (Task 1); `checker.check(module, env, lint_mode) CheckResult`; `resolver.resolve(base_env.builtin_env(), module)`.
+- Produces: `pub fn lint_module(module: Module, env: ResolvedEnv, type_map: Dict<Int, MonoType>, source: String) Vector<LintFinding>` (new signature every caller matches); `rr_findings_typed(src) Result<Vector<lint.LintFinding>, String>` test helper (consumed with `try` by Task 3).
 
 - [ ] **Step 0: Establish RED for the inferred-type behavior**
 
@@ -363,7 +371,7 @@ and near the end of that function:
   edits := redundant_rebinding_edits(ls, base, base_decl, forward, source, type_map)
 ```
 
-- [ ] **Step 6: Replace the `ann_ok` gate in `redundant_rebinding_edits`**
+- [ ] **Step 6: Extend the gate in `redundant_rebinding_edits`**
 
 Replace the function (around lines 1826-1866) with:
 
@@ -384,11 +392,8 @@ fn redundant_rebinding_edits(
   binding_edit: FixEdit = if is_alias {
     .{ start: ls.span.start, end: ls.span.end, replacement: "" }
   } else {
-    // Type gate: rebinding `base` in place is only safe when the advance's
-    // result type equals `base`'s type. Compare the checker's zonked inferred
-    // types (keyed by Expr.id) instead of requiring matching source
-    // annotations; fail closed when a type is missing, an error, or still
-    // holds a meta-var (see docs/plans/lint-redundant-rebinding-type-gate.md).
+    // Equal resolved initializer evidence is mandatory for every computed
+    // advance. Annotated bindings additionally need the source proof below.
     temp_ty := case type_map[ls.value.id] {
       .Some(t) => t,
       .None => return [],
@@ -398,6 +403,22 @@ fn redundant_rebinding_edits(
       .None => return [],
     }
     if !comparable_mono(temp_ty) or !comparable_mono(base_ty) or !mono_eq(temp_ty, base_ty) {
+      return []
+    }
+
+    // Synthesized fn() Never initializers can bind to differently annotated
+    // fn() Int / fn() String locals, so initializer equality alone is unsafe.
+    annotation_ok := case ls.ty {
+      .Some(temp_annotation) => case base_decl.ty {
+        .Some(base_annotation) => same_source_type(temp_annotation, base_annotation, source),
+        .None => false,
+      },
+      .None => case base_decl.ty {
+        .Some(_) => false,
+        .None => true,
+      },
+    }
+    if !annotation_ok {
       return []
     }
 
@@ -428,9 +449,11 @@ fn comparable_mono(ty: MonoType) Bool {
 }
 ```
 
-- [ ] **Step 7: Delete the now-dead `same_source_type`**
+- [ ] **Step 7: Retain `same_source_type` and its `TypeExpr` import**
 
-Remove `fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool { … }` (around line 1802) — its only caller was the `ann_ok` branch just removed. If `TypeExpr` is now unused in the `use compiler.ast.{…}` import list, remove it from that list too.
+Keep `fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool` and
+the `TypeExpr` import: the annotated/annotated branch still needs the prior
+byte-identical source proof. This corrects the original deletion instruction.
 
 - [ ] **Step 8: Update the production call site `boot/compiler/query/analyze.tw:960`**
 
@@ -468,22 +491,44 @@ Add beside `rr_findings` (around line 83):
 
 ```tw
 // Like `rr_findings`, but runs resolve + check first so lint_module receives a
-// real (zonked) type_map. Snippets passed here MUST be type-complete — every
-// called helper defined — or the computed-advance gate fails closed on the
-// resulting ErrorType.
-fn rr_findings_typed(src: String) Vector<lint.LintFinding> {
+// real (zonked) type_map. Reject setup errors instead of silently treating
+// invalid fixtures as report-only. Keep injected ErrorType/MetaVar tests separate.
+fn rr_findings_typed(src: String) Result<Vector<lint.LintFinding>, String> {
   parsed := parser.parse(src, 0)
-  resolved := base_env.builtin_env().resolve(parsed.value)
-  checked := checker.check(parsed.value, resolved.env, false)
-  all := lint.lint_module(parsed.value, checked.env, checked.type_map, src)
-
-  collect f in all {
-    if f.rule == "redundant-rebinding" {
-      f
-    } else {
-      continue
+  for d in parsed.diagnostics {
+    case d {
+      .Error(_) => return .Err("parse error: ${d.message()}"),
+      .Warning(_) => {},
     }
   }
+
+  resolved := resolver.resolve(base_env.builtin_env(), parsed.value)
+  for d in resolved.diagnostics {
+    case d {
+      .Error(_) => return .Err("resolve error: ${d.message()}"),
+      .Warning(_) => {},
+    }
+  }
+
+  checked := checker.check(parsed.value, resolved.env, false)
+  for d in checked.diagnostics {
+    case d {
+      .Error(_) => return .Err("check error: ${d.message()}"),
+      .Warning(_) => {},
+    }
+  }
+
+  all := lint.lint_module(parsed.value, checked.env, checked.type_map, src)
+
+  .Ok(
+    collect f in all {
+      if f.rule == "redundant-rebinding" {
+        f
+      } else {
+        continue
+      }
+    },
+  )
 }
 ```
 
@@ -496,7 +541,7 @@ Replace that test's body (around line 563) with a type-complete snippet run thro
       "redundant-rebinding: rewrites a computed candidate with matching annotations",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
-        fs := rr_findings_typed(src)
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 2)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
@@ -517,7 +562,7 @@ Replace that test's body (around line 577):
       "redundant-rebinding: renames every forward occurrence",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn combine(a: Int, b: Int) Int {\n  a\n}\nfn f() Int {\n  state: Int = 0\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
-        fs := rr_findings_typed(src)
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
 
         // Binding rewrite plus one edit per forward read.
@@ -545,10 +590,10 @@ Expected: all pass. The migrated annotated tests now get a real `type_map`; pars
 git add boot/compiler/lint.tw boot/compiler/query/analyze.tw boot/tests/suites/lint_pass_suite.tw
 git commit -m "feat(lint): gate redundant-rebinding fix on inferred types
 
-Thread the checker's zonked CheckResult.type_map into lint_module and replace
-the byte-identical-annotation gate in redundant_rebinding_edits with a mono_eq
-comparison of the temp's and base's inferred result types, failing closed on
-missing/error/meta types. Parse-only callers pass an empty type_map. Adds an
+Thread the checker's zonked CheckResult.type_map into lint_module and require
+a mono_eq comparison of initializer types with missing/error/meta guards.
+Retain the annotation-source proof for annotated pairs and decline mixed
+pairs. Parse-only callers pass an empty type_map. Adds an
 rr_findings_typed test helper and migrates the annotated edit tests onto it."
 ```
 
@@ -574,7 +619,7 @@ change. Keep it unchanged as the primary regression test:
       "redundant-rebinding: inferred computed advance with matching types is fixable",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n"
-        fs := rr_findings_typed(src)
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
 
         // Binding rewrite (`acc2 := ` -> `acc = `) plus one forward rename.
@@ -597,7 +642,7 @@ change. Keep it unchanged as the primary regression test:
         // but `to_s` returns String while `acc` is Int, so rebinding `acc` would
         // be a type error. The fix must decline (report-only).
         src := "fn to_s(x: Int) String {\n  \"s\"\n}\nfn use_s(x: String) Int {\n  0\n}\nfn f() Int {\n  acc := 0\n  acc2 := to_s(acc)\n  use_s(acc2)\n}\n"
-        fs := rr_findings_typed(src)
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -645,13 +690,34 @@ Its point is that the comment guard declines even when types match — so the sn
       "redundant-rebinding: a comment in the binding prefix stays report-only",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  cache: Int = 0\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n"
-        fs := rr_findings_typed(src)
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
       },
     )
 ```
+
+- [ ] **Step 4a: Reject invalid typed fixtures (RED→GREEN)**
+
+Change `rr_findings_typed` to return `Result` and update callers with `try`,
+initially wrapping its existing success path in `.Ok`. Add regressions that
+expect errors for malformed syntax, an unknown parameter type, and undefined
+called helpers. Run `target/twk test --filter "typed fixtures reject"` and
+confirm silent acceptance fails the assertions before adding the diagnostic
+checks shown in Task 2 Step 10. Then rerun the focused suite to confirm GREEN.
+This hardening must not affect the injected-type helper used in Step 3a.
+
+- [ ] **Step 4b: Characterize both mixed annotation branches**
+
+Use valid `Int` fixtures with `step(x: Int) Int { x }`, an initial `acc` of `0`,
+and an `acc2` initialized with `step(acc)` followed by a read of `acc2`.
+Cover `acc := 0` / `acc2: Int = step(acc)` and
+`acc: Int = 0` / `acc2 := step(acc)` separately. Both must produce the
+structural finding with empty edits despite equal initializer types.
+The production behavior already exists: record these as characterization
+tests, and temporarily relax each mixed branch to prove its test fails,
+restoring each mutation before final verification.
 
 - [ ] **Step 5: Run the redundant-rebinding suite (GREEN)**
 
@@ -690,5 +756,5 @@ Run sequentially (never concurrently).
 
 - **Spec coverage:** mechanism (type_map reuse) → Task 2; threading touch points → Task 2 Steps 1-9; type gate + fail-closed guards → Task 2 Step 6; `mono_eq` relocation → Task 1; tests (unlock, soundness, annotated regression, fail-closed) → Task 2 Steps 11-12 + Task 3 Steps 1-4; verification → Final Verification. All spec sections covered.
 - **Placeholder scan:** none — every step has exact code or an exact command.
-- **Type consistency:** `lint_module(module, env, type_map, source)` used identically at all three call sites (analyze.tw:960, findings:13, public-temporary:799); `redundant_rebinding_edits(ls, base, base_decl, forward, source, type_map)` matches its single caller in `shape_one_redundant_finding`; `comparable_mono`/`mono_eq`/`contains_meta` signatures consistent; `rr_findings_typed` returns `Vector<lint.LintFinding>` like `rr_findings`.
+- **Type consistency:** `lint_module(module, env, type_map, source)` used identically at all three call sites (analyze.tw:960, findings:13, public-temporary:799); `redundant_rebinding_edits(ls, base, base_decl, forward, source, type_map)` matches its single caller in `shape_one_redundant_finding`; `comparable_mono`/`mono_eq`/`contains_meta` signatures consistent; `rr_findings_typed` returns `Result<Vector<lint.LintFinding>, String>` and callers propagate setup errors with `try`.
 - **Green at each task:** Task 1 ends on a clean build + checker suite; Task 2 ends on a green redundant-rebinding suite (annotated tests migrated in-task); Task 3 is purely additive and ends green.
