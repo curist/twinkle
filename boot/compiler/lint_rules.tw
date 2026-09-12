@@ -24,6 +24,27 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "numbered-rebinding" => .Some(
+      .{
+        brief: "a numbered or suffixed binding only advances an existing value; rebind that value",
+        detailed:
+          \\A fresh numbered or suffixed name that computes the next value of an
+          \\accumulator and only threads that result forward is unnecessary ceremony.
+          \\Twinkle assignment is rebinding, so keep advancing the original name:
+          \\
+          \\    // Avoid
+          \\    acc2 := step(item, acc)
+          \\    consume(acc2)
+          \\
+          \\    // Prefer
+          \\    acc = step(item, acc)
+          \\    consume(acc)
+          \\
+          \\The report-only detector fails closed when it cannot enumerate every
+          \\read or when the old value may still be live.
+        ,
+      },
+    ),
     "record-copy-helper" => .Some(
       .{
         brief: "rebuilds a record by copying fields; rebind the changed field directly",

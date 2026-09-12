@@ -420,6 +420,7 @@ fn is_error_call(expr: Expr) Bool {
 // this block's annotated bindings in statement order as we descend.
 fn lint_block(block: Block, ctx: LintCtx) Vector<LintFinding> {
   out: Vector<LintFinding> = lint_direct_rebinding(block)
+  out = .concat(lint_numbered_rebinding(block, ctx.source))
   cur := ctx
   diverged := false
   reported := false
@@ -1502,6 +1503,411 @@ fn lint_direct_rebinding(block: Block) Vector<LintFinding> {
       _ => {},
     }
     i = .inc()
+  }
+
+  out
+}
+
+// ── numbered-rebinding ───────────────────────────────────────────────
+/// Identifier reads that can be renamed exactly, or a conservative refusal
+/// when an expression role cannot be enumerated without risking a partial
+/// rename.
+type IdentSpans = { Complete(Vector<Span>), Uncertain }
+
+fn merge_ident_spans(a: IdentSpans, b: IdentSpans) IdentSpans {
+  case a {
+    .Uncertain => .Uncertain,
+    .Complete(left) => case b {
+      .Uncertain => .Uncertain,
+      .Complete(right) => .Complete(left.concat(right)),
+    },
+  }
+}
+
+fn exprs_ident_spans(exprs: Vector<Expr>, name: String) IdentSpans {
+  out: IdentSpans = .Complete([])
+
+  for e in exprs {
+    out = .merge_ident_spans(expr_ident_spans(e, name))
+
+    case out {
+      .Uncertain => return .Uncertain,
+      .Complete(_) => {},
+    }
+  }
+
+  out
+}
+
+fn record_ident_spans(entries: Vector<RecordEntry>, name: String) IdentSpans {
+  out: IdentSpans = .Complete([])
+
+  for en in entries {
+    next: IdentSpans = case en.value {
+      .Some(value) => expr_ident_spans(value, name),
+      // A matching shorthand is a read but has no identifier-expression span;
+      // rewriting it would also change the field name.
+      .None => if en.name == name {
+        .Uncertain
+      } else {
+        .Complete([])
+      },
+    }
+    out = .merge_ident_spans(next)
+
+    case out {
+      .Uncertain => return .Uncertain,
+      .Complete(_) => {},
+    }
+  }
+
+  out
+}
+
+/// Collect every source span for reads of `name` in expression roles understood
+/// by this v1 rule. Assignments and compound forms with nested scopes fail
+/// closed so a later fixer can never rename only part of a binding's uses.
+fn expr_ident_spans(e: Expr, name: String) IdentSpans {
+  case e.kind {
+    .Ident(n) => if n == name {
+      .Complete([e.span])
+    } else {
+      .Complete([])
+    },
+    .IntLit(_) => .Complete([]),
+    .FloatLit(_) => .Complete([]),
+    .StringLit(_) => .Complete([]),
+    .BoolLit(_) => .Complete([]),
+    .ErrorExpr => .Complete([]),
+    .Unary(_, inner) => expr_ident_spans(inner, name),
+    .Binary(op, left, right) => case op {
+      .Assign => .Uncertain,
+      _ => expr_ident_spans(left, name).merge_ident_spans(expr_ident_spans(right, name)),
+    },
+    .Call(callee, args) => expr_ident_spans(callee, name).merge_ident_spans(
+      exprs_ident_spans(args, name),
+    ),
+    .Field(base, _) => expr_ident_spans(base, name),
+    .Index(base, index) => expr_ident_spans(base, name).merge_ident_spans(
+      expr_ident_spans(index, name),
+    ),
+    .Array(elems) => exprs_ident_spans(elems, name),
+    .Variant(_, args) => exprs_ident_spans(args, name),
+    .Record(entries) => record_ident_spans(entries, name),
+    .NamedRecord(_, entries) => record_ident_spans(entries, name),
+    .StringInterp(parts) => {
+      out: IdentSpans = .Complete([])
+
+      for part in parts {
+        case part {
+          .Interpolation(inner) => out = .merge_ident_spans(expr_ident_spans(inner, name)),
+          .Literal(_) => {},
+        }
+
+        case out {
+          .Uncertain => return .Uncertain,
+          .Complete(_) => {},
+        }
+      }
+
+      out
+    },
+    // These forms carry nested blocks or scopes. The collector deliberately
+    // does not cross them in v1.
+    _ => .Uncertain,
+  }
+}
+
+fn stmt_ident_spans(stmt: Stmt, name: String) IdentSpans {
+  case stmt {
+    // A later declaration or rebind owns the same spelling in a new role.
+    .Let(ls) => if ls.name == name {
+      .Uncertain
+    } else {
+      expr_ident_spans(ls.value, name)
+    },
+    // Nested blocks and deferred evaluation stay outside the straight-line
+    // collector. Only a mention matters; unrelated forms contribute no spans.
+    .For(_) => if stmt_mentions_name(stmt, name) {
+      .Uncertain
+    } else {
+      .Complete([])
+    },
+    .Defer(ds) => if expr_uses_name(ds.expr, name) {
+      .Uncertain
+    } else {
+      .Complete([])
+    },
+    .Return(rs) => case rs.value {
+      .Some(value) => expr_ident_spans(value, name),
+      .None => .Complete([]),
+    },
+    .Break(bs) => case bs.value {
+      .Some(value) => expr_ident_spans(value, name),
+      .None => .Complete([]),
+    },
+    .Continue(_) => .Complete([]),
+    .Expr(es) => expr_ident_spans(es.expr, name),
+    .ErrorStmt(_) => .Complete([]),
+  }
+}
+
+fn forward_ident_spans(block: Block, start: Int, name: String) IdentSpans {
+  out: IdentSpans = .Complete([])
+  i := start + 1
+
+  for i < block.stmts.len() {
+    out = .merge_ident_spans(stmt_ident_spans(block.stmts[i], name))
+
+    case out {
+      .Uncertain => return .Uncertain,
+      .Complete(_) => {},
+    }
+    i = .inc()
+  }
+
+  case block.tail {
+    .Some(tail) => out.merge_ident_spans(expr_ident_spans(tail, name)),
+    .None => out,
+  }
+}
+
+fn has_complete_ident(spans: IdentSpans) Bool {
+  case spans {
+    .Complete(found) => found.len() > 0,
+    .Uncertain => false,
+  }
+}
+
+fn has_no_complete_ident(spans: IdentSpans) Bool {
+  case spans {
+    .Complete(found) => found.len() == 0,
+    .Uncertain => false,
+  }
+}
+
+fn append_unique_name(names: Vector<String>, name: String) Vector<String> {
+  for existing in names {
+    if existing == name {
+      return names
+    }
+  }
+
+  names.append(name)
+}
+
+/// Lexical bases admitted by the numbered/suffixed sibling heuristic. A name
+/// can yield more than one base; semantic gates must reduce this to one.
+fn sibling_base_candidates(tmp: String) Vector<String> {
+  out: Vector<String> = []
+
+  digit_start := tmp.len()
+  for digit_start > 0 and tmp[digit_start - 1].is_digit() {
+    digit_start = .dec()
+  }
+  if digit_start > 0 and digit_start < tmp.len() {
+    out = append_unique_name(out, tmp.slice(0, digit_start))
+  }
+
+  i := 1
+  for i + 1 < tmp.len() {
+    if tmp[i] == 0x5F {
+      out = append_unique_name(out, tmp.slice(0, i))
+    }
+    i = .inc()
+  }
+
+  for prefix in ["new_", "next_", "cur_"] {
+    if tmp.starts_with(prefix) and tmp.len() > prefix.len() {
+      out = append_unique_name(out, tmp.slice(prefix.len(), tmp.len()))
+    }
+  }
+
+  out
+}
+
+/// True only for the three v1 ceremony spellings: trailing digits, a non-empty
+/// underscore suffix, or one of the closed leading markers.
+fn is_numbered_sibling(tmp: String, base: String) Bool {
+  if base == "" or tmp == base {
+    return false
+  }
+
+  if tmp.starts_with(base) {
+    rest := tmp.slice(base.len(), tmp.len())
+    if rest.starts_with("_") and rest.len() > 1 {
+      return true
+    }
+
+    if rest.len() > 0 {
+      all_digits := true
+      for b in rest {
+        if !b.is_digit() {
+          all_digits = false
+        }
+      }
+      if all_digits {
+        return true
+      }
+    }
+  }
+
+  tmp == "new_${base}" or tmp == "next_${base}" or tmp == "cur_${base}"
+}
+
+/// Gate 3: the nearest preceding statement that binds `name` must be a fresh,
+/// private declaration in this exact block. Parameters, outer locals, and a
+/// preceding rebind do not qualify.
+fn has_same_block_declaration(block: Block, before: Int, name: String) Bool {
+  i := before
+
+  for i >= 0 {
+    case block.stmts[i] {
+      .Let(ls) => if ls.name == name {
+        return !ls.is_rebind and !ls.is_pub
+      },
+      _ => {},
+    }
+    i = .dec()
+  }
+
+  false
+}
+
+fn numbered_rebinding_finding(span: Span, tmp: String, base: String) LintFinding {
+  report_finding(
+    span,
+    "`${tmp}` only advances `${base}`; rebind `${base}` and keep threading that name",
+    "numbered-rebinding",
+  )
+}
+
+fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
+  if ls.is_rebind or ls.is_pub {
+    return .None
+  }
+
+  surviving: Vector<String> = []
+  for base in sibling_base_candidates(ls.name) {
+    if is_numbered_sibling(ls.name, base)
+      and has_same_block_declaration(block, i - 1, base)
+      and expr_ident_spans(ls.value, base).has_complete_ident() {
+      surviving = append_unique_name(surviving, base)
+    }
+  }
+
+  if surviving.len() != 1 {
+    return .None
+  }
+
+  base := surviving[0]
+  if source_used_after(block, i, base) {
+    return .None
+  }
+
+  if !forward_ident_spans(block, i, ls.name).has_complete_ident() {
+    return .None
+  }
+
+  .Some(numbered_rebinding_finding(ls.span, ls.name, base))
+}
+
+fn shape_two_loop_is_valid(fs: ForStmt, tmp: String, base: String) Bool {
+  iter_clean := case fs.iter {
+    .Some(e) => !expr_uses_name(e, tmp) and !expr_uses_name(e, base),
+    .None => true,
+  }
+  condition_clean := case fs.condition {
+    .Some(e) => !expr_uses_name(e, tmp) and !expr_uses_name(e, base),
+    .None => true,
+  }
+  shadows := opt_str_eq(fs.pattern, tmp)
+    or opt_str_eq(fs.pattern, base)
+    or opt_str_eq(fs.index, tmp)
+    or opt_str_eq(fs.index, base)
+
+  if !iter_clean or !condition_clean or shadows {
+    return false
+  }
+
+  case fs.body.tail {
+    .Some(_) => return false,
+    .None => {},
+  }
+
+  updates := 0
+  for stmt in fs.body.stmts {
+    case stmt {
+      .Let(ls) => if ls.is_rebind
+        and ls.name == tmp and expr_ident_spans(ls.value, tmp).has_complete_ident()
+        and expr_ident_spans(ls.value, base).has_no_complete_ident() {
+        updates = .inc()
+      } else {
+        return false
+      },
+      _ => return false,
+    }
+  }
+
+  updates > 0
+}
+
+fn shape_two_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
+  if ls.is_rebind or ls.is_pub or ls.name != "cur" {
+    return .None
+  }
+  case ls.ty {
+    .Some(_) => return .None,
+    .None => {},
+  }
+
+  base := case ls.value.kind {
+    .Ident(name) => name,
+    _ => return .None,
+  }
+  if !has_same_block_declaration(block, i - 1, base) or source_used_after(block, i, base) {
+    return .None
+  }
+
+  // The loop must be the only statement after the seed, followed by the exact
+  // `cur` tail of the enclosing block.
+  if i + 2 != block.stmts.len() {
+    return .None
+  }
+  case block.tail {
+    .Some(tail) => if !is_ident_named(tail, "cur") {
+      return .None
+    },
+    .None => return .None,
+  }
+
+  case block.stmts[i + 1] {
+    .For(fs) => if shape_two_loop_is_valid(fs, "cur", base) {
+      .Some(numbered_rebinding_finding(ls.span, "cur", base))
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn lint_numbered_rebinding(block: Block, source: String) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+
+  for stmt, i in block.stmts {
+    case stmt {
+      .Let(ls) => {
+        case shape_one_numbered_finding(block, i, ls) {
+          .Some(finding) => out = .append(finding),
+          .None => {},
+        }
+        case shape_two_numbered_finding(block, i, ls) {
+          .Some(finding) => out = .append(finding),
+          .None => {},
+        }
+      },
+      _ => {},
+    }
   }
 
   out
