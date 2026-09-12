@@ -143,8 +143,10 @@ generalized from field/index paths to threaded accumulators; may share the
 report-only detector.
 
 **Spec.** Scoped in [lint-numbered-rebinding.md](lint-numbered-rebinding.md)
-(rule `numbered-rebinding`, report-only detector first then Shape-1 auto-fix
-under `--fix-numbered-rebinding`; Shape-2 loop seed detect-only in v1). The
+(rule `numbered-rebinding`, report-only detector first then a conservative
+Shape-1 auto-fix under `--fix-numbered-rebinding`; computed threads require
+source-identical explicit type annotations, while pure aliases are intrinsically
+safe; Shape-2 loop seed is detect-only in v1). The
 "needs a full liveness pass" framing here is overstated: detection reuses the
 existing fail-closed `source_used_after` helper, and the language's
 rebind-type rule (`checker.tw:5247`) turns two of three failure modes (partial

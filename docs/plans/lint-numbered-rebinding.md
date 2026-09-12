@@ -98,35 +98,50 @@ For a candidate binding at statement index `i`:
 tmp := <rhs>         // .Let, !is_rebind, name == tmp
 ```
 
-**Selecting `base`.** Strip the sibling affix from `tmp` per the naming
-heuristic (gate 4) to get a candidate name, then require `expr_uses_name(rhs,
-base)` (gate 2) and same-block declaration (gate 3). If the strip is ambiguous
-or no resulting name satisfies gates 2–3, there is no candidate. `base` is the
-name we rebind onto.
+**Selecting `base` (Shape 1).** Derive every lexical candidate allowed by gate
+4: remove the maximal trailing digit run, take the prefix before each
+underscore as the possible base for a suffixed sibling, and strip each matching
+leading `new_` / `next_` / `cur_`. Deduplicate those strings, then filter them
+through gates 2–3. Proceed only when exactly one distinct candidate remains;
+zero or multiple surviving bases decline the finding. `base` is that unique
+name. For example, `new_slots` produces lexical candidates `new` and `slots`;
+if both are same-block locals read by the RHS, the candidate is ambiguous and
+declined. Shape 2 does not use this selection algorithm: its seed must be the
+bare alias `cur := base`, so the RHS selects `base` directly (see "Shape 2
+detection").
 
 The collapse `tmp := rhs` → `base = rhs` + rename(`tmp` → `base`) is
-**behavior-preserving** exactly when every gate below holds. Each gate only
-declines a fix when it fails; a declined fix is never wrong.
+**behavior-preserving** exactly when every detection gate below and the
+auto-fix type/trivia gates hold. A candidate can remain report-only when its
+structure is clear but the fixer cannot prove a safe source rewrite.
 
 ### Gates (all required)
 
 1. **Fresh binding.** `stmts[i]` is `.Let(ls)`, `ls.is_rebind == false`,
    `ls.name == tmp`, and `tmp` is not `pub`.
-2. **`base` is read by `rhs`.** `base` is a bare in-scope local with
-   `expr_uses_name(ls.value, base) == true`. This makes `base = rhs` a genuine
-   self-advance rather than an unrelated overwrite. (Sub-case: `rhs` is exactly
-   `base` — a pure alias `tmp := base`; then no rebind is emitted, only the
-   rename + seed deletion. See edits.)
-3. **`base` is declared *earlier in this same block*** — there is a `.Let(bls)`
-   at some index `k < i` in `block.stmts` with `bls.name == base` (`base` is
-   not `pub`). **This gate is what actually makes the rewrite sound; gate 4
-   alone does not** (see S1 below). `source_used_after` scans only the
+2. **`base` is read by `rhs`, exactly.** Run the same expression-role-aware,
+   fail-closed identifier-span collector used for the forward region over
+   `ls.value` for `base` and require `.Complete` with at least one span.
+   Assignment targets never count as reads; v1 conservatively returns
+   `.Uncertain` for any assignment expression in the candidate RHS. Do not use
+   `expr_uses_name` for this proof: its fallback returns `true` for unknown
+   compound forms even when the name is absent. This makes `base = rhs` a
+   genuine self-advance rather than an unrelated overwrite.
+   (Sub-case: `rhs` is exactly `base` — a pure alias `tmp := base`; then no
+   rebind is emitted, only the rename + seed deletion. See edits.)
+3. **`base` is declared *earlier in this same block*** — the nearest preceding
+   `.Let(bls)` whose name is `base` has `!bls.is_rebind` and `!bls.is_pub`.
+   Search backward from `i - 1` and use that exact declaration for the type gate
+   too. An earlier rebind of a parameter or outer local is not a declaration
+   and must not satisfy this gate. **This gate is what
+   actually makes the rewrite sound; gate 4 alone does not** (see S1 below).
+   `source_used_after` scans only the
    candidate's own block, but rebinding `base` inside a nested block
    *propagates the new value to the enclosing scope*. So if `base` were an
    outer-scope local or a function parameter, an outer read after this block —
-   invisible to gate 4 — would silently change. Requiring `base` to be
+   invisible to gate 5 — would silently change. Requiring `base` to be
    same-block-declared means every read of `base` that could observe the
-   rewrite lives in this block and is therefore covered by gate 4. Rejects
+   rewrite lives in this block and is therefore covered by gate 5. Rejects
    parameters and all outer-scope names.
 4. **Naming heuristic — `tmp` is a numbered/suffixed sibling of `base`.** This
    is the precision knob that makes the rule a *ceremony* lint, not an
@@ -135,10 +150,13 @@ declines a fix when it fails; a declined fix is never wrong.
    - `tmp == base + <digits>` (`acc`→`acc2`, `cache`→`cache2`), or
    - `tmp == base + "_" + <suffix>` (`state`→`state_next`), or
    - `tmp` is `base` with a leading `new_` / `next_` / `cur_` (`slots`→
-     `new_slots`, and Shape 2's `acc`→`cur` via the `cur`-family list).
+     `new_slots`).
 
    Keep this predicate a single named function; the report-only pass exists to
-   tune it against real boot hits before any edit is emitted.
+   tune it against real boot hits before any edit is emitted. Exact `cur` is
+   deliberately not part of this predicate: it has no lexical relationship to
+   an arbitrary `base` and belongs only to Shape 2's stricter alias/loop/tail
+   detector.
 5. **`base` is dead after the binding.** `source_used_after(block, i, base) ==
    false`. `rhs` reads `base` on line `i` itself, which this helper does not
    count (it scans from `i+1`). Combined with gate 3, this is airtight: every
@@ -148,7 +166,53 @@ declines a fix when it fails; a declined fix is never wrong.
    `tmp` after the binding is a *read* the span collector (below) can fully
    enumerate, and `tmp` is never itself rebound (`tmp = …`) in the forward
    region. Any `tmp` use inside a form the collector can't descend (closure,
-   nested block) → decline. This makes a partial rename impossible.
+   nested block, record-field shorthand) → decline. At least one forward
+   read is required; an entirely unused binding belongs to `unused-bindings`,
+   not this rule. This makes a partial rename impossible.
+
+Gates 1–6 define a sound Shape 1 recommendation. The span collector lands with
+the report-only detector so the first implementation never has a looser,
+short-lived interpretation of gates 2 or 6. Initially the complete spans prove
+the candidate but are not attached as edits; auto-fix is enabled in the
+following task. An `.Uncertain` result declines Shape 1 entirely.
+
+### Additional auto-fix gates
+
+Shape 1 receives edits only when both gates below also pass:
+
+7. **The replacement preserves the binding type.** A pure alias (`rhs` is the
+   bare `base`) needs no type gate because it deletes the alias rather than
+   rebinding `base`. For a computed RHS, both the earlier `base` declaration
+   and `tmp` binding must carry explicit type annotations whose source slices
+   are byte-identical. This deliberately conservative syntactic proof means
+   the original program already checked `rhs` at exactly the type the new
+   rebind requires. Add `same_source_type(a: TypeExpr, b: TypeExpr, source:
+   String) Bool` for this comparison; do not rely on a later build to catch a
+   mismatched rebind. Unannotated or differently spelled-but-equivalent types
+   remain report-only.
+8. **The binding-prefix edit preserves trivia.** Slice
+   `[ls.name_span.start, ls.value.span.start)` from `ctx.source`; if it contains
+   `//`, keep the finding report-only. Line comments are Twinkle's only comment
+   syntax. This prevents the coarse replacement used to remove an annotation
+   from deleting a comment. Whitespace-only prefixes and comment-free explicit
+   annotations are fixable.
+
+### Shape 2 detection
+
+Shape 2 is recognized by a separate, detect-only scanner rather than by
+weakening Shape 1's sibling-name rule. It requires all of the following:
+
+- a fresh, non-public, unannotated bare alias `cur := base`, with the temporary
+  named exactly `cur` and `base` a bare identifier declared earlier in the same
+  block;
+- `base` dead after the seed, using `source_used_after`;
+- one immediately following `for` whose header does not mention or shadow
+  `cur`/`base`, whose body has no tail, and whose statements are exclusively
+  rebinds of `cur` whose RHS reads `cur` but not `base`;
+- the enclosing block tail is exactly `cur`, with no intervening statement.
+
+This deliberately narrow form makes exact `cur` useful without treating every
+`cur := x` alias as a ceremony finding. It reports with empty `edits` in v1.
 
 Immutability makes gates 2/5 clean: Twinkle values are persistent, so rebinding
 `base` cannot alias-mutate anything `rhs` captured — the only question is
@@ -158,15 +222,16 @@ whether the *old* `base` value is still read, which gates 3+5 together settle.
 
 `checker.tw:5247` — a rebind `x = value` checks `value` against the **existing**
 binding's type (locals are stored monomorphic, so there is no let-generalization
-crack). That turns two of three failure modes into compile errors:
+crack). The fixer must prove type compatibility up front; compiler failures are
+defense in depth, not a safety gate:
 
 | Failure mode | Result | Loud? |
 |---|---|---|
 | Missed a `tmp` occurrence (partial rename) | dangling `tmp` → undefined-var | **compile error** |
-| `rhs` type ≠ `base` type | rebind fails type check | **compile error** |
+| Type gate implemented incorrectly | rebind fails type check | **compile error** |
 | Old `base` read after rebind (gates 3+5 wrong) | overwrote a live value | **silent** |
 
-Only the third is silent, and it is what gates **3 + 5** jointly guard —
+The old-`base` case is silent, and it is what gates **3 + 5** jointly guard —
 gate 3 confines every observing read to this block, gate 5 (`source_used_after`,
 fail-closed) proves none survives. (An earlier draft credited gate 5 alone;
 review found that unsound for candidates in a nested block whose `base` is an
@@ -177,6 +242,7 @@ a compile error surfaces only on the *next* build. The mandatory self-host
 re-verify (below) is that build for boot self-application; a user who fixes and
 does not rebuild would ship broken source at fix time if a gate were buggy —
 which is why the silent gate (3+5) must be right, not merely the loud ones.
+Gate 7 prevents the known type-changing case before edits are offered.
 
 ### The edits (Shape 1)
 
@@ -192,8 +258,11 @@ kinds:
    Use `ls.name_span` (a real field on `LetStmt`) as the anchor — for an
    annotated candidate `tmp: T = rhs` this range also swallows the `: T`, which
    is correct (the rebind carries no annotation). For the pure-alias sub-case
-   (`rhs` is bare `base`), instead **delete the whole statement**: one edit over
-   `[ls.span.start, next_stmt_or_tail.span.start)` with replacement `""`.
+   (`rhs` is bare `base`), instead **delete only the statement span**: one edit
+   over `[ls.span.start, ls.span.end)` with replacement `""`. Leaving
+   surrounding whitespace to `twk fmt` preserves comments between statements
+   and also works when the binding is the final statement and the block has no
+   tail.
 2. **Rename each forward `tmp`** → `base`. One edit per occurrence:
    `FixEdit.{ start: occ.span.start, end: occ.span.end, replacement: base }`.
 
@@ -211,7 +280,11 @@ type IdentSpans = { Complete(Vector<Span>), Uncertain }
 
 Same traversal as `expr_uses_name`, collecting the `span` of every
 `.Ident(name)` — but where `expr_uses_name` has `_ => true` (the compound
-forms it can't descend), this returns `.Uncertain`.
+forms it can't descend), this returns `.Uncertain`. Record shorthand is also
+`.Uncertain`: `.{ tmp }` stores the read as `RecordEntry.{ name: "tmp", value:
+.None, … }`, so there is no identifier-expression span to rename. Rewriting the
+entry would require synthesizing `tmp: base` to preserve the field name; v1
+declines instead.
 
 **A pure expr-level mirror is not enough** — it would wrongly collect
 assignment *targets* as renameable reads (`expr_uses_name` descends into *both*
@@ -220,19 +293,23 @@ sides of `.Binary(.Assign, …)`, so a forward `tmp = g(tmp)` would yield the LH
 **statement-role-aware**, driven by a block-level wrapper over `stmts[i+1..]`
 plus `block.tail` with these per-`Stmt` rules:
 
-- `.Let(is_rebind, name==tmp)` or `.Expr(.Binary(.Assign, Ident(tmp), _))` in
-  the forward region → **`.Uncertain`** (a forward rebind of `tmp`; gate 6
-  declines). This is what actually enforces gate 6 — do not rely on the
-  expr-level mirror for it.
-- assignment/rebind **target** idents are never collected as reads; only the
-  RHS and other read positions feed `expr_ident_spans`.
+- Any later `.Let` with `name == tmp`, whether a rebind or a fresh shadowing
+  declaration, returns `.Uncertain`. This prevents the collector from crossing
+  into occurrences owned by a different lexical binding.
+- Any `.Binary(.Assign, _, _)` encountered at any expression depth returns
+  `.Uncertain`, regardless of its target. This conservative v1 rule covers
+  whole, field, and index rebinds of `tmp`, prevents assignment-path roots from
+  being miscounted as reads, and applies equally to the candidate RHS and the
+  forward region. A future role-aware collector may admit unrelated assignment
+  expressions by walking only their true read positions.
 - `.For` / `.Defer` / any statement containing a nested `Block` or closure that
   mentions `tmp` → `.Uncertain` (mirrors the `_ => true` decline).
 
-Any `.Uncertain` → the finding declines its edits (stays report-only). This
-fail-closed discipline is what upholds gate 6. Because v1 never collects
-assignment targets, Shape 2 — whose `cur` is an assignment target inside the
-loop — is detect-only until a target-aware collector lands.
+Any `.Uncertain` declines the Shape 1 finding. A `.Complete` result must contain
+at least one span. This fail-closed discipline is what upholds gate 6. Because
+v1 never collects assignment targets, Shape 2 — whose `cur` is an assignment
+target inside the loop — is handled by its separate detector and remains
+detect-only until a target-aware collector lands.
 
 ## Rule identity & rollout
 
@@ -260,9 +337,15 @@ home for Shape 2's auto-fix and is called out in the follow-ups.
   (`lint_pass_suite.tw`):
   - fire: Shape 1 straight-line thread; pure-alias sub-case; multiple forward
     reads of `tmp`.
-  - decline: `base` read after binding (gate 5); `tmp` used inside a closure
-    (gate 6 `.Uncertain`); `tmp` rebound in forward region (gate 6); name not a
-    numbered sibling (gate 4); `tmp` is `pub` (gate 1); **candidate in a nested
+  - report-only: computed RHS with missing or non-source-identical annotations
+    (gate 7); comment in the replaced binding prefix (gate 8).
+  - decline: RHS does not contain an exactly enumerated `base` read (gate 2);
+    `base` read after binding (gate 5); no forward `tmp` read; `tmp`
+    used inside a closure or record shorthand (gate 6 `.Uncertain`); `tmp`
+    shadowed or rebound directly or through a field/index path in the forward
+    region, or appears in any assignment expression (gate 6); name not a
+    numbered sibling, or resolves to multiple sibling bases (gate 4);
+    `tmp` is `pub` (gate 1); **candidate in a nested
     block whose `base` is a parameter or outer-scope local (gate 3)** — the S1
     regression test: original vs. rewritten must return the same value.
   - detect-only: Shape 2 loop seed reports a finding but carries no `edits`.
@@ -277,25 +360,35 @@ home for Shape 2's auto-fix and is called out in the follow-ups.
 
 Each step is independently shippable; detection ships before any edit.
 
-1. **`is_numbered_sibling` + candidate scan (report-only).** Add
-   `lint_numbered_rebinding(block: Block) Vector<LintFinding>` covering Shape 1
-   gates 1–6 (edits empty) and the Shape-2 loop-seed detector; wire it into the
+1. **Candidate scans and fail-closed span collector (report-only).** Add
+   `is_numbered_sibling`, `IdentSpans`, the statement-role-aware
+   `expr_ident_spans`/forward-region collector, and
+   `lint_numbered_rebinding(block: Block, source: String) Vector<LintFinding>`.
+   Shape 1 must satisfy gates 1–6, including exact non-empty `.Complete` span
+   results for the RHS `base` read and forward `tmp` reads, but its
+   finding carries empty `edits` in this task. Add the separate narrow Shape-2
+   loop-seed detector specified above; wire both into the
    block-walk driver next to `lint_direct_rebinding`. **Gate 3 (same-block
    `base`) must be in from the start** — without it the report-only corpus
    includes unsound nested candidates that would later auto-fix wrongly. Add the
    `describe` rationale. Unit fixtures for every fire/decline row above,
-   including the S1 nested-candidate regression. Ship, then dogfood on boot
-   source and tune `is_numbered_sibling` against real hits.
-2. **`expr_ident_spans` fail-closed collector** + block-level wrapper returning
-   `IdentSpans`. Unit-test enumeration completeness and the `.Uncertain`
-   decline path (closure/nested-block cases).
-3. **Shape 1 auto-fix.** Emit the binding-rewrite edit (or whole-statement
-   delete for the pure-alias sub-case) + the per-occurrence rename edits, gated
-   on `IdentSpans.Complete`. Wire `--fix-numbered-rebinding` — this is **six
+   including the S1 nested-candidate regression and collector completeness /
+   `.Uncertain` cases. Ship, then dogfood on boot source and tune
+   `is_numbered_sibling` against real hits.
+2. **Shape 1 auto-fix.** Add `same_source_type` and the comment-free prefix
+   check. Emit the binding-rewrite edit (or whole-statement delete for the
+   pure-alias sub-case) + the per-occurrence rename edits only when gates 7–8
+   pass. Wire `--fix-numbered-rebinding` — this is **six
    coordinated touch points**, not one: `boot/main.tw` `.add_flag(...)`, and in
    `commands/lint.tw` the `FixFlags` record, `no_fixes()`, `wants()`,
-   `fix_flags_from_args()`, and `any()`.
-4. **Boot self-application + fmt/boot-test/stage2 byte-identical validation.**
+   `fix_flags_from_args()`, and `any()`. Add fixer-output fixtures for computed
+   annotated rewrites, pure-alias deletion in a no-tail block where the alias
+   is read by a following final expression statement, intervening-comment
+   preservation, multiple occurrence renames, and Shape 2 remaining
+   report-only. Add command-selection fixtures proving the dedicated flag
+   selects this rule, `--fix` includes it, and overlap handling drops a finding
+   atomically rather than applying a partial rename.
+3. **Boot self-application + fmt/boot-test/stage2 byte-identical validation.**
 
 ## Out of scope for v1 (sound omissions, possible follow-ups)
 
