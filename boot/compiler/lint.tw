@@ -1800,6 +1800,10 @@ fn has_same_block_declaration(block: Block, before: Int, name: String) Bool {
   }
 }
 
+fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool {
+  source.slice(a.span.start, a.span.end) == source.slice(b.span.start, b.span.end)
+}
+
 fn redundant_rebinding_finding(
   span: Span,
   tmp: String,
@@ -1850,6 +1854,20 @@ fn redundant_rebinding_edits(
       .None => return [],
     }
     if !comparable_mono(temp_ty) or !comparable_mono(base_ty) or !mono_eq(temp_ty, base_ty) {
+      return []
+    }
+
+    annotation_ok := case ls.ty {
+      .Some(temp_annotation) => case base_decl.ty {
+        .Some(base_annotation) => same_source_type(temp_annotation, base_annotation, source),
+        .None => false,
+      },
+      .None => case base_decl.ty {
+        .Some(_) => false,
+        .None => true,
+      },
+    }
+    if !annotation_ok {
       return []
     }
 

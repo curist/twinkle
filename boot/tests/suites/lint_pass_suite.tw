@@ -595,6 +595,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-rebinding: annotated nested Never initializer types stay report-only",
+      fn() {
+        src := "fn bottom() Never { error(\"stop\") }\nfn seed() fn() Never { bottom }\nfn step(x: fn() Int) fn() Never { bottom }\nfn consume(x: fn() String) String { x() }\nfn f() String {\n  acc: fn() Int = seed()\n  acc2: fn() String = step(acc)\n  consume(acc2)\n}\n"
+        fs := rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-rebinding: inferred computed advance with matching types is fixable",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n"
