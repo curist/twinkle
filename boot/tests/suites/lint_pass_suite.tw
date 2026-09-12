@@ -6,6 +6,7 @@ use compiler.base_env
 use compiler.checker
 use compiler.lint
 use compiler.lint_rules
+use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.resolver
 use lib.source.report.{FixEdit}
@@ -108,6 +109,41 @@ fn rr_findings_typed(src: String) Vector<lint.LintFinding> {
     } else {
       continue
     }
+  }
+}
+
+// Parse a computed-advance fixture, map its two initializer Expr.ids to the
+// supplied types, and run the real lint entry point. Returning an error for an
+// unexpected AST shape prevents malformed fixtures from passing as no-findings.
+fn rr_findings_with_initializer_types(src: String, base_ty: MonoType, temp_ty: MonoType) Result<
+  Vector<lint.LintFinding>,
+  String,
+> {
+  module := parser.parse(src, 0).value
+
+  case module.items[0] {
+    .Function(decl) => case decl.body.stmts[0] {
+      .Let(base_decl) => case decl.body.stmts[1] {
+        .Let(temp_decl) => {
+          type_map: Dict<Int, MonoType> = Dict.new()
+          type_map[base_decl.value.id] = base_ty
+          type_map[temp_decl.value.id] = temp_ty
+          all := lint.lint_module(module, base_env.builtin_env(), type_map, src)
+          .Ok(
+            collect f in all {
+              if f.rule == "redundant-rebinding" {
+                f
+              } else {
+                continue
+              }
+            },
+          )
+        },
+        _ => .Err("expected the second function statement to be a let"),
+      },
+      _ => .Err("expected the first function statement to be a let"),
+    },
+    _ => .Err("expected a parser-produced function"),
   }
 }
 
@@ -620,6 +656,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-rebinding: a computed advance that changes type declines the fix",
+      fn() {
+        // `acc2` is a numbered sibling of `acc` and reads it, so the rule fires;
+        // but `to_s` returns String while `acc` is Int, so rebinding `acc` would
+        // be a type error. The fix must decline (report-only).
+        src := "fn to_s(x: Int) String {\n  \"s\"\n}\nfn use_s(x: String) Int {\n  0\n}\nfn f() Int {\n  acc := 0\n  acc2 := to_s(acc)\n  use_s(acc2)\n}\n"
+        fs := rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-rebinding: renames every forward occurrence",
       fn() {
         src := "fn step(x: Int) Int {\n  x\n}\nfn combine(a: Int, b: Int) Int {\n  a\n}\nfn f() Int {\n  state: Int = 0\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
@@ -667,8 +716,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-rebinding: computed unannotated candidates stay report-only",
+      "redundant-rebinding: declines a computed advance when no type info is available",
       fn() {
+        // Parse-only (no checker): the type gate can't prove the rebind is safe,
+        // so the finding stays report-only.
         fs := rr_findings(
           "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n",
         )
@@ -678,11 +729,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-rebinding: differing annotations stay report-only",
+      "redundant-rebinding: ErrorType initializer types decline the fix",
       fn() {
-        fs := rr_findings(
-          "fn f() Int {\n  cache: Int = initial()\n  cache2: Other = step(cache)\n  consume(cache2)\n}\n",
-        )
+        src := "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n"
+        fs := try rr_findings_with_initializer_types(src, MonoType.ErrorType, MonoType.ErrorType)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: nested MetaVar initializer types decline the fix",
+      fn() {
+        src := "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n"
+        unresolved := MonoType.Vector(MonoType.MetaVar(7))
+        fs := try rr_findings_with_initializer_types(src, unresolved, unresolved)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -691,9 +752,8 @@ pub fn suite() runner.Suite {
     .test(
       "redundant-rebinding: a comment in the binding prefix stays report-only",
       fn() {
-        fs := rr_findings(
-          "fn f() Int {\n  cache: Int = initial()\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n",
-        )
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  cache: Int = 0\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n"
+        fs := rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
