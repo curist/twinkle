@@ -794,9 +794,7 @@ pub fn suite() runner.Suite {
         case module.items[0] {
           .Function(decl) => case public_module.items[0] {
             .Stmt(public_stmt) => {
-              body := decl.body
-              body.stmts[1] = public_stmt
-              decl.body = body
+              decl.body.stmts[1] = public_stmt
               module.items[0] = .Function(decl)
               fs := lint.lint_module(module, base_env.builtin_env(), src)
               numbered := collect f in fs {

@@ -215,9 +215,9 @@ fn propagate_fixpoint(body: PreparedExpr, handle: Dict<Int, Bool>) Dict<Int, Boo
   changed := true
   for changed {
     r: PropAcc = .{ handle: cur, changed: false }
-    r2 := r.propagate_expr(body)
-    cur = r2.handle
-    changed = r2.changed
+    r = .propagate_expr(body)
+    cur = r.handle
+    changed = r.changed
   }
   cur
 }

@@ -2516,8 +2516,8 @@ fn scan_consumers(
         _ => stats0,
       }
 
-      stats2 := scan_consumers_op(op, pf, ids, builtins, fam, stats)
-      scan_consumers(body, pf, ids, builtins, fam, stats2)
+      stats = scan_consumers_op(op, pf, ids, builtins, fam, stats)
+      scan_consumers(body, pf, ids, builtins, fam, stats)
     },
     _ => stats0,
   }

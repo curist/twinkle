@@ -1075,8 +1075,8 @@ fn method_return_unifies(sig: FunctionSig, ty: MonoType) Bool {
 
   recv := sig.params[0]
   subst := bind_vars(recv, ty, Dict.new())
-  ret2 := apply_subst(ret, subst)
-  types_match_wildcard(ret2, ty)
+  ret = apply_subst(ret, subst)
+  types_match_wildcard(ret, ty)
 }
 
 fn methods_returning(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {

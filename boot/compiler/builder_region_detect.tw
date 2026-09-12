@@ -471,8 +471,8 @@ fn detect_in_expr(
         },
         .None => cands,
       }
-      out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, mono, out)
-      detect_in_expr(body, func_id, func, str_push, vec_push, ea, mono, out2)
+      out = detect_in_op(op, func_id, func, str_push, vec_push, ea, mono, out)
+      detect_in_expr(body, func_id, func, str_push, vec_push, ea, mono, out)
     },
     _ => cands,
   }
@@ -603,8 +603,8 @@ fn scan_refold_loops(
           .None => acc_cands,
         },
       }
-      out2 := scan_refold_loops(loop_body, func_id, func, str_push, vec_push, claimed, out)
-      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out2)
+      out = scan_refold_loops(loop_body, func_id, func, str_push, vec_push, claimed, out)
+      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out)
     },
     .Let(_, op, _, rest) => {
       out := scan_refold_loops_op(op, func_id, func, str_push, vec_push, claimed, acc_cands)
