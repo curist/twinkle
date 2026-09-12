@@ -1,0 +1,46 @@
+// Cooperative concurrency with Task and Channel.
+//
+// Tasks run on a single thread and interleave only at task points (yield,
+// await, channel send/recv). Between those points a task runs uninterrupted,
+// so immutable values are never observed half-updated.
+// A worker sums 1..n, yielding after each step so the scheduler can run the
+// other workers. The interleaved output shows them making progress together.
+fn worker(id: Int, n: Int) Int {
+  sum := 0
+  for i in 1..n + 1 {
+    sum = sum + i
+    println("worker ${id}: added ${i} (sum=${sum})")
+    Task.yield()
+  }
+  sum
+}
+
+// Task.spawn starts a computation; Task.await suspends until it finishes and
+// returns its result. Both workers advance before either is awaited.
+a := Task.spawn(fn() { worker(1, 3) })
+b := Task.spawn(fn() { worker(2, 4) })
+println("worker totals: ${a.await()} and ${b.await()}")
+
+// A Channel passes values between tasks. A bounded channel applies
+// backpressure: send suspends once the buffer is full until a recv drains it.
+ch: Channel<Int> = Channel.bounded(2)
+
+// Producer task: emit a few squares, then close the channel to signal "done".
+producer := Task.spawn(fn() {
+  for i in 1..6 {
+    println("send ${i * i}")
+    ch.send(i * i)
+  }
+  ch.close()
+})
+
+// A channel is iterable: the loop receives until the channel is closed and
+// drained. Interleaved send/recv output shows the rendezvous in action.
+total := 0
+for v in ch {
+  println("recv ${v}")
+  total = total + v
+}
+producer.await()
+
+println("sum of squares: ${total}")

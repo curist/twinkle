@@ -49,6 +49,7 @@ const EXAMPLES = [
   ['extern_ffi', 'Extern FFI'],
   ['twinkle', 'Twinkle'],
   ['benchmark', 'Benchmark'],
+  ['concurrency', 'Concurrency'],
   ['async_timer', 'Async Timer'],
   ['http_fetch', 'HTTP Fetch'],
 ]
