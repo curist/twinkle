@@ -17,11 +17,8 @@ Design spec: [lint-redundant-rebinding-type-gate.md](lint-redundant-rebinding-ty
 - The rule stays fail-closed: never emit an unproven rewrite. A finding with no safe proof carries empty `edits` (report-only).
 - `FixEdit = .{ start: Int, end: Int, replacement: String }` (in `boot/lib/source/report.tw`).
 - After editing any `.tw` file, run `target/twk fmt <file>` (idempotent; expect no second-pass churn).
-- Commit trailers for this session:
-  ```
-  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-  Claude-Session: https://claude.ai/code/session_01HWB8aAe5AQWwznH3N7snST
-  ```
+- Commit attribution must describe the actual implementation session. Do not
+  copy authorship or session trailers from the earlier design/plan commits.
 
 ---
 
@@ -221,10 +218,7 @@ Relocate the structural MonoType equality (mono_eq/mono_vec_eq) out of
 backend/verify_common into compiler.mono_type, its natural home beside
 ty_to_string, and add a pub contains_meta there. Repoints the verify_expr /
 verify_slots imports; the linter will consume both from mono_type without
-importing from backend/. Pure relocation; no behavior change.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01HWB8aAe5AQWwznH3N7snST"
+importing from backend/. Pure relocation; no behavior change."
 ```
 
 ---
@@ -241,6 +235,20 @@ Changing `lint_module`'s signature immediately breaks the two existing *annotate
 **Interfaces:**
 - Consumes: `mono_eq`, `contains_meta`, `MonoType` from `compiler.mono_type` (Task 1); `checker.check(module, env, lint_mode) CheckResult`; `base_env.builtin_env().resolve(module)`.
 - Produces: `pub fn lint_module(module: Module, env: ResolvedEnv, type_map: Dict<Int, MonoType>, source: String) Vector<LintFinding>` (new signature every caller matches); `rr_findings_typed(src) Vector<lint.LintFinding>` test helper (consumed by Task 3).
+
+- [ ] **Step 0: Establish RED for the inferred-type behavior**
+
+Before changing production code, add the checker/resolver imports and
+`rr_findings_typed` helper described in Step 10, and add Task 3 Step 1's
+inferred matching-types test. Keep `lint_module` on its current signature in
+this RED-only commit. Run:
+
+`target/twk test --filter "inferred computed advance with matching types is fixable"`
+
+Expected: the test fails because the finding is still report-only
+(`edits.len() == 0`). If it errors or passes, correct the test before touching
+production code. Keep this test while completing Steps 1–14 and confirm it
+turns green there.
 
 - [ ] **Step 1: Update imports in `boot/compiler/lint.tw`**
 
@@ -541,10 +549,7 @@ Thread the checker's zonked CheckResult.type_map into lint_module and replace
 the byte-identical-annotation gate in redundant_rebinding_edits with a mono_eq
 comparison of the temp's and base's inferred result types, failing closed on
 missing/error/meta types. Parse-only callers pass an empty type_map. Adds an
-rr_findings_typed test helper and migrates the annotated edit tests onto it.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01HWB8aAe5AQWwznH3N7snST"
+rr_findings_typed test helper and migrates the annotated edit tests onto it."
 ```
 
 ---
@@ -559,7 +564,10 @@ Adds the behavior this change unlocks and its soundness guard; reworks the two "
 **Interfaces:**
 - Consumes: `rr_findings_typed` and `rr_findings` (Task 2).
 
-- [ ] **Step 1: Add the unlock test (inferred, matching types → fixable)**
+- [ ] **Step 1: Retain the unlock test established RED in Task 2**
+
+The following test was added and observed failing before Task 2's production
+change. Keep it unchanged as the primary regression test:
 
 ```tw
     .test(
@@ -619,6 +627,15 @@ Replace "computed unannotated candidates stay report-only" (around line 624) so 
 
 Delete the "differing annotations stay report-only" test (around line 634-643) — its `Other` type is undefined and its intent (different type declines) is now covered by Step 2's type-complete mismatch test.
 
+- [ ] **Step 3a: Cover every fail-closed type-map guard directly**
+
+Keep the parse-only test above as the missing-entry case. Add focused tests
+that construct a candidate's `type_map` from its two initializer `Expr.id`s and
+prove the finding has empty edits when either initializer maps to
+`MonoType.ErrorType` or to a type containing `MonoType.MetaVar`. These tests
+must exercise `lint_module`/`redundant_rebinding_edits`, rather than only
+testing `contains_meta` in isolation.
+
 - [ ] **Step 4: Migrate "a comment in the binding prefix stays report-only" to the typed helper**
 
 Its point is that the comment guard declines even when types match — so the snippet must type-check. Replace its body (around line 646):
@@ -653,10 +670,7 @@ git commit -m "test(lint): cover type-gated redundant-rebinding fix
 
 An inferred computed advance with matching types is now auto-fixable; a
 type-changing advance (Int -> String) declines; parse-only is the fail-closed
-case. Reworks the former annotation-based report-only tests accordingly.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01HWB8aAe5AQWwznH3N7snST"
+case. Reworks the former annotation-based report-only tests accordingly."
 ```
 
 ---
