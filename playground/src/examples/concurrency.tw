@@ -1,47 +1,78 @@
-// Cooperative concurrency with Task and Channel.
+// Cooperative concurrency: Task and Channel.
 //
-// Tasks run on a single thread and interleave only at task points (yield,
-// await, channel send/recv). Between those points a task runs uninterrupted,
-// so immutable values are never observed half-updated.
-// A worker sums 1..n, yielding after each step so the scheduler can run the
-// other workers. The interleaved output shows them making progress together.
-fn worker(id: Int, n: Int) Int {
-  sum := 0
+// Tasks share one thread and switch only at task points — yield, await, and
+// channel send/recv. Between those points a task runs uninterrupted, so
+// immutable values are never observed half-updated.
+// Task.yield() hands control back to the scheduler, letting spawned tasks
+// interleave. The mixed output below shows both making progress together.
+fn count_up(id: Int, n: Int) Int {
   for i in 1..n + 1 {
-    sum = sum + i
-    println("worker ${id}: added ${i} (sum=${sum})")
+    println("task ${id}: step ${i}")
     Task.yield()
   }
-  sum
+  n
 }
 
-// Task.spawn starts a computation; Task.await suspends until it finishes and
-// returns its result. Both workers advance before either is awaited.
-a := Task.spawn(fn() { worker(1, 3) })
-b := Task.spawn(fn() { worker(2, 4) })
-println("worker totals: ${a.await()} and ${b.await()}")
+// Task.spawn starts a task; Task.await suspends until it finishes and returns
+// its result.
+a := Task.spawn(fn() { count_up(1, 3) })
+b := Task.spawn(fn() { count_up(2, 4) })
+println("tasks finished ${a.await()} and ${b.await()} steps")
 
-// A Channel passes values between tasks. A bounded channel applies
-// backpressure: send suspends once the buffer is full until a recv drains it.
-ch: Channel<Int> = Channel.bounded(2)
+// Channels connect tasks. Here a pool of workers pulls jobs from one channel
+// and pushes results into another — fan-out the work, fan-in the results.
+fn is_prime(n: Int) Bool {
+  if n < 2 {
+    return false
+  }
+  i := 2
+  for i * i <= n {
+    if n % i == 0 {
+      return false
+    }
+    i = .inc()
+  }
+  true
+}
 
-// Producer task: emit a few squares. `defer` schedules the close to run
-// however the task exits, so the channel is always signaled "done".
-producer := Task.spawn(fn() {
-  defer ch.close()
-  for i in 1..6 {
-    println("send ${i * i}")
-    ch.send(i * i)
+jobs: Channel<Int> = Channel.bounded(4)
+results: Channel<Int> = Channel.new()
+
+// Several workers receive from `jobs` concurrently. A channel hands each value
+// to exactly one receiver, so the workers naturally share the work between them.
+workers := collect id in 1..4 {
+  Task.spawn(fn() {
+    for n in jobs {
+      if is_prime(n) {
+        println("worker ${id}: ${n} is prime")
+        results.send(n)
+      }
+    }
+  })
+}
+
+// Feed the jobs, then close so each worker's `for` loop ends.
+feeder := Task.spawn(fn() {
+  defer jobs.close()
+  for n in 2..30 {
+    jobs.send(n)
   }
 })
 
-// A channel is iterable: the loop receives until the channel is closed and
-// drained. Interleaved send/recv output shows the rendezvous in action.
-total := 0
-for v in ch {
-  println("recv ${v}")
-  total = total + v
-}
-producer.await()
+// Once every worker has finished, close `results` so the drain below ends.
+closer := Task.spawn(fn() {
+  for w in workers {
+    w.await()
+  }
+  results.close()
+})
 
-println("sum of squares: ${total}")
+// Results arrive as workers find them, interleaved across the pool.
+found: Vector<Int> = []
+for p in results {
+  found = .append(p)
+}
+feeder.await()
+closer.await()
+
+println("found ${found.len()} primes")
