@@ -10,6 +10,7 @@
 use compiler.ast.{
   Block, CondArm, Expr, ForStmt, FunctionDecl, LetStmt, Module, RecordEntry, Stmt, TypeExpr,
 }
+use compiler.mono_type.{MonoType, contains_meta, mono_eq}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.report.{FixEdit}
 use lib.source.span.{Span}
@@ -35,10 +36,11 @@ type LintCtx = .{
   values: Dict<String, Bool>,
   source: String,
   env: ResolvedEnv,
+  type_map: Dict<Int, MonoType>,
 }
 
-fn empty_lint_ctx(env: ResolvedEnv, source: String) LintCtx {
-  .{ types: Dict.new(), values: Dict.new(), source, env }
+fn empty_lint_ctx(env: ResolvedEnv, type_map: Dict<Int, MonoType>, source: String) LintCtx {
+  .{ types: Dict.new(), values: Dict.new(), source, env, type_map }
 }
 
 fn param_values(decl: FunctionDecl) Dict<String, Bool> {
@@ -53,10 +55,12 @@ fn param_values(decl: FunctionDecl) Dict<String, Bool> {
 
 /// Lint a whole module. `env` is used by type-dependent structural lints (L3);
 /// `source` renders span-sliced suggestions (constant-fn).
-pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<LintFinding> {
+pub fn lint_module(module: Module, env: ResolvedEnv, type_map: Dict<Int, MonoType>, source: String) Vector<
+  LintFinding,
+> {
   out: Vector<LintFinding> = []
 
-  cur := empty_lint_ctx(env, source)
+  cur := empty_lint_ctx(env, type_map, source)
 
   for item in module.items {
     case item {
@@ -66,7 +70,7 @@ pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<Lint
         out = .concat(
           lint_block(
             decl.body,
-            .{ types: param_types(decl), values: param_values(decl), source, env },
+            .{ types: param_types(decl), values: param_values(decl), source, env, type_map },
           ),
         )
         out = .concat(lint_redundant_prefix_decl(decl, source))
@@ -420,7 +424,7 @@ fn is_error_call(expr: Expr) Bool {
 // this block's annotated bindings in statement order as we descend.
 fn lint_block(block: Block, ctx: LintCtx) Vector<LintFinding> {
   out: Vector<LintFinding> = lint_direct_rebinding(block)
-  out = .concat(lint_redundant_rebinding(block, ctx.source))
+  out = .concat(lint_redundant_rebinding(block, ctx.source, ctx.type_map))
   cur := ctx
   diverged := false
   reported := false
@@ -1796,9 +1800,6 @@ fn has_same_block_declaration(block: Block, before: Int, name: String) Bool {
   }
 }
 
-/// Gate 7: two annotations are interchangeable only when their source slices are
-/// byte-identical. A deliberately syntactic proof — the original program already
-/// checked `rhs` at exactly this spelling, so the rebind needs no fresh check.
 fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool {
   source.slice(a.span.start, a.span.end) == source.slice(b.span.start, b.span.end)
 }
@@ -1821,14 +1822,17 @@ fn redundant_rebinding_finding(
 /// Gates 7–8. Build the collapse edits for a validated Shape-1 candidate, or `[]`
 /// (report-only) when a safe source rewrite can't be proven. A pure alias
 /// (`tmp := base`) deletes the whole statement and needs no type gate; a computed
-/// RHS rebinds `base` in place, which requires byte-identical annotations and a
-/// comment-free binding prefix.
+/// RHS rebinds `base` in place and always needs matching, resolved initializer
+/// types. Inferred pairs need no annotation proof; annotated pairs additionally
+/// need byte-identical annotation source. Mixed pairs decline. The binding
+/// prefix must also be comment-free.
 fn redundant_rebinding_edits(
   ls: LetStmt,
   base: String,
   base_decl: LetStmt,
   forward: Vector<Span>,
   source: String,
+  type_map: Dict<Int, MonoType>,
 ) Vector<FixEdit> {
   is_alias := case ls.value.kind {
     .Ident(n) => n == base,
@@ -1838,14 +1842,37 @@ fn redundant_rebinding_edits(
   binding_edit: FixEdit = if is_alias {
     .{ start: ls.span.start, end: ls.span.end, replacement: "" }
   } else {
-    ann_ok := case ls.ty {
-      .Some(tmp_ty) => case base_decl.ty {
-        .Some(base_ty) => same_source_type(tmp_ty, base_ty, source),
+    // Initializer evidence is mandatory for every computed advance. Compare
+    // the checker's zonked types (keyed by Expr.id); fail closed on missing,
+    // error, unresolved-meta, or unequal types. This suffices for inferred
+    // pairs; annotated bindings also need the proof below.
+    temp_ty := case type_map[ls.value.id] {
+      .Some(t) => t,
+      .None => return [],
+    }
+    base_ty := case type_map[base_decl.value.id] {
+      .Some(t) => t,
+      .None => return [],
+    }
+    if !comparable_mono(temp_ty) or !comparable_mono(base_ty) or !mono_eq(temp_ty, base_ty) {
+      return []
+    }
+
+    // The checker can record a call's synthesized initializer type while the
+    // local binds to its annotation. Equal fn() Never initializers can thus
+    // bind to different fn() Int / fn() String locals. Keep byte-identical
+    // annotation source for annotated pairs; mixed pairs lack that proof.
+    annotation_ok := case ls.ty {
+      .Some(temp_annotation) => case base_decl.ty {
+        .Some(base_annotation) => same_source_type(temp_annotation, base_annotation, source),
         .None => false,
       },
-      .None => false,
+      .None => case base_decl.ty {
+        .Some(_) => false,
+        .None => true,
+      },
     }
-    if !ann_ok {
+    if !annotation_ok {
       return []
     }
 
@@ -1863,6 +1890,16 @@ fn redundant_rebinding_edits(
   }
 
   edits
+}
+
+/// A MonoType is safe to compare for the rebinding gate only when it is fully
+/// resolved: not an error sentinel (two `ErrorType`s are `mono_eq` but prove
+/// nothing) and free of unresolved meta-vars.
+fn comparable_mono(ty: MonoType) Bool {
+  case ty {
+    .ErrorType => false,
+    _ => !contains_meta(ty),
+  }
 }
 
 /// The unique numbered/marker sibling base for a *computed* candidate, or
@@ -1887,7 +1924,13 @@ fn unique_sibling_base(block: Block, i: Int, ls: LetStmt) String? {
   }
 }
 
-fn shape_one_redundant_finding(block: Block, i: Int, ls: LetStmt, source: String) LintFinding? {
+fn shape_one_redundant_finding(
+  block: Block,
+  i: Int,
+  ls: LetStmt,
+  source: String,
+  type_map: Dict<Int, MonoType>,
+) LintFinding? {
   if ls.is_rebind or ls.is_pub {
     return .None
   }
@@ -1925,7 +1968,7 @@ fn shape_one_redundant_finding(block: Block, i: Int, ls: LetStmt, source: String
     .Uncertain => return .None,
   }
 
-  edits := redundant_rebinding_edits(ls, base, base_decl, forward, source)
+  edits := redundant_rebinding_edits(ls, base, base_decl, forward, source, type_map)
   .Some(redundant_rebinding_finding(ls.span, ls.name, base, is_alias, edits))
 }
 
@@ -2055,13 +2098,15 @@ fn shape_two_redundant_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
   }
 }
 
-fn lint_redundant_rebinding(block: Block, source: String) Vector<LintFinding> {
+fn lint_redundant_rebinding(block: Block, source: String, type_map: Dict<Int, MonoType>) Vector<
+  LintFinding,
+> {
   out: Vector<LintFinding> = []
 
   for stmt, i in block.stmts {
     case stmt {
       .Let(ls) => {
-        case shape_one_redundant_finding(block, i, ls, source) {
+        case shape_one_redundant_finding(block, i, ls, source, type_map) {
           .Some(finding) => out = .append(finding),
           .None => {},
         }

@@ -1,6 +1,6 @@
 # Type-aware auto-fix for `redundant-rebinding` computed advances
 
-**Status: design (approved, pre-plan).** Extends item **B** of
+**Status: implemented with a corrected annotation soundness rule.** Extends item **B** of
 [lint-rebinding-fixers.md](lint-rebinding-fixers.md) (`redundant-rebinding`).
 Supersedes the report-only restriction on computed advances with inferred
 bindings.
@@ -14,11 +14,10 @@ explicit annotations.
 A computed advance is `acc2 := step(acc)` followed by forward uses of `acc2`
 while `acc` goes dead — the fixer rewrites it to `acc = step(acc)` and rethreads
 `acc`. Rebinding `acc` in place is only type-safe when the advance's result type
-equals `acc`'s type. Today the only proof the linter can make is syntactic:
-both bindings carry **byte-identical source annotations** (the `ann_ok` gate in
-`redundant_rebinding_edits`). Inferred `:=` bindings have no annotation to
-compare, so they stay report-only — which is every real site in the boot
-source.
+equals `acc`'s type. Before this change the only proof the linter could make was syntactic:
+both bindings carried **byte-identical source annotations** (the former `ann_ok`
+gate in `redundant_rebinding_edits`). Inferred `:=` bindings had no annotation to
+compare and therefore stayed report-only, including the motivating boot sites.
 
 The counterexample that makes the gate necessary:
 
@@ -65,17 +64,26 @@ The linter already receives `checked.env`; we additionally hand it
 Shape 2 (loop-seed) and the pure-alias case are untouched — a pure alias
 (`foo := bar`) trivially shares its base's type and needs no gate.
 
-## The type gate (replaces `ann_ok`)
+## The type gate and retained annotation proof
 
 In `redundant_rebinding_edits`, for a computed advance (non-alias RHS):
 
 - `temp_ty = type_map[ls.value.id]` — the RHS `acc2` is bound to.
 - `base_ty = type_map[base_decl.value.id]` — `acc`'s binding RHS.
-- Auto-fixable iff `mono_eq(temp_ty, base_ty)`.
+- Require `mono_eq(temp_ty, base_ty)` and the fail-closed guards below for
+  every computed advance.
+- For inferred/inferred bindings, that initializer evidence is sufficient.
+- For annotated/annotated bindings, additionally require byte-identical
+  annotation source through `same_source_type`.
+- For mixed inferred/annotated bindings in either order, decline the fix.
 
-This single check subsumes the old annotation comparison: an annotated binding
-has an inferred type in `type_map` too, so the "matching annotations" case keeps
-working without a separate code path.
+**Design correction:** the original proposal assumed initializer `type_map`
+equality subsumed annotation comparison. Implementation review disproved that:
+the checker can record a call's synthesized initializer type while binding the
+local to its annotation. Both initializers can have type `fn() Never`, yet the
+locals can be annotated `fn() Int` and `fn() String`. Those equal initializer
+types do not justify collapsing the locals. Retaining `same_source_type` for
+annotated pairs and declining mixed pairs preserves the bound-type proof.
 
 **Fail-closed guards** — stay report-only (empty `edits`), never emit an
 unproven rewrite — when any of:
@@ -91,7 +99,7 @@ The existing comment/prefix guard (decline when the binding prefix contains
 
 - **Sibling-name heuristic** (`acc`→`acc2`, closed marker set) decides *whether
   to flag* a computed advance at all — ceremony detection. Unchanged.
-- **Type-equality** decides *whether it is safe to auto-fix*. This is the only
+- **Type evidence and annotation compatibility** decide *whether it is safe to auto-fix*. This is the only
   thing this change touches.
 
 A meaningful rename (`items` → `sorted`) is still not a sibling and is never
@@ -121,7 +129,15 @@ private copy is out of scope.
   still fires as a finding but **declines** (report-only, empty edits) because
   `Int ≠ String`.
 - **Annotated regression:** the existing "rewrites a computed candidate with
-  matching annotations" test stays green via the same type path.
+  matching annotations" test stays green with both initializer evidence and
+  the retained source-annotation proof. Nested-`Never` initializers with
+  differing annotations stay report-only.
+- **Mixed annotation characterization:** inferred base/annotated temp and
+  annotated base/inferred temp each retain the structural finding with empty
+  edits, even when both initializers are `Int`.
+- **Fixture validity:** the checker-backed helper rejects parse, resolver, and
+  checker errors through `Result`; deliberate error/meta type-map injection
+  remains a separate helper.
 - **Fail-closed:** a candidate whose inferred type is unresolved/error stays
   report-only.
 
@@ -133,11 +149,11 @@ fixed point (this is analysis-only and MUST NOT change codegen) → dogfood
 
 ## Risks / non-goals
 
-- **Annotated-widening edge** (e.g. `x: Anyref = foo()`): the base type is read
-  from `type_map[base_decl.value.id]`. Under check-mode the value's id should
-  record the pushed-down expected (annotation) type; verify during
-  implementation, and rely on the fail-closed guards otherwise. The unlocked
-  target case — inferred `:=` — is always exact (the bound type *is* the value's
-  synthesized type).
+- **Annotated-widening edge:** initializer evidence need not equal the annotated
+  local's bound type, including nested-`Never` function results. The retained
+  annotation proof is mandatory; missing/error/meta guards alone do not address
+  this mismatch. Mixed pairs and differently spelled annotations are deliberately
+  conservative, even when their local types happen to agree. The unlocked
+  inferred/inferred case has no separate annotation to widen the bound type.
 - **Non-goals:** the sibling-name heuristic, Shape 2 (loop-seed),
   `closure_convert`'s private `mono_eq`.

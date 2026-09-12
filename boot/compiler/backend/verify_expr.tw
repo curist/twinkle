@@ -11,7 +11,7 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.verify_common.{
-  EdgeClass, check_repr_edge, fail_func, fail_slot, mono_eq, mono_name, repr_name, slot_role_name,
+  EdgeClass, check_repr_edge, fail_func, fail_slot, mono_name, repr_name, slot_role_name,
   val_type_name, vec_repr_edge_cap,
 }
 use compiler.builtins.{BuiltinRegistry}
@@ -20,7 +20,7 @@ use compiler.codegen.wasm_layout.{layout_of_backend, val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
 use compiler.elem_family.{all_families}
-use compiler.mono_type.{MonoType}
+use compiler.mono_type.{MonoType, mono_eq}
 use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
 
 /// Invariant context threaded through the per-function expression walk.

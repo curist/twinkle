@@ -3,14 +3,17 @@ use @std.testing as runner
 
 use commands.lint as lintcmd
 use compiler.base_env
+use compiler.checker
 use compiler.lint
 use compiler.lint_rules
+use compiler.mono_type.{MonoType}
 use compiler.parser
+use compiler.resolver
 use lib.source.report.{FixEdit}
 
 fn findings(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)
-  lint.lint_module(parsed.value, base_env.builtin_env(), src)
+  lint.lint_module(parsed.value, base_env.builtin_env(), Dict.new(), src)
 }
 
 // Findings for a single rule — the suite runs the whole rule set, so other
@@ -87,6 +90,83 @@ fn rr_findings(src: String) Vector<lint.LintFinding> {
     } else {
       continue
     }
+  }
+}
+
+// Like `rr_findings`, but runs resolve + check first so lint_module receives a
+// real (zonked) type_map. Reject setup errors so invalid fixtures cannot pass
+// report-only assertions accidentally. Deliberate ErrorType/MetaVar evidence
+// belongs in rr_findings_with_initializer_types instead.
+fn rr_findings_typed(src: String) Result<Vector<lint.LintFinding>, String> {
+  parsed := parser.parse(src, 0)
+  for d in parsed.diagnostics {
+    case d {
+      .Error(_) => return .Err("parse error: ${d.message()}"),
+      .Warning(_) => {},
+    }
+  }
+
+  resolved := resolver.resolve(base_env.builtin_env(), parsed.value)
+  for d in resolved.diagnostics {
+    case d {
+      .Error(_) => return .Err("resolve error: ${d.message()}"),
+      .Warning(_) => {},
+    }
+  }
+
+  checked := checker.check(parsed.value, resolved.env, false)
+  for d in checked.diagnostics {
+    case d {
+      .Error(_) => return .Err("check error: ${d.message()}"),
+      .Warning(_) => {},
+    }
+  }
+
+  all := lint.lint_module(parsed.value, checked.env, checked.type_map, src)
+
+  .Ok(
+    collect f in all {
+      if f.rule == "redundant-rebinding" {
+        f
+      } else {
+        continue
+      }
+    },
+  )
+}
+
+// Parse a computed-advance fixture, map its two initializer Expr.ids to the
+// supplied types, and run the real lint entry point. Returning an error for an
+// unexpected AST shape prevents malformed fixtures from passing as no-findings.
+fn rr_findings_with_initializer_types(src: String, base_ty: MonoType, temp_ty: MonoType) Result<
+  Vector<lint.LintFinding>,
+  String,
+> {
+  module := parser.parse(src, 0).value
+
+  case module.items[0] {
+    .Function(decl) => case decl.body.stmts[0] {
+      .Let(base_decl) => case decl.body.stmts[1] {
+        .Let(temp_decl) => {
+          type_map: Dict<Int, MonoType> = Dict.new()
+          type_map[base_decl.value.id] = base_ty
+          type_map[temp_decl.value.id] = temp_ty
+          all := lint.lint_module(module, base_env.builtin_env(), type_map, src)
+          .Ok(
+            collect f in all {
+              if f.rule == "redundant-rebinding" {
+                f
+              } else {
+                continue
+              }
+            },
+          )
+        },
+        _ => .Err("expected the second function statement to be a let"),
+      },
+      _ => .Err("expected the first function statement to be a let"),
+    },
+    _ => .Err("expected a parser-produced function"),
   }
 }
 
@@ -560,10 +640,39 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-rebinding: typed fixtures reject parse errors",
+      fn() {
+        case rr_findings_typed("fn f( {") {
+          .Err(message) => assert.str_contains(message, "parse error:"),
+          .Ok(_) => .Err("invalid parsed fixture was silently accepted"),
+        }
+      },
+    )
+    .test(
+      "redundant-rebinding: typed fixtures reject resolver errors",
+      fn() {
+        case rr_findings_typed("fn f(x: UnknownType) Int { 0 }") {
+          .Err(message) => assert.str_contains(message, "resolve error:"),
+          .Ok(_) => .Err("invalid resolved fixture was silently accepted"),
+        }
+      },
+    )
+    .test(
+      "redundant-rebinding: typed fixtures reject checker errors",
+      fn() {
+        // Undefined helpers used to leave a plausible report-only finding.
+        src := "fn f() Int {\n  acc := 0\n  acc2 := missing_step(acc)\n  missing_consume(acc2)\n}\n"
+        case rr_findings_typed(src) {
+          .Err(message) => assert.str_contains(message, "check error:"),
+          .Ok(_) => .Err("invalid checked fixture was silently accepted"),
+        }
+      },
+    )
+    .test(
       "redundant-rebinding: rewrites a computed candidate with matching annotations",
       fn() {
-        src := "fn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
-        fs := rr_findings(src)
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 2)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
@@ -574,10 +683,70 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "redundant-rebinding: annotated nested Never initializer types stay report-only",
+      fn() {
+        src := "fn bottom() Never { error(\"stop\") }\nfn seed() fn() Never { bottom }\nfn step(x: fn() Int) fn() Never { bottom }\nfn consume(x: fn() String) String { x() }\nfn f() String {\n  acc: fn() Int = seed()\n  acc2: fn() String = step(acc)\n  consume(acc2)\n}\n"
+        fs := try rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: inferred computed advance with matching types is fixable",
+      fn() {
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n"
+        fs := try rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+
+        // Binding rewrite (`acc2 := ` -> `acc = `) plus one forward rename.
+        try assert.equal(fs[0].edits.len(), 2)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_true(fixed.contains("acc = step(acc)"))
+        try assert.is_true(fixed.contains("consume(acc)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: inferred base and annotated temp stay report-only",
+      fn() {
+        // Characterizes the mixed-pair guard: both initializer types are Int.
+        src := "fn step(x: Int) Int { x }\nfn f() Int {\n  acc := 0\n  acc2: Int = step(acc)\n  acc2\n}\n"
+        fs := try rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: annotated base and inferred temp stay report-only",
+      fn() {
+        // Characterizes the other mixed-pair branch with equal Int initializers.
+        src := "fn step(x: Int) Int { x }\nfn f() Int {\n  acc: Int = 0\n  acc2 := step(acc)\n  acc2\n}\n"
+        fs := try rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: a computed advance that changes type declines the fix",
+      fn() {
+        // `acc2` is a numbered sibling of `acc` and reads it, so the rule fires;
+        // but `to_s` returns String while `acc` is Int, so rebinding `acc` would
+        // be a type error. The fix must decline (report-only).
+        src := "fn to_s(x: Int) String {\n  \"s\"\n}\nfn use_s(x: String) Int {\n  0\n}\nfn f() Int {\n  acc := 0\n  acc2 := to_s(acc)\n  use_s(acc2)\n}\n"
+        fs := try rr_findings_typed(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-rebinding: renames every forward occurrence",
       fn() {
-        src := "fn f() Int {\n  state: Int = initial()\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
-        fs := rr_findings(src)
+        src := "fn step(x: Int) Int {\n  x\n}\nfn combine(a: Int, b: Int) Int {\n  a\n}\nfn f() Int {\n  state: Int = 0\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
 
         // Binding rewrite plus one edit per forward read.
@@ -621,8 +790,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-rebinding: computed unannotated candidates stay report-only",
+      "redundant-rebinding: declines a computed advance when no type info is available",
       fn() {
+        // Parse-only (no checker): the type gate can't prove the rebind is safe,
+        // so the finding stays report-only.
         fs := rr_findings(
           "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n",
         )
@@ -632,11 +803,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "redundant-rebinding: differing annotations stay report-only",
+      "redundant-rebinding: ErrorType initializer types decline the fix",
       fn() {
-        fs := rr_findings(
-          "fn f() Int {\n  cache: Int = initial()\n  cache2: Other = step(cache)\n  consume(cache2)\n}\n",
-        )
+        src := "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n"
+        fs := try rr_findings_with_initializer_types(src, MonoType.ErrorType, MonoType.ErrorType)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: nested MetaVar initializer types decline the fix",
+      fn() {
+        src := "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n"
+        unresolved := MonoType.Vector(MonoType.MetaVar(7))
+        fs := try rr_findings_with_initializer_types(src, unresolved, unresolved)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -645,9 +826,8 @@ pub fn suite() runner.Suite {
     .test(
       "redundant-rebinding: a comment in the binding prefix stays report-only",
       fn() {
-        fs := rr_findings(
-          "fn f() Int {\n  cache: Int = initial()\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n",
-        )
+        src := "fn step(x: Int) Int {\n  x\n}\nfn consume(x: Int) Int {\n  x\n}\nfn f() Int {\n  cache: Int = 0\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n"
+        fs := try rr_findings_typed(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
@@ -796,7 +976,7 @@ pub fn suite() runner.Suite {
             .Stmt(public_stmt) => {
               decl.body.stmts[1] = public_stmt
               module.items[0] = .Function(decl)
-              fs := lint.lint_module(module, base_env.builtin_env(), src)
+              fs := lint.lint_module(module, base_env.builtin_env(), Dict.new(), src)
               numbered := collect f in fs {
                 if f.rule == "redundant-rebinding" {
                   f

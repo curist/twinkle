@@ -957,7 +957,9 @@ fn collect_local_findings(
   local_lints: Vector<LintHit> = if state.lint_mode and !is_internal {
     // Structural lints (L3/L4) from the AST visitor + type-dependent lints
     // (L2, …) collected by the checker.
-    all_findings := lint.lint_module(parsed.module, checked.env, source.text).concat(checked.lints)
+    all_findings := lint
+      .lint_module(parsed.module, checked.env, checked.type_map, source.text)
+      .concat(checked.lints)
     collect f in all_findings {
       .{ path: source.identity.path, finding: f }
     }
