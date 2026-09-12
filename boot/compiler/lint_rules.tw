@@ -24,26 +24,37 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
-    "numbered-rebinding" => .Some(
+    "redundant-rebinding" => .Some(
       .{
-        brief: "a numbered or suffixed binding only advances an existing value; rebind that value",
+        brief: "a fresh binding only re-names or advances an existing value; keep using that value",
         detailed:
-          \\A fresh numbered or suffixed name that computes the next value of an
-          \\accumulator and only threads that result forward is unnecessary ceremony.
-          \\Twinkle assignment is rebinding, so keep advancing the original name:
+          \\A fresh binding that just re-names an existing local, or that computes
+          \\the next value of an accumulator under a cosmetic sibling name, only to
+          \\thread that result forward is unnecessary. Twinkle assignment is
+          \\rebinding, so keep using the original name:
           \\
-          \\    // Avoid
+          \\    // Avoid — pure alias
+          \\    b := a
+          \\    consume(b)
+          \\
+          \\    // Avoid — numbered/suffixed advance
           \\    acc2 := step(item, acc)
           \\    consume(acc2)
           \\
           \\    // Prefer
+          \\    consume(a)
           \\    acc = step(item, acc)
           \\    consume(acc)
           \\
-          \\The detector fails closed when it cannot enumerate every read or when
-          \\the old value may still be live. `--fix-numbered-rebinding` rewrites a
-          \\candidate only when the annotations prove the rebind's type and no
-          \\comment sits in the edited prefix; otherwise it stays report-only.
+          \\A pure alias fires regardless of naming; a computed advance fires only
+          \\when the fresh name is a numbered/suffixed sibling of the value it
+          \\advances, so meaningful renames like `sorted := sort(items)` are left
+          \\alone. The detector fails closed when it cannot enumerate every read or
+          \\when the old value may still be live. `--fix-redundant-rebinding`
+          \\rewrites a candidate only when a safe source edit is provable (a pure
+          \\alias deletes the seed; a computed advance needs byte-identical
+          \\annotations and no comment in the edited prefix); otherwise it stays
+          \\report-only.
         ,
       },
     ),

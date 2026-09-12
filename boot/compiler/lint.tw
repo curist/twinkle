@@ -420,7 +420,7 @@ fn is_error_call(expr: Expr) Bool {
 // this block's annotated bindings in statement order as we descend.
 fn lint_block(block: Block, ctx: LintCtx) Vector<LintFinding> {
   out: Vector<LintFinding> = lint_direct_rebinding(block)
-  out = .concat(lint_numbered_rebinding(block, ctx.source))
+  out = .concat(lint_redundant_rebinding(block, ctx.source))
   cur := ctx
   diverged := false
   reported := false
@@ -1508,7 +1508,7 @@ fn lint_direct_rebinding(block: Block) Vector<LintFinding> {
   out
 }
 
-// ── numbered-rebinding ───────────────────────────────────────────────
+// ── redundant-rebinding ───────────────────────────────────────────────
 /// Identifier reads that can be renamed exactly, or a conservative refusal
 /// when an expression role cannot be enumerated without risking a partial
 /// rename.
@@ -1793,13 +1793,19 @@ fn same_source_type(a: TypeExpr, b: TypeExpr, source: String) Bool {
   source.slice(a.span.start, a.span.end) == source.slice(b.span.start, b.span.end)
 }
 
-fn numbered_rebinding_finding(span: Span, tmp: String, base: String, edits: Vector<FixEdit>) LintFinding {
-  .{
-    span,
-    message: "`${tmp}` only advances `${base}`; rebind `${base}` and keep threading that name",
-    rule: "numbered-rebinding",
-    edits,
+fn redundant_rebinding_finding(
+  span: Span,
+  tmp: String,
+  base: String,
+  is_alias: Bool,
+  edits: Vector<FixEdit>,
+) LintFinding {
+  message := if is_alias {
+    "`${tmp}` just re-names `${base}`; use `${base}` directly"
+  } else {
+    "`${tmp}` only advances `${base}`; rebind `${base}` and keep threading that name"
   }
+  .{ span, message, rule: "redundant-rebinding", edits }
 }
 
 /// Gates 7–8. Build the collapse edits for a validated Shape-1 candidate, or `[]`
@@ -1807,7 +1813,7 @@ fn numbered_rebinding_finding(span: Span, tmp: String, base: String, edits: Vect
 /// (`tmp := base`) deletes the whole statement and needs no type gate; a computed
 /// RHS rebinds `base` in place, which requires byte-identical annotations and a
 /// comment-free binding prefix.
-fn numbered_rebinding_edits(
+fn redundant_rebinding_edits(
   ls: LetStmt,
   base: String,
   base_decl: LetStmt,
@@ -1849,11 +1855,12 @@ fn numbered_rebinding_edits(
   edits
 }
 
-fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt, source: String) LintFinding? {
-  if ls.is_rebind or ls.is_pub {
-    return .None
-  }
-
+/// The unique numbered/suffixed sibling base for a *computed* candidate, or
+/// `.None` when zero or several survive gates 2–4. Only the computed shape needs
+/// this heuristic: a fresh name that merely renames the value it advances
+/// (`acc`→`acc2`) is ceremony, whereas a meaningful rename (`items`→`sorted`) is
+/// not — the sibling relationship is the only signal that the name adds nothing.
+fn unique_sibling_base(block: Block, i: Int, ls: LetStmt) String? {
   surviving: Vector<String> = []
   for base in sibling_base_candidates(ls.name) {
     if is_numbered_sibling(ls.name, base)
@@ -1863,11 +1870,38 @@ fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt, source: String)
     }
   }
 
-  if surviving.len() != 1 {
+  if surviving.len() == 1 {
+    .Some(surviving[0])
+  } else {
+    .None
+  }
+}
+
+fn shape_one_redundant_finding(block: Block, i: Int, ls: LetStmt, source: String) LintFinding? {
+  if ls.is_rebind or ls.is_pub {
     return .None
   }
 
-  base := surviving[0]
+  // A pure alias `tmp := base` is unnecessary regardless of naming — no
+  // transformation, just a second name — so the base is the aliased name
+  // directly. A computed advance still requires the sibling-name heuristic.
+  is_alias := case ls.value.kind {
+    .Ident(_) => true,
+    _ => false,
+  }
+  base := case ls.value.kind {
+    .Ident(name) => name,
+    _ => case unique_sibling_base(block, i, ls) {
+      .Some(b) => b,
+      .None => return .None,
+    },
+  }
+
+  base_decl := case same_block_declaration(block, i - 1, base) {
+    .Some(decl) => decl,
+    .None => return .None,
+  }
+
   if source_used_after(block, i, base) {
     return .None
   }
@@ -1881,13 +1915,8 @@ fn shape_one_numbered_finding(block: Block, i: Int, ls: LetStmt, source: String)
     .Uncertain => return .None,
   }
 
-  base_decl := case same_block_declaration(block, i - 1, base) {
-    .Some(decl) => decl,
-    .None => return .None,
-  }
-
-  edits := numbered_rebinding_edits(ls, base, base_decl, forward, source)
-  .Some(numbered_rebinding_finding(ls.span, ls.name, base, edits))
+  edits := redundant_rebinding_edits(ls, base, base_decl, forward, source)
+  .Some(redundant_rebinding_finding(ls.span, ls.name, base, is_alias, edits))
 }
 
 fn shape_two_loop_is_valid(fs: ForStmt, tmp: String, base: String) Bool {
@@ -1930,7 +1959,7 @@ fn shape_two_loop_is_valid(fs: ForStmt, tmp: String, base: String) Bool {
   updates > 0
 }
 
-fn shape_two_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
+fn shape_two_redundant_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
   if ls.is_rebind or ls.is_pub or ls.name != "cur" {
     return .None
   }
@@ -1961,7 +1990,7 @@ fn shape_two_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
 
   case block.stmts[i + 1] {
     .For(fs) => if shape_two_loop_is_valid(fs, "cur", base) {
-      .Some(numbered_rebinding_finding(ls.span, "cur", base, []))
+      .Some(redundant_rebinding_finding(ls.span, "cur", base, false, []))
     } else {
       .None
     },
@@ -1969,17 +1998,17 @@ fn shape_two_numbered_finding(block: Block, i: Int, ls: LetStmt) LintFinding? {
   }
 }
 
-fn lint_numbered_rebinding(block: Block, source: String) Vector<LintFinding> {
+fn lint_redundant_rebinding(block: Block, source: String) Vector<LintFinding> {
   out: Vector<LintFinding> = []
 
   for stmt, i in block.stmts {
     case stmt {
       .Let(ls) => {
-        case shape_one_numbered_finding(block, i, ls, source) {
+        case shape_one_redundant_finding(block, i, ls, source) {
           .Some(finding) => out = .append(finding),
           .None => {},
         }
-        case shape_two_numbered_finding(block, i, ls) {
+        case shape_two_redundant_finding(block, i, ls) {
           .Some(finding) => out = .append(finding),
           .None => {},
         }
