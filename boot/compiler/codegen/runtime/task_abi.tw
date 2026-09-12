@@ -15,6 +15,10 @@ use compiler.codegen.wasm_ir.{ImportDef}
 host_module := "task"
 pub sym_task_create := "task_create"
 pub sym_suspend_await := "suspend_await"
+pub sym_suspend_try_await := "suspend_try_await"
+pub sym_try_await_is_ok := "try_await_is_ok"
+pub sym_try_await_ok_value := "try_await_ok_value"
+pub sym_try_await_err_message := "try_await_err_message"
 pub sym_suspend_yield := "suspend_yield"
 pub sym_channel_new := "channel_new"
 pub sym_channel_bounded := "channel_bounded"
@@ -43,6 +47,37 @@ pub fn imports() Vector<ImportDef> {
       name: sym_suspend_await,
       as_sym: sym_suspend_await,
       params: [.I32],
+      results: [.Anyref],
+    },
+    // try_await: suspend for the settle, then split the opaque discriminant into
+    // is-ok / ok-value / err-message, mirroring the channel_recv trio. Only the
+    // suspend is a Suspending import; the three inspectors are plain calls.
+    ImportDef.{
+      module: host_module,
+      name: sym_suspend_try_await,
+      as_sym: sym_suspend_try_await,
+      params: [.I32],
+      results: [.Anyref],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_try_await_is_ok,
+      as_sym: sym_try_await_is_ok,
+      params: [.Anyref],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_try_await_ok_value,
+      as_sym: sym_try_await_ok_value,
+      params: [.Anyref],
+      results: [.Anyref],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_try_await_err_message,
+      as_sym: sym_try_await_err_message,
+      params: [.Anyref],
       results: [.Anyref],
     },
     ImportDef.{

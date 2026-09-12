@@ -316,18 +316,29 @@ kills the whole program with no per-task recovery. That's inconsistent with the
 language's `Result`/`try` story for recoverable errors. Add a way to await a task
 and recover from its failure.
 
-**Design decision to settle first:** the error type. Twinkle traps carry a
-string message (see runtime stack-trace work). Options:
-- `try_await<T>(Task<T>) Result<T, String>` — simplest; failure message as
-  `String`. Recommended for a first cut.
-- A structured `TaskError` record (message + optional source span). More work;
-  defer unless the trap machinery already surfaces structured info cheaply.
+**Design decisions (SETTLED 2026-09-13 with the API owner):**
 
-Note: **only recoverable `error(...)` failures should be catchable.** Hard traps
-(OOB, div0) must stay uncatchable — mirror `defer`'s "does not trigger on traps"
-rule (spec §12) and the panic/OOB behavior from the runtime-stack-traces work.
-Decide explicitly whether `try_await` catches only `error(...)`-originated
-failures or all non-fatal task failures, and document it.
+- **Error type: `try_await<T>(Task<T>) Result<T, String>`.** Failure surfaces as
+  the trap message string — the simplest first cut, consistent with the existing
+  `Result`/`try` story. A structured `TaskError` (message + source span) can be
+  layered on later without breaking this shape.
+- **Catch scope: ALL task failures are converted to `.Err(message)`.** Any
+  failure raised while the task body runs — explicit `error(...)`, out-of-bounds
+  panic, or a native Wasm trap (div0, unreachable) — is caught at the
+  `try_await` boundary and returned as `.Err`. This deliberately departs from the
+  spec §12 "hard traps are uncatchable" letter, on the rationale that a spawned
+  task's stack is isolated by JSPI and all values are immutable, so a crashed
+  task cannot corrupt the awaiter (an Erlang-style "isolate the crash" model).
+  It also sidesteps a concrete implementation blocker: `error(...)` and the
+  out-of-bounds panic (`__panic_oob`) both route through the same trap
+  string-sink and are tagged with the identical `twinkleMessage`, so the runtime
+  genuinely cannot tell a recoverable `error()` from an OOB panic without new
+  plumbing. "Catch all" needs no discriminator and keeps the semantics uniform.
+  The message is extracted exactly as the trap renderer does it
+  (`twinkleMessage ?? message`); `try_await` does **not** invoke the renderer, so
+  `.Err` carries the plain message, not a multi-line source-mapped trace.
+- **`await` is unchanged.** Plain `Task.await` still propagates a failure as a
+  trap; `try_await` is the opt-in recoverable variant.
 
 **Files:**
 - Modify: `boot/prelude/signatures/task.tw` (add `try_await` signature stub).
@@ -342,11 +353,11 @@ failures or all non-fatal task failures, and document it.
   to keep the module linking.
 - Test: `boot/tests/suites/task_suite.tw`, `tools/js_runtime/runtime.test.mjs`.
 
-- [ ] **Step 1: Write the design note** capturing the error-type decision and
-  the catch-scope (error-only vs all-non-fatal) at the top of this workstream or
-  in `docs/design/`. This is the gate — do not implement before it's settled.
+- [x] **Step 1: Write the design note** capturing the error-type decision and
+  the catch-scope (error-only vs all-non-fatal) — settled above (2026-09-13):
+  `Result<T, String>`, catch all task failures.
 
-- [ ] **Step 2: Add a failing boot test** for the success and failure paths:
+- [x] **Step 2: Add a failing boot test** for the success and failure paths:
   ```tw
   .test(
     "try_await recovers from a failed task",
@@ -364,22 +375,22 @@ failures or all non-fatal task failures, and document it.
   (Confirm `assert.contains` exists in `@std.testing.assert`; if not, match on
   the message with `.index_of`.)
 
-- [ ] **Step 3: Add the JS-side failing test** in `runtime.test.mjs` mirroring
+- [x] **Step 3: Add the JS-side failing test** in `runtime.test.mjs` mirroring
   the two paths, so the runtime intrinsic is covered independently of the boot
   compiler.
 
-- [ ] **Step 4: Implement** the signature stub, the runtime intrinsic + non-JSPI
+- [x] **Step 4: Implement** the signature stub, the runtime intrinsic + non-JSPI
   stub, regenerate `core_lib.tw`, and wire compiler recognition (follow
   `reference_intrinsic_builtin_wiring` / `reference_runtime_builtin_wiring`).
 
-- [ ] **Step 5: Verify** — `make boot-test`, the JS runtime tests
+- [x] **Step 5: Verify** — `make boot-test`, the JS runtime tests
   (`node --test tools/js_runtime/runtime.test.mjs` or the repo's runner), then
   `make stage2`.
 
-- [ ] **Step 6: Document** `try_await` in `docs/API.md` and `docs/spec.md` §15,
-  including the catch-scope rule (traps not caught).
+- [x] **Step 6: Document** `try_await` in `docs/API.md` and `docs/spec.md` §15,
+  including the catch-scope rule (all task failures are caught).
 
-- [ ] **Step 7: Commit** (one commit for the feature + tests + docs, or split
+- [x] **Step 7: Commit** (one commit for the feature + tests + docs, or split
   runtime/boot/docs if a reviewer would gate them separately).
 
 ---

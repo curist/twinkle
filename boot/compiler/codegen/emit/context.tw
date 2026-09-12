@@ -70,6 +70,7 @@ pub type IntrinsicTag = {
   FloatRound,
   TaskSpawn,
   TaskAwait,
+  TaskTryAwait,
   TaskYield,
   ChannelNew,
   ChannelBounded,

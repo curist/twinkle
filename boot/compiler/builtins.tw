@@ -705,6 +705,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr_closure("cell$update", .Some("Cell.update"), .WrapperClosure(.CellUpdate)),
     intr("task$spawn", .Some("Task.spawn")),
     intr("task$await", .Some("Task.await")),
+    intr("task$try_await", .Some("Task.try_await")),
     intr("task$yield", .Some("Task.yield")),
     intr("channel$new", .Some("Channel.new")),
     intr("channel$bounded", .Some("Channel.bounded")),

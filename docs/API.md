@@ -94,6 +94,7 @@ Cooperative task handle. Tasks run on the same program thread and switch only at
 |----------|-----------|-------------|
 | `Task.spawn` | `fn<T>(f: fn() T) Task<T>` | Start `f` as a task and return a handle for its eventual result |
 | `Task.await` | `fn<T>(task: Task<T>) T` | Suspend until `task` completes, then return its result; propagates a task failure as a trap |
+| `Task.try_await` | `fn<T>(task: Task<T>) Result<T, String>` | Suspend until `task` completes; return `.Ok(value)` on success or `.Err(message)` for any failure raised by the task, including runtime traps |
 | `Task.yield` | `fn() Void` | Yield control to the scheduler so another runnable task can make progress |
 
 ### `Channel<T>`

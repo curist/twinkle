@@ -420,10 +420,14 @@ function makeHostImports(b, runtime) {
     println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
     error: (s) => {
       const msg = decodeString(b, s);
-      // When a child-trap renderer is active (the `twk run` path), the boundary
-      // handler is the sole printer, so skip the pre-print here to avoid
-      // double-printing the message. Otherwise keep today's write-then-throw.
-      if (!runtime.suppressErrorPrint) write(runtime.stderr, msg + "\n");
+      // A child-trap renderer is the sole printer on the `twk run` path. A
+      // spawned task also defers reporting to its await/unawaited-failure
+      // boundary: try_await may recover it, while unrecovered failures still
+      // reject the enclosing run. Top-level direct-runtime errors retain the
+      // existing write-then-throw behavior.
+      const inSpawnedTask = runtime.scheduler?.current !== undefined
+        && runtime.scheduler.current !== 0;
+      if (!runtime.suppressErrorPrint && !inSpawnedTask) write(runtime.stderr, msg + "\n");
       const err = new Error("host.error: " + msg);
       err.twinkleMessage = msg; // raw message for the trap renderer
       throw err;
@@ -725,6 +729,10 @@ function makeTaskUnavailableImports() {
   return {
     task_create: unavailable,
     suspend_await: unavailable,
+    suspend_try_await: unavailable,
+    try_await_is_ok: unavailable,
+    try_await_ok_value: unavailable,
+    try_await_err_message: unavailable,
     suspend_yield: unavailable,
     channel_new: unavailable,
     channel_bounded: unavailable,
@@ -759,7 +767,7 @@ function makeTaskUnavailableImports() {
  * then does it call schedule() to advance. No two resumes interleave, so the
  * single global current is always valid for whichever stack is executing.
  */
-function createTaskScheduler() {
+function createTaskScheduler(bridge) {
   const TOP = 0;
   // Upper bound on how long continuous Task.yield()ing may withhold the host
   // event loop. suspend_yield normally re-schedules via a microtask (cheap), but
@@ -799,6 +807,15 @@ function createTaskScheduler() {
   });
 
   const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
+
+  // try_await converts ANY task failure into an Err-shaped discriminant. The
+  // message is extracted exactly as the trap renderer does it: `error(...)` and
+  // the OOB panic tag the throw with `twinkleMessage`; native wasm traps carry
+  // only V8's `.message`.
+  const tryFailResult = (err) => ({
+    kind: "err",
+    message: (err && (err.twinkleMessage ?? err.message)) ?? "runtime error",
+  });
 
   function settleDone(fn) {
     if (s.settled) return;
@@ -879,10 +896,17 @@ function createTaskScheduler() {
     for (const w of ws) {
       s.blockedOnTask--;
       if (rec.state === "failed") {
-        const err = asError(rec.error);
-        s.runnable.push({ kind: "resume", id: w.id, fire: () => w.reject(err) });
+        // A try_await waiter never rejects: it observes the failure as an
+        // Err-shaped discriminant so the awaiter can recover it as a Result.
+        if (w.tryMode) {
+          const result = tryFailResult(rec.error);
+          s.runnable.push({ kind: "resume", id: w.id, fire: () => w.resolve(result) });
+        } else {
+          const err = asError(rec.error);
+          s.runnable.push({ kind: "resume", id: w.id, fire: () => w.reject(err) });
+        }
       } else {
-        const result = rec.result;
+        const result = w.tryMode ? { kind: "ok", value: rec.result } : rec.result;
         s.runnable.push({ kind: "resume", id: w.id, fire: () => w.resolve(result) });
       }
     }
@@ -945,6 +969,42 @@ function createTaskScheduler() {
     });
     schedule();
     return p;
+  }
+
+  // suspend_try_await(targetId) -> anyref : like suspend_await, but a task
+  // failure is returned as an Err-shaped discriminant object instead of
+  // re-thrown. The caller parks until the target settles, then inspects the
+  // result with try_await_is_ok / try_await_ok_value / try_await_err_message.
+  // Marking the target `awaited` suppresses the unawaited-failure drain so a
+  // recovered task is not also surfaced as the program's failure.
+  async function suspendTryAwait(targetId) {
+    const tid = Number(targetId);
+    const target = s.tasks.get(tid);
+    if (!target) throw new Error("Task.try_await: invalid task id " + tid);
+    target.awaited = true;
+    if (target.state === "done") return { kind: "ok", value: target.result };
+    if (target.state === "failed") return tryFailResult(target.error);
+    const caller = s.current;
+    s.blockedOnTask++;
+    const p = new Promise((resolve, reject) => {
+      target.waiters.push({ id: caller, resolve, reject, tryMode: true });
+    });
+    schedule();
+    return p;
+  }
+
+  function tryAwaitIsOk(result) {
+    return result?.kind === "ok" ? 1 : 0;
+  }
+
+  function tryAwaitOkValue(result) {
+    if (result?.kind !== "ok") throw new Error("Task.try_await: failed result has no value");
+    return result.value;
+  }
+
+  function tryAwaitErrMessage(result) {
+    if (result?.kind !== "err") throw new Error("Task.try_await: ok result has no error message");
+    return encodeString(bridge, result.message);
   }
 
   // suspend_yield() -> void : re-enqueue at the back of the runnable queue.
@@ -1123,6 +1183,10 @@ function createTaskScheduler() {
   s.imports = {
     task_create: taskCreate,
     suspend_await: new WebAssembly.Suspending(suspendAwait),
+    suspend_try_await: new WebAssembly.Suspending(suspendTryAwait),
+    try_await_is_ok: tryAwaitIsOk,
+    try_await_ok_value: tryAwaitOkValue,
+    try_await_err_message: tryAwaitErrMessage,
     suspend_yield: new WebAssembly.Suspending(suspendYield),
     channel_new: channelNew,
     channel_bounded: channelBounded,
@@ -1216,7 +1280,8 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   let scheduler = null;
   if (needsTasks || taskNeedUnknown) {
     if (jspi) {
-      scheduler = createTaskScheduler();
+      scheduler = createTaskScheduler(b);
+      runtime.scheduler = scheduler;
       hostImports.task = scheduler.imports;
     } else {
       hostImports.task = makeTaskUnavailableImports();

@@ -1200,6 +1200,13 @@ signatures are in [docs/API.md](API.md).
 * `Task.spawn(f: fn() T) Task<T>` — start `f` as a task and return a handle.
 * `Task.await(t: Task<T>) T` — suspend the current task until `t` completes, then
   return its result; a task failure propagates as a trap.
+* `Task.try_await(t: Task<T>) Result<T, String>` — suspend until `t` completes,
+  returning `.Ok(value)` on success or `.Err(message)` if the task failed. This
+  catches every failure raised within the spawned task, including `error(...)`,
+  out-of-bounds panics, and native WebAssembly traps. The error contains the
+  plain trap message rather than a rendered source-mapped trace. This recovery
+  boundary is specific to spawned tasks; traps remain uncatchable within the
+  task's own control flow.
 * `Task.yield() Void` — yield control to the scheduler so another runnable task
   can make progress.
 

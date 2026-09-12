@@ -421,6 +421,47 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "try_await returns Ok for a successful task",
+      fn() {
+        t := Task.spawn(fn() Int { 21 * 2 })
+        v := try t.try_await()
+        try assert.equal(v, 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "try_await recovers from a failed task",
+      fn() {
+        good := Task.spawn(fn() Int { 1 })
+        bad := Task.spawn(fn() Int { error("boom") })
+        v := try good.try_await()
+        try assert.equal(v, 1)
+        try assert.err_contains(bad.try_await(), "boom")
+        .Ok({})
+      },
+    )
+    .test(
+      "try_await recovers from a void task failure",
+      fn() {
+        bad: Task<Void> = Task.spawn(fn() { error("kaboom") })
+        try assert.err_contains(bad.try_await(), "kaboom")
+        .Ok({})
+      },
+    )
+    .test(
+      "try_await recovers from a task runtime trap",
+      fn() {
+        bad := Task.spawn(fn() Int {
+          xs := collect i in range(1) {
+            i
+          }
+          xs[2]
+        })
+        try assert.err_contains(bad.try_await(), "out of bounds")
+        .Ok({})
+      },
+    )
+    .test(
       "Task.yield does not starve host timers",
       fn() {
         woke := Cell.new(false)

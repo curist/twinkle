@@ -293,6 +293,91 @@ test("task scheduler runs other tasks while a Promise-returning extern is pendin
   assert.equal(stdout, "a\nc\nb\n");
 });
 
+test("try_await returns Ok with the value for a successful task", async () => {
+  const src = [
+    "t := Task.spawn(fn() Int { 21 * 2 })",
+    "case t.try_await() {",
+    "  .Ok(v) => println(\"ok ${v}\"),",
+    "  .Err(msg) => println(\"err ${msg}\"),",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+  });
+
+  assert.equal(stdout, "ok 42\n");
+});
+
+test("try_await recovers a failed task as Err with the message", async () => {
+  const src = [
+    "t := Task.spawn(fn() Int { error(\"boom\") })",
+    "case t.try_await() {",
+    "  .Ok(v) => println(\"ok ${v}\"),",
+    "  .Err(msg) => println(\"err ${msg}\"),",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+  let stderr = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+    stderr: { write(chunk) { stderr += chunk; return true; } },
+  });
+
+  assert.equal(stdout, "err boom\n");
+  assert.equal(stderr, "");
+});
+
+test("try_await recovers a task runtime trap as Err", async () => {
+  const src = [
+    "t := Task.spawn(fn() Int {",
+    "  xs := collect i in range(1) { i }",
+    "  xs[2]",
+    "})",
+    "case t.try_await() {",
+    "  .Ok(v) => println(\"ok ${v}\"),",
+    "  .Err(msg) => println(\"err ${msg}\"),",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+  let stderr = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+    stderr: { write(chunk) { stderr += chunk; return true; } },
+  });
+
+  assert.match(stdout, /^err index 2 out of bounds for length 1\n$/);
+  assert.equal(stderr, "");
+});
+
+test("try_await recovers a native Wasm trap as Err", async () => {
+  const src = [
+    "fn divide(a: Int, b: Int) Int { a / b }",
+    "t := Task.spawn(fn() Int { divide(1, 0) })",
+    "case t.try_await() {",
+    "  .Ok(v) => println(\"ok ${v}\"),",
+    "  .Err(msg) => println(\"err ${msg}\"),",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+  let stderr = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+    stderr: { write(chunk) { stderr += chunk; return true; } },
+  });
+
+  assert.match(stdout, /^err .*divide by zero\n$/);
+  assert.equal(stderr, "");
+});
+
 test("auto-bridged extern Int arguments arrive as precise BigInts", async () => {
   const src = [
     "extern host {",

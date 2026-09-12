@@ -8,5 +8,12 @@ pub fn await<T>(task: Task<T>) T {
   0
 }
 
+/// Wait for a task to complete, recovering a failure as an `Err` instead of
+/// trapping. Any failure raised while the task body runs — `error(...)`, an
+/// out-of-bounds panic, or a native trap — is returned as `.Err(message)`.
+pub fn try_await<T>(task: Task<T>) Result<T, String> {
+  .Ok(0)
+}
+
 /// Yield control to the scheduler, allowing other tasks to run.
 pub fn yield() Void {}
