@@ -3,10 +3,18 @@
 > **For agentic workers:** implement the "Implementation plan (brief)" section
 > task-by-task; each step is independently shippable and self-host-verified.
 
-**Status: IMPLEMENTED (2026-09-12).** Turns Pattern B of
-[lint-rebinding-fixers.md](lint-rebinding-fixers.md) into a concrete design.
-Adds a `twk lint` rule `numbered-rebinding` (report-only first) with a
-machine-applicable auto-fix under `--fix-numbered-rebinding`.
+**Status: IMPLEMENTED (2026-09-12), then renamed + broadened.** Turns Pattern B
+of [lint-rebinding-fixers.md](lint-rebinding-fixers.md) into a concrete design.
+
+> **Post-landing revision (2026-09-12):** the rule was renamed
+> `numbered-rebinding` → **`redundant-rebinding`** (flag
+> `--fix-redundant-rebinding`) and its scope broadened. The insight: the defect
+> is *unnecessary* aliasing/rebinding, not numbering. A **pure alias**
+> (`foo := bar`) now fires regardless of naming — it adds no information — while
+> a **computed advance** (`acc2 := f(acc)`) still requires the numbered/suffixed
+> sibling heuristic so meaningful renames (`sorted := sort(items)`) are left
+> alone. Everything below is the original spec; read `numbered-rebinding` as
+> `redundant-rebinding` and note gate 4 now applies only to the computed shape.
 
 - **Task 1 — detection (report-only):** landed `e39c88e6` (gates 1–6, Shape 2
   detect-only, unit fixtures).

@@ -80,9 +80,9 @@ fn pid_findings(src: String) Vector<lint.LintFinding> {
   }
 }
 
-fn nr_findings(src: String) Vector<lint.LintFinding> {
+fn rr_findings(src: String) Vector<lint.LintFinding> {
   collect f in findings(src) {
-    if f.rule == "numbered-rebinding" {
+    if f.rule == "redundant-rebinding" {
       f
     } else {
       continue
@@ -499,19 +499,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: reports a straight-line forward thread without edits",
+      "redundant-rebinding: reports a straight-line forward thread without edits",
       fn() {
-        fs := nr_findings("fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n")
+        fs := rr_findings("fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n}\n")
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: rewrites a pure alias by deleting the seed and renaming",
+      "redundant-rebinding: rewrites a pure alias by deleting the seed and renaming",
       fn() {
         src := "fn f() Int {\n  acc := 0\n  acc2 := acc\n  consume(acc2)\n}\n"
-        fs := nr_findings(src)
+        fs := rr_findings(src)
         try assert.equal(fs.len(), 1)
 
         // Whole-statement delete plus one forward rename; no type gate needed.
@@ -523,10 +523,36 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: rewrites a computed candidate with matching annotations",
+      "redundant-rebinding: a pure alias fires regardless of naming",
+      fn() {
+        // `foo := bar` is unnecessary even though `foo` is not a numbered or
+        // suffixed sibling of `bar` — a pure alias adds no information.
+        src := "fn f() Int {\n  bar := 0\n  foo := bar\n  consume(foo)\n}\n"
+        fs := rr_findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 2)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.is_false(fixed.contains("foo"))
+        try assert.is_true(fixed.contains("consume(bar)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: a computed advance with an unrelated name is left alone",
+      fn() {
+        // `sorted := sort(items)` is a meaningful rename, not ceremony — the
+        // sibling-name heuristic still gates the computed shape.
+        src := "fn f() Int {\n  items := gather()\n  sorted := sort(items)\n  consume(sorted)\n}\n"
+        fs := rr_findings(src)
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-rebinding: rewrites a computed candidate with matching annotations",
       fn() {
         src := "fn f() Int {\n  acc: Int = 0\n  acc2: Int = step(acc)\n  consume(acc2)\n}\n"
-        fs := nr_findings(src)
+        fs := rr_findings(src)
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 2)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
@@ -537,10 +563,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: renames every forward occurrence",
+      "redundant-rebinding: renames every forward occurrence",
       fn() {
         src := "fn f() Int {\n  state: Int = initial()\n  state_next: Int = step(state)\n  combine(state_next, state_next)\n}\n"
-        fs := nr_findings(src)
+        fs := rr_findings(src)
         try assert.equal(fs.len(), 1)
 
         // Binding rewrite plus one edit per forward read.
@@ -552,10 +578,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: pure-alias deletion preserves an intervening comment",
+      "redundant-rebinding: pure-alias deletion preserves an intervening comment",
       fn() {
         src := "fn f() Int {\n  acc := 0\n  acc2 := acc\n  // keep me\n  consume(acc2)\n}\n"
-        fs := nr_findings(src)
+        fs := rr_findings(src)
         try assert.equal(fs.len(), 1)
         fixed := lintcmd.apply_edits(src, fs[0].edits)
         try assert.is_true(fixed.contains("// keep me"))
@@ -564,9 +590,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: enumerates multiple forward reads",
+      "redundant-rebinding: enumerates multiple forward reads",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  state := initial()\n  state_next := step(state)\n  combine(state_next, state_next)\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -574,9 +600,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: reports a leading-marker sibling",
+      "redundant-rebinding: reports a leading-marker sibling",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  slots := initial()\n  new_slots := step(slots)\n  consume(new_slots)\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -584,9 +610,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: computed unannotated candidates stay report-only",
+      "redundant-rebinding: computed unannotated candidates stay report-only",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  cache := initial()\n  cache2 := step(cache)\n  consume(cache2)\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -595,9 +621,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: differing annotations stay report-only",
+      "redundant-rebinding: differing annotations stay report-only",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  cache: Int = initial()\n  cache2: Other = step(cache)\n  consume(cache2)\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -606,9 +632,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: a comment in the binding prefix stays report-only",
+      "redundant-rebinding: a comment in the binding prefix stays report-only",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  cache: Int = initial()\n  cache2: Int // preserve this\n    = step(cache)\n  consume(cache2)\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -617,17 +643,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: requires an exact base read in the candidate RHS",
+      "redundant-rebinding: requires an exact base read in the candidate RHS",
       fn() {
-        fs := nr_findings("fn f() Int {\n  acc := 0\n  acc2 := unrelated()\n  consume(acc2)\n}\n")
+        fs := rr_findings("fn f() Int {\n  acc := 0\n  acc2 := unrelated()\n  consume(acc2)\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: declines when the old base remains live",
+      "redundant-rebinding: declines when the old base remains live",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n  consume(acc)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -635,17 +661,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: leaves an unused numbered binding to unused-bindings",
+      "redundant-rebinding: leaves an unused numbered binding to unused-bindings",
       fn() {
-        fs := nr_findings("fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  1\n}\n")
+        fs := rr_findings("fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  1\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: declines a forward read captured by a closure",
+      "redundant-rebinding: declines a forward read captured by a closure",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() fn() Int {\n  acc := 0\n  acc2 := step(acc)\n  callback := fn() { consume(acc2) }\n  callback\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -653,17 +679,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: declines a record shorthand forward read",
+      "redundant-rebinding: declines a record shorthand forward read",
       fn() {
-        fs := nr_findings("fn f() Box {\n  acc := 0\n  acc2 := step(acc)\n  .{ acc2 }\n}\n")
+        fs := rr_findings("fn f() Box {\n  acc := 0\n  acc2 := step(acc)\n  .{ acc2 }\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: declines later shadowing of the temporary",
+      "redundant-rebinding: declines later shadowing of the temporary",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  consume(acc2)\n  acc2 := replacement()\n  consume(acc2)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -671,9 +697,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: declines a direct temporary rebind",
+      "redundant-rebinding: declines a direct temporary rebind",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  acc2 = step(acc2)\n  consume(acc2)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -681,12 +707,12 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: declines field and index assignment paths",
+      "redundant-rebinding: declines field and index assignment paths",
       fn() {
-        field_fs := nr_findings(
+        field_fs := rr_findings(
           "fn f() Box {\n  acc := initial()\n  acc2 := step(acc)\n  acc2.value = 1\n  acc2\n}\n",
         )
-        index_fs := nr_findings(
+        index_fs := rr_findings(
           "fn f() Vector<Int> {\n  acc := initial()\n  acc2 := step(acc)\n  acc2[0] = 1\n  acc2\n}\n",
         )
         try assert.equal(field_fs.len(), 0)
@@ -695,9 +721,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: fails closed on assignment in the candidate RHS",
+      "redundant-rebinding: fails closed on assignment in the candidate RHS",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := holder.value = acc\n  consume(acc2)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -705,9 +731,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: declines a forward read in a nested block",
+      "redundant-rebinding: declines a forward read in a nested block",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  if ready { consume(acc2) }\n  1\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -715,9 +741,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: fails closed on any forward assignment expression",
+      "redundant-rebinding: fails closed on any forward assignment expression",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  acc2 := step(acc)\n  other.value = 1\n  consume(acc2)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -725,17 +751,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: requires a numbered or suffixed sibling name",
+      "redundant-rebinding: requires a numbered or suffixed sibling name",
       fn() {
-        fs := nr_findings("fn f() Int {\n  acc := 0\n  result := step(acc)\n  consume(result)\n}\n")
+        fs := rr_findings("fn f() Int {\n  acc := 0\n  result := step(acc)\n  consume(result)\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: declines ambiguous sibling bases",
+      "redundant-rebinding: declines ambiguous sibling bases",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  new := 1\n  slots := 2\n  new_slots := combine(new, slots)\n  consume(new_slots)\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -743,7 +769,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: ignores a public temporary binding in the AST",
+      "redundant-rebinding: ignores a public temporary binding in the AST",
       fn() {
         // Public lets are valid only at module scope, so combine parser-produced
         // nodes to exercise the lint gate without an invalid in-function fixture.
@@ -760,7 +786,7 @@ pub fn suite() runner.Suite {
               module.items[0] = .Function(decl)
               fs := lint.lint_module(module, base_env.builtin_env(), src)
               numbered := collect f in fs {
-                if f.rule == "numbered-rebinding" {
+                if f.rule == "redundant-rebinding" {
                   f
                 } else {
                   continue
@@ -776,17 +802,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: same-block declaration gate rejects a parameter base",
+      "redundant-rebinding: same-block declaration gate rejects a parameter base",
       fn() {
-        fs := nr_findings("fn f(acc: Int) Int {\n  acc2 := step(acc)\n  consume(acc2)\n}\n")
+        fs := rr_findings("fn f(acc: Int) Int {\n  acc2 := step(acc)\n  consume(acc2)\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "numbered-rebinding: nested candidate cannot rebind an outer local",
+      "redundant-rebinding: nested candidate cannot rebind an outer local",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f() Int {\n  acc := 0\n  if ready {\n    acc2 := step(acc)\n    consume(acc2)\n  }\n  acc\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -794,9 +820,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: reports the narrow loop-seed shape without edits",
+      "redundant-rebinding: reports the narrow loop-seed shape without edits",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = step(item, cur)\n  }\n  cur\n}\n",
         )
         try assert.equal(fs.len(), 1)
@@ -805,9 +831,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: loop seed declines a header mention",
+      "redundant-rebinding: loop seed declines a header mention",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in select(items, cur) {\n    cur = step(item, cur)\n  }\n  cur\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -815,9 +841,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: loop seed declines a body read of the old base",
+      "redundant-rebinding: loop seed declines a body read of the old base",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  for item in items {\n    cur = combine(cur, acc)\n  }\n  cur\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -825,9 +851,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: loop seed requires the loop immediately after the seed",
+      "redundant-rebinding: loop seed requires the loop immediately after the seed",
       fn() {
-        fs := nr_findings(
+        fs := rr_findings(
           "fn f(items: Vector<Int>) Int {\n  acc := 0\n  cur := acc\n  prepare()\n  for item in items {\n    cur = step(item, cur)\n  }\n  cur\n}\n",
         )
         try assert.equal(fs.len(), 0)
@@ -1628,14 +1654,14 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "numbered-rebinding: describe returns a rationale",
+      "redundant-rebinding: describe returns a rationale",
       fn() {
-        case lint_rules.describe("numbered-rebinding") {
+        case lint_rules.describe("redundant-rebinding") {
           .Some(info) => {
             try assert.is_true(info.brief.len() > 0)
             .Ok({})
           },
-          .None => .Err("expected a rationale for numbered-rebinding"),
+          .None => .Err("expected a rationale for redundant-rebinding"),
         }
       },
     )
