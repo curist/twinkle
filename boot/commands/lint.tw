@@ -539,6 +539,7 @@ pub type FixFlags = .{
   redundant_record_prefix: Bool,
   prefer_cond: Bool,
   prefer_inc_dec: Bool,
+  numbered_rebinding: Bool,
 }
 
 /// A `FixFlags` with every fix disabled — the base for `--fix-<rule>` selection
@@ -556,6 +557,7 @@ pub fn no_fixes() FixFlags {
     redundant_record_prefix: false,
     prefer_cond: false,
     prefer_inc_dec: false,
+    numbered_rebinding: false,
   }
 }
 
@@ -573,6 +575,7 @@ fn wants(flags: FixFlags, rule: String) Bool {
     "redundant-record-prefix" => flags.redundant_record_prefix,
     "prefer-cond" => flags.prefer_cond,
     "prefer-inc-dec" => flags.prefer_inc_dec,
+    "numbered-rebinding" => flags.numbered_rebinding,
     _ => false,
   }
 }
@@ -593,6 +596,7 @@ fn fix_flags_from_args(parsed: ParseResult) FixFlags {
     redundant_record_prefix: fix_all or parsed.has_flag("fix-redundant-record-prefix"),
     prefer_cond: fix_all or parsed.has_flag("fix-prefer-cond"),
     prefer_inc_dec: fix_all or parsed.has_flag("fix-prefer-inc-dec"),
+    numbered_rebinding: fix_all or parsed.has_flag("fix-numbered-rebinding"),
   }
 }
 
@@ -609,6 +613,7 @@ fn any(flags: FixFlags) Bool {
     or flags.redundant_record_prefix
     or flags.prefer_cond
     or flags.prefer_inc_dec
+    or flags.numbered_rebinding
 }
 
 /// Edits for the selected rules, grouped by file path (skips report-only and

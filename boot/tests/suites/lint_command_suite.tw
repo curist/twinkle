@@ -205,6 +205,69 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "select_edits: numbered-rebinding is applied only when its flag is set",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "rebind acc",
+            rule: "numbered-rebinding",
+            edits: [
+              FixEdit.{ start: 10, end: 22, replacement: "acc = " },
+              FixEdit.{ start: 40, end: 44, replacement: "acc" },
+            ],
+          },
+        ]
+
+        none := lint.select_edits_for_test(findings, lint.no_fixes())
+        try assert.is_false(none.has("a.tw"))
+
+        flags := lint.no_fixes()
+        flags.numbered_rebinding = true
+        some := lint.select_edits_for_test(findings, flags)
+        selected := try some["a.tw"].ok_or("expected numbered-rebinding edits")
+        try assert.equal(selected.len(), 2)
+        try assert.equal(selected[0].start, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "select_edits: numbered-rebinding drops a whole finding on any overlap",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "first rebind",
+            rule: "numbered-rebinding",
+            edits: [FixEdit.{ start: 0, end: 5, replacement: "acc" }],
+          },
+          lint.Finding.{
+            path: "a.tw",
+            start: 3,
+            message: "second rebind overlaps the first",
+            rule: "numbered-rebinding",
+            edits: [
+              FixEdit.{ start: 10, end: 15, replacement: "buf" },
+              FixEdit.{ start: 3, end: 6, replacement: "x" },
+            ],
+          },
+        ]
+
+        flags := lint.no_fixes()
+        flags.numbered_rebinding = true
+        edits := lint.select_edits_for_test(findings, flags)
+        selected := try edits["a.tw"].ok_or("expected edits for a.tw")
+
+        // The second finding's non-overlapping rename must not sneak in; the
+        // overlap drops it atomically, leaving only the first finding's edit.
+        try assert.equal(selected.len(), 1)
+        try assert.equal(selected[0].start, 0)
+        .Ok({})
+      },
+    )
+    .test(
       "unique_analysis_diags dedupes shared dependency diagnostics",
       fn() {
         first := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
