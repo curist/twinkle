@@ -86,3 +86,123 @@ pub fn ty_to_string(ty: MonoType) String {
     .ErrorType => "<error>",
   }
 }
+
+pub fn mono_eq(a: MonoType, b: MonoType) Bool {
+  case a {
+    .Int => case b {
+      .Int => true,
+      _ => false,
+    },
+    .Float => case b {
+      .Float => true,
+      _ => false,
+    },
+    .Bool => case b {
+      .Bool => true,
+      _ => false,
+    },
+    .Byte => case b {
+      .Byte => true,
+      _ => false,
+    },
+    .String => case b {
+      .String => true,
+      _ => false,
+    },
+    .Void => case b {
+      .Void => true,
+      _ => false,
+    },
+    .Anyref_ => case b {
+      .Anyref_ => true,
+      _ => false,
+    },
+    .Var(name_a) => case b {
+      .Var(name_b) => name_a == name_b,
+      _ => false,
+    },
+    .Named(tid_a, args_a) => case b {
+      .Named(tid_b, args_b) => tid_a.id == tid_b.id and mono_vec_eq(args_a, args_b),
+      _ => false,
+    },
+    .Vector(inner_a) => case b {
+      .Vector(inner_b) => mono_eq(inner_a, inner_b),
+      _ => false,
+    },
+    .Dict(ka, va) => case b {
+      .Dict(kb, vb) => mono_eq(ka, kb) and mono_eq(va, vb),
+      _ => false,
+    },
+    .Function(pa, ra) => case b {
+      .Function(pb, rb) => mono_vec_eq(pa, pb) and mono_eq(ra, rb),
+      _ => false,
+    },
+    .Optional(inner_a) => case b {
+      .Optional(inner_b) => mono_eq(inner_a, inner_b),
+      _ => false,
+    },
+    .ExternRef(tid_a) => case b {
+      .ExternRef(tid_b) => tid_a.id == tid_b.id,
+      _ => false,
+    },
+    .Result(ok_a, err_a) => case b {
+      .Result(ok_b, err_b) => mono_eq(ok_a, ok_b) and mono_eq(err_a, err_b),
+      _ => false,
+    },
+    .MetaVar(id_a) => case b {
+      .MetaVar(id_b) => id_a == id_b,
+      _ => false,
+    },
+    .Never => case b {
+      .Never => true,
+      _ => false,
+    },
+    .ErrorType => case b {
+      .ErrorType => true,
+      _ => false,
+    },
+  }
+}
+
+fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+
+  for item, i in a {
+    if !mono_eq(item, b[i]) {
+      return false
+    }
+  }
+
+  true
+}
+
+pub fn contains_meta(ty: MonoType) Bool {
+  case ty {
+    .MetaVar(_) => true,
+    .Vector(inner) => contains_meta(inner),
+    .Dict(k, v) => contains_meta(k) or contains_meta(v),
+    .Function(params, ret) => {
+      for p in params {
+        if contains_meta(p) {
+          return true
+        }
+      }
+
+      contains_meta(ret)
+    },
+    .Optional(inner) => contains_meta(inner),
+    .Result(ok, err) => contains_meta(ok) or contains_meta(err),
+    .Named(_, args) => {
+      for a in args {
+        if contains_meta(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    _ => false,
+  }
+}
