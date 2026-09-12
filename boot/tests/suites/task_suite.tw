@@ -74,6 +74,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "inferred void helper propagates through task closure",
+      fn() {
+        log := Cell.new(0)
+        task := Task.spawn(fn() { set_task_log(log) })
+        task.await()
+        try assert.equal(log.get(), 7)
+        .Ok({})
+      },
+    )
+    .test(
       "multiple spawns all execute",
       fn() {
         c := Cell.new(0)
@@ -434,4 +444,8 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+}
+
+fn set_task_log(log: Cell<Int>) {
+  log.set(7)
 }

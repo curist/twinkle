@@ -118,7 +118,7 @@ What already works and is tested:
 | Order | Workstream | Type | Ship independently? |
 |-------|------------|------|---------------------|
 | 1 | WS-A: Document `Channel` in API.md | Doc | Yes — **DONE** |
-| 2 | WS-B: Fix inferred-return propagation through closures | Bug (core inference) | Yes |
+| 2 | WS-B: Fix inferred-return propagation through closures | Bug (core inference) | Yes — **DONE** |
 | 3 | WS-C: Recoverable task failure (`try_await`) | Feature | Yes |
 | 4 | WS-D: `send`-on-closed ergonomics | Decision + small change | Yes |
 | 5 | WS-E: `select` over channels | Design-first feature | Yes (after design) |
@@ -171,11 +171,11 @@ analysis for this plan) were surprised it was absent.
 > drive-by patch.
 
 **Why:** `a := Task.spawn(fn() { side_effect() })` then `a.await()` fails
-typecheck with `"cannot infer type / ambiguous type"`. Fire-and-forget and
-"spawn a side-effecting task then await it for completion" are normal patterns.
-Today they're only expressible by giving the spawned fn a return type/value (the
-playground example did this; `task_suite.tw` sidesteps it by always annotating
-`fn() Int` / `fn() String`).
+typecheck with `"cannot infer type / ambiguous type"` when `side_effect` itself
+has an inferred return type. Fire-and-forget and "spawn a side-effecting task
+then await it for completion" are normal patterns. Calls whose return type is
+already concrete work, which is why the existing `Cell.set`- and
+`Task.yield`-tailed task tests do not expose the bug.
 
 **Verified root cause (2026-09-12).** The bug is **not** about `Void`, `await`,
 or `Task` specifically. It reproduces with a plain user generic:
@@ -186,10 +186,22 @@ run(fn() { side(1) })                     // ← "ambiguous type" on the closure
 ```
 The trigger is precise: **a closure whose *tail expression* is a call to a
 function with an *inferred* (unannotated) return type, passed to a generic where
-that return drives instantiation, leaves the type variable unsolved.** The
-callee's return meta-var and the closure's expected-return meta-var get unified
-as two still-unresolved metas, and the callee-body resolution does not propagate
-back to the call site's meta.
+that return drives instantiation, leaves the type variable unsolved.** Pass 0
+gives the callee a shared return meta-var. The call links that meta-var to the
+generic call's expected-return meta-var, but `check_function` later resolves the
+callee by calling `set_subst` on the original id directly. That destructive
+write replaces the link instead of resolving its terminal meta-var, so the
+call-site meta remains unsolved.
+
+This is also a checker soundness bug, not just an ambiguity bug. An earlier
+concrete constraint can be erased the same way:
+```tw
+fn inferred_int() { 1 }
+x: String = inferred_int()
+```
+The call first constrains the inferred return meta to `String`; the direct
+`set_subst` later overwrites it with `Int`, allowing the inconsistency to reach
+the backend verifier instead of producing a checker type mismatch.
 
 Confirmed by differential testing — all of these **work** (so they define the
 workarounds and bound the bug):
@@ -213,56 +225,72 @@ side(id) }) }` then `for t in ts { t.await() }`.
 branch (~1745) → `pre_unify_return` (~569). For a non-generic callee,
 `instantiate` (~1462) returns `sig.ret` directly; when `sig.ret` is an
 unresolved return meta (unannotated function), `pre_unify_return` unifies it
-with the closure's expected meta, but the callee-body's later resolution of that
-return meta does not reach the call-site's finalize sweep (~5567), which then
-reports the closure's `fn() ?T` type as ambiguous. **The fix almost certainly
-belongs in return-type inference ordering** — resolve an unannotated function's
-return type before (or so it transitively propagates to) call sites that consume
-it via generic instantiation — not in `await`/`Task`.
+with the closure's expected meta. The bug is in `check_function` (~5338): its
+direct `set_subst(mid, inferred_ret)` overwrites any existing substitution for
+`mid`, severing meta-to-meta links or erasing concrete constraints before the
+finalize sweep (~5567).
 
-**Files (diagnosis complete; fix design still open):**
-- `boot/compiler/checker.tw` — inference ordering / return-meta resolution.
+**Chosen fix:** replace that destructive assignment with a dedicated
+substitution-preserving inferred-return binding step. Ordinary inferred returns
+must unify the Pass-0 signature return with the synthesized body return, which
+follows existing links and reports incompatible earlier constraints. `Never`
+needs a narrow special case because normal unification intentionally treats it
+as compatible with every type: resolve the signature return through the current
+substitution and bind only an unresolved terminal meta to `Never`. Keep writing
+the synthesized return into `env.functions` so later calls and lowering see the
+actual signature. Do not reorder functions or introduce dependency/SCC passes;
+that would add recursion complexity without repairing the unsafe overwrite.
+
+**Files (diagnosis and fix design complete):**
+- `boot/compiler/checker.tw` — substitution-preserving inferred-return binding.
 - Test: `boot/tests/suites/task_suite.tw` (Task-facing case) **and**
   `boot/tests/suites/checker_suite.tw` (the general user-generic case, since the
   bug is not Task-specific).
 
-- [ ] **Step 1: Add failing tests** — both a Task case in `task_suite.tw` and the
-  general case in `checker_suite.tw`:
+- [x] **Step 1: Add failing tests** — a Task-facing inferred-`Void` propagation
+  case in `task_suite.tw`, plus propagation and constraint-preservation cases in
+  `checker_suite.tw`:
   ```tw
   // task_suite.tw
+  fn set_log(log: Cell<Int>) {
+    log.set(7)
+  }
+
   .test(
     "spawn and await a void task",
     fn() {
       log: Cell<Int> = Cell.new(0)
-      t := Task.spawn(fn() { log.set(7) })
+      t := Task.spawn(fn() { set_log(log) })
       t.await()
       try assert.equal(log.get(), 7)
       .Ok({})
     },
   )
   ```
-  Plus a `checker_suite.tw` case asserting `run(fn() { side(1) })` (inferred-Void
-  callee) type-checks clean, matching the suite's existing check-success harness.
+  Add a `checker_suite.tw` case asserting `run(fn() { side(1) })`
+  (inferred-`Void` callee) type-checks clean, matching the suite's existing
+  check-success harness. Add a negative case asserting that assigning an
+  inferred-`Int` call to `String` produces a checker type mismatch; it must not
+  survive until backend verification. Include a forward-reference propagation
+  shape and preserve coverage for inferred `Never` returns.
 
-- [ ] **Step 2: Run and confirm both fail** with `ambiguous type`:
-  `target/twk run boot/tests/main.tw`.
+- [x] **Step 2: Run and confirm the propagation cases fail** with `ambiguous
+  type` and the constraint-preservation case fails because the checker emits no
+  diagnostic: `target/twk run boot/tests/main.tw`.
 
-- [ ] **Step 3: Design the fix** against the traced root cause above. The
-  candidate is a return-type-inference ordering change so an unannotated callee's
-  resolved return type reaches call sites (e.g. resolve leaf/non-recursive
-  function returns before checking consumers, or ensure the shared subst carries
-  the resolution to finalize). Because this is core inference used by the whole
-  compiler, prototype on a throwaway `target/twk build boot/main.tw -o /tmp/dbg.wasm`
-  and exercise the repros via `BOOT_WASM=/tmp/dbg.wasm` before committing.
-  **Do not hot-patch — a wrong change here can silently mis-type the whole
-  compiler.**
+- [x] **Step 3: Design the fix** against the traced root cause above. Preserve
+  the existing substitution graph by unifying ordinary inferred returns and
+  binding only the terminal unresolved meta for `Never`. This directly repairs
+  both lost meta propagation and erased concrete constraints without changing
+  function-check order.
 
-- [ ] **Step 4: Implement** the ordering fix in `boot/compiler/checker.tw`.
+- [x] **Step 4: Implement** the substitution-preserving inferred-return binding
+  in `boot/compiler/checker.tw`.
 
-- [ ] **Step 5: Verify** the new tests pass and nothing regresses:
+- [x] **Step 5: Verify** the new tests pass and nothing regresses:
   `make boot-test` (full suite — a change this central must run all of it).
 
-- [ ] **Step 6: Self-host check.** Run `make stage2` — the fixed point
+- [x] **Step 6: Self-host check.** Run `make stage2` — the fixed point
   (stage3 == stage4) is the real guard that a central inference change didn't
   perturb codegen. The fix changes the boot compiler's own checker; existing boot
   source doesn't rely on the buggy pattern (unannotated-return closures into
@@ -271,10 +299,12 @@ it via generic instantiation — not in `await`/`Task`.
   it only matters if boot source *adopts* the pattern — mirror the fix in `src/`
   only if `make stage2` breaks.
 
-- [ ] **Step 7: Commit.**
+- [x] **Step 7: Commit.**
   ```bash
-  git add boot/compiler/checker.tw boot/tests/suites/task_suite.tw
-  git commit -m "fix(check): infer Void for discarded Task await result"
+  git add docs/plans/task-channel-api-maturation.md docs/plans/README.md \
+    boot/compiler/checker.tw boot/tests/suites/checker_suite.tw \
+    boot/tests/suites/task_suite.tw
+  git commit -m "fix(check): preserve inferred return constraints"
   ```
 
 ---

@@ -1475,6 +1475,23 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "F4 inferred void return propagates through a generic closure",
+      fn() {
+        src := "fn run<T>(f: fn() T) T { f() }\nfn use_it() { run(fn() { side() }) }\nfn side() { }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F4 inferred return preserves earlier concrete constraints",
+      fn() {
+        src := "fn inferred_int() { 1 }\nx: String = inferred_int()"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
       "F5 qualified variant correct type",
       fn() {
         src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { Color.Red => 1, Color.Green => 2, Color.Blue => 3 } }"

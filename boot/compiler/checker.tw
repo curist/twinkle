@@ -188,6 +188,26 @@ fn set_subst(ctx: InferCtx, id: Int, ty: MonoType) InferCtx {
   ctx
 }
 
+// Resolve a Pass-0 inferred-return meta without overwriting constraints that
+// earlier call sites attached to it. Never is the one exception to ordinary
+// unification: it is compatible with every type, so bind only an unresolved
+// terminal meta while preserving any concrete contextual constraint.
+fn bind_inferred_return(
+  ctx: InferCtx,
+  declared: MonoType,
+  inferred: MonoType,
+  s: Span,
+  diags: Vector<DiagKind>,
+) UnifyOut {
+  case inferred {
+    .Never => case zonk(declared, ctx.subst) {
+      .MetaVar(id) => .{ ctx: ctx.set_subst(id, .Never), diags },
+      _ => .{ ctx, diags },
+    },
+    _ => ctx.unify(declared, inferred, s, diags),
+  }
+}
+
 // ── Type annotation resolution ──────────────────────────────────────
 fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   r := ctx.env.resolve_type_expr(ty_expr, resolved_type_param_names(ctx.type_var_scope))
@@ -5331,13 +5351,19 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
           result_ctx := body_r.ctx.pop_scope()
           inferred_ret := zonk(body_r.ty, result_ctx.subst)
 
-          // Bind the Pass-0 meta directly (unify would not bind it for a Never
-          // body), then write the concrete inferred type back to the signature
-          // so lowering and later source-order lookups see it.
-          bound_ctx := case sig.ret {
-            .Some(.MetaVar(mid)) => result_ctx.set_subst(mid, inferred_ret),
-            _ => result_ctx,
+          // Preserve constraints already attached to the Pass-0 return meta.
+          // A direct substitution write here would sever meta-to-meta links or
+          // erase a concrete type required by an earlier call site.
+          bound := case sig.ret {
+            .Some(ret_ty) => result_ctx.bind_inferred_return(
+              ret_ty,
+              inferred_ret,
+              decl.body.span,
+              body_r.diags,
+            ),
+            .None => UnifyOut.{ ctx: result_ctx, diags: body_r.diags },
           }
+          bound_ctx := bound.ctx
           updated_fns := collect f in bound_ctx.env.functions {
             if f.name == decl.name {
               f.ret = .Some(inferred_ret)
@@ -5346,7 +5372,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
             f
           }
           bound_ctx.env = .with_functions(updated_fns)
-          .{ ctx: bound_ctx, diags: body_r.diags }
+          .{ ctx: bound_ctx, diags: bound.diags }
         },
       }
     },
