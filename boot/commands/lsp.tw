@@ -57,7 +57,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     }
 
     if chunk.len() > 0 {
-      if !ctx.chunks.send(chunk) {
+      if ctx.chunks.send(chunk).is_err() {
         break
       }
 
@@ -90,7 +90,9 @@ fn dispatch_loop(ctx: LoopCtx) {
     case ctx.chunks.recv() {
       .Some(chunk) => {
         buffer = ctx.process_buffer(buffer.concat(chunk))
-        ctx.chunk_acks.send(true)
+        if ctx.chunk_acks.send(true).is_err() {
+          break
+        }
 
         if ctx.shared.get().should_exit {
           break
@@ -281,7 +283,10 @@ fn schedule_diagnostics(ctx: LoopCtx) {
     }
 
     if ctx.gen.get() == my_gen {
-      sent := ctx.diagnostics.send(my_gen)
+      case ctx.diagnostics.send(my_gen) {
+        .Ok(_) => {},
+        .Err(.Closed) => {},
+      }
     }
   })
 }

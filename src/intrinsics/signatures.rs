@@ -9,7 +9,7 @@ use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{
     CELL_TYPE_ID, CHANNEL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID,
-    MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 pub use crate::intrinsics::registry::IntrinsicDispatch;
@@ -435,7 +435,16 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 dispatch: IntrinsicDispatch::Intrinsic,
                 type_params: vec!["T".to_string()],
                 params: vec![channel_ty(t.clone()), t],
-                ret: MonoType::Bool,
+                ret: MonoType::Named {
+                    type_id: RESULT_TYPE_ID,
+                    args: vec![
+                        MonoType::Void,
+                        MonoType::Named {
+                            type_id: crate::types::ty::SEND_ERROR_TYPE_ID,
+                            args: vec![],
+                        },
+                    ],
+                },
                 abi_result: None,
             })
         }

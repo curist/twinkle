@@ -1223,8 +1223,10 @@ mid-update by another task.
   hand off directly).
 * `Channel.bounded(capacity: Int) Channel<T>` — buffered channel with a fixed
   positive capacity.
-* `ch.send(value) Bool` — send, suspending under backpressure; returns `false` if
-  the channel is closed.
+* `ch.send(value) Result<Void, SendError>` — send, suspending under
+  backpressure; returns `.Err(.Closed)` if the channel closes before delivery.
+  `SendError` is the nullary enum `{ Closed }`. The caller retains the immutable
+  input value, and an error guarantees it was not delivered.
 * `ch.recv() T?` — receive the next value, or `.None` once the channel is closed
   and drained.
 * `ch.close() Void` — close the channel (closing an already-closed channel is a

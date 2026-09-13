@@ -171,7 +171,7 @@ pub fn suite() runner.Suite {
       fn() {
         ch: Channel<Vector<Int>> = Channel.bounded(1)
         xs: Vector<Int> = [7, 7]
-        try assert.is_true(ch.send(xs))
+        try assert.is_ok(ch.send(xs))
         xs[0] = 9
         case ch.recv() {
           .Some(v) => try assert.equal(v[0], 7),

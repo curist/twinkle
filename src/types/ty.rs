@@ -28,7 +28,8 @@ pub const ORDER_TYPE_ID: TypeId = TypeId(7);
 pub const TASK_TYPE_ID: TypeId = TypeId(8);
 pub const SET_TYPE_ID: TypeId = TypeId(9);
 pub const CHANNEL_TYPE_ID: TypeId = TypeId(10);
-pub const VIEW_TYPE_ID: TypeId = TypeId(11);
+pub const SEND_ERROR_TYPE_ID: TypeId = TypeId(11);
+pub const VIEW_TYPE_ID: TypeId = TypeId(12);
 // Synthetic method-only TypeIds for builtin receiver types that are not
 // represented as MonoType::Named variants.
 pub const BUILTIN_VECTOR_TYPE_ID: TypeId = TypeId(u32::MAX - 5);
@@ -38,6 +39,17 @@ pub const BUILTIN_INT_TYPE_ID: TypeId = TypeId(u32::MAX - 2);
 pub const BUILTIN_FLOAT_TYPE_ID: TypeId = TypeId(u32::MAX - 1);
 pub const BUILTIN_BOOL_TYPE_ID: TypeId = TypeId(u32::MAX);
 pub const BUILTIN_BYTE_TYPE_ID: TypeId = TypeId(u32::MAX - 6);
+
+#[cfg(test)]
+mod builtin_type_id_tests {
+    use super::*;
+
+    #[test]
+    fn send_error_and_reserved_view_ids_are_pinned() {
+        assert_eq!(SEND_ERROR_TYPE_ID, TypeId(11));
+        assert_eq!(VIEW_TYPE_ID, TypeId(12));
+    }
+}
 
 /// Return the method-lookup TypeId for a receiver type.
 /// Named types map to their real TypeId; builtin receiver types map to
@@ -73,6 +85,7 @@ pub fn builtin_method_alias(type_id: TypeId) -> Option<&'static str> {
         TASK_TYPE_ID => Some("Task"),
         SET_TYPE_ID => Some("Set"),
         CHANNEL_TYPE_ID => Some("Channel"),
+        SEND_ERROR_TYPE_ID => Some("SendError"),
         _ => None,
     }
 }

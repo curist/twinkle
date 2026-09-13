@@ -6,6 +6,18 @@ fn recv_int(ch: Channel<Int>) Int? {
   .Some(value)
 }
 
+fn expect_closed(result: Result<Void, SendError>) Result<Void, String> {
+  case result {
+    .Ok(_) => .Err("expected send to fail because the channel was closed"),
+    .Err(.Closed) => .Ok({}),
+  }
+}
+
+fn send_with_try(ch: Channel<Int>, value: Int) Result<Void, SendError> {
+  try ch.send(value)
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("channel concurrency")
@@ -13,9 +25,9 @@ pub fn suite() runner.Suite {
       "unbuffered rendezvous hands off a value",
       fn() {
         ch: Channel<Int> = Channel.new()
-        producer := Task.spawn(fn() Bool { ch.send(42) })
+        producer := Task.spawn(fn() { ch.send(42) })
         try assert.equal(ch.recv(), .Some(42))
-        try assert.is_true(producer.await())
+        try assert.is_ok(producer.await())
         .Ok({})
       },
     )
@@ -23,8 +35,8 @@ pub fn suite() runner.Suite {
       "bounded channel buffers and drains in FIFO order",
       fn() {
         ch: Channel<Int> = Channel.bounded(2)
-        try assert.is_true(ch.send(1))
-        try assert.is_true(ch.send(2))
+        try assert.is_ok(ch.send(1))
+        try assert.is_ok(ch.send(2))
         ch.close()
         try assert.equal(ch.recv(), .Some(1))
         try assert.equal(ch.recv(), .Some(2))
@@ -36,16 +48,17 @@ pub fn suite() runner.Suite {
       "bounded send parks until space frees",
       fn() {
         ch: Channel<Int> = Channel.bounded(1)
-        try assert.is_true(ch.send(1))
+        try assert.is_ok(ch.send(1))
         sent := Cell.new(false)
         producer := Task.spawn(fn() {
-          ok := ch.send(2)
-          sent.set(ok)
+          result := ch.send(2)
+          sent.set(true)
+          result
         })
         Task.yield()
         try assert.is_false(sent.get())
         try assert.equal(ch.recv(), .Some(1))
-        producer.await()
+        try assert.is_ok(producer.await())
         try assert.is_true(sent.get())
         try assert.equal(ch.recv(), .Some(2))
         .Ok({})
@@ -55,9 +68,9 @@ pub fn suite() runner.Suite {
       "for loop drains until close",
       fn() {
         ch: Channel<Int> = Channel.bounded(3)
-        try assert.is_true(ch.send(3))
-        try assert.is_true(ch.send(4))
-        try assert.is_true(ch.send(5))
+        try assert.is_ok(ch.send(3))
+        try assert.is_ok(ch.send(4))
+        try assert.is_ok(ch.send(5))
         ch.close()
         sum := 0
 
@@ -85,7 +98,7 @@ pub fn suite() runner.Suite {
         ch.close()
         consumer.await()
         try assert.equal(got.get(), -1)
-        try assert.is_false(ch.send(1))
+        try expect_closed(ch.send(1))
         .Ok({})
       },
     )
@@ -93,12 +106,19 @@ pub fn suite() runner.Suite {
       "close wakes parked sender as not delivered",
       fn() {
         ch: Channel<Int> = Channel.new()
-        delivered := Cell.new(true)
-        producer := Task.spawn(fn() { delivered.set(ch.send(7)) })
+        producer := Task.spawn(fn() { ch.send(7) })
         Task.yield()
         ch.close()
-        producer.await()
-        try assert.is_false(delivered.get())
+        try expect_closed(producer.await())
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagates a closed send",
+      fn() {
+        ch: Channel<Int> = Channel.new()
+        ch.close()
+        try expect_closed(send_with_try(ch, 1))
         .Ok({})
       },
     )
@@ -115,7 +135,7 @@ pub fn suite() runner.Suite {
       "option none payload is distinct from closed",
       fn() {
         ch: Channel<Int?> = Channel.bounded(1)
-        try assert.is_true(ch.send(.None))
+        try assert.is_ok(ch.send(.None))
         ch.close()
         try assert.equal(ch.recv(), .Some(.None))
         try assert.equal(ch.recv(), .None)
@@ -126,7 +146,7 @@ pub fn suite() runner.Suite {
       "void payload is distinct from closed",
       fn() {
         ch: Channel<Void> = Channel.bounded(1)
-        try assert.is_true(ch.send({}))
+        try assert.is_ok(ch.send({}))
         ch.close()
         try assert.is_some(ch.recv())
         try assert.is_none(ch.recv())
@@ -141,15 +161,16 @@ pub fn suite() runner.Suite {
 
         // Three producers each send a distinct block of values.
         producers := collect p in range(3) {
-          Task.spawn(fn() {
+          Task.spawn(fn() Result<Void, SendError> {
             for i in range(10) {
-              ch.send(p * 10 + i)
+              try ch.send(p * 10 + i)
             }
+            .Ok({})
           })
         }
 
         for prod in producers {
-          prod.await()
+          try assert.is_ok(prod.await())
         }
         ch.close()
 

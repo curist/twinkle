@@ -105,9 +105,14 @@ Typed channel for passing values between tasks. Send and receive are task points
 |----------|-----------|-------------|
 | `Channel.new` | `fn<T>() Channel<T>` | Unbuffered rendezvous channel (a send and a receive hand off directly) |
 | `Channel.bounded` | `fn<T>(capacity: Int) Channel<T>` | Buffered channel with a fixed capacity; `capacity >= 1` (0 or negative traps — use `Channel.new()` for unbuffered) |
-| `.send(v)` | `fn<T>(ch: Channel<T>, value: T) Bool` | Send `value`, suspending under backpressure; returns `false` if the channel is closed |
+| `.send(v)` | `fn<T>(ch: Channel<T>, value: T) Result<Void, SendError>` | Send `value`, suspending under backpressure; returns `.Err(.Closed)` if the channel closes before delivery |
 | `.recv()` | `fn<T>(ch: Channel<T>) T?` | Receive the next value, or `.None` once the channel is closed and drained |
 | `.close()` | `fn<T>(ch: Channel<T>) Void` | Close the channel; closing an already-closed channel is a no-op |
+
+`SendError` has one variant, `.Closed`. Because values are immutable, the
+caller retains the attempted value after a failed send. `.Err(.Closed)`
+guarantees that value was not delivered; `.Ok({})` records a completed send but
+does not guarantee that a receiver remains alive afterward.
 
 ### `Range`
 Record with fields `{ start: Int, end: Int, step: Int }`. Iterable in `for` loops.

@@ -125,7 +125,7 @@ pub mod prelude {
     pub const TASK_YIELD: FuncId = FuncId(1036); // Task.yield() -> Void
     pub const CHANNEL_NEW: FuncId = FuncId(1107); // Channel.new() -> Channel<T>
     pub const CHANNEL_BOUNDED: FuncId = FuncId(1108); // Channel.bounded(capacity) -> Channel<T>
-    pub const CHANNEL_SEND: FuncId = FuncId(1109); // Channel.send(ch, value) -> Bool
+    pub const CHANNEL_SEND: FuncId = FuncId(1109); // Channel.send(ch, value) -> Result<Void, SendError>
     pub const CHANNEL_RECV: FuncId = FuncId(1110); // Channel.recv(ch) -> Option<T>
     pub const CHANNEL_CLOSE: FuncId = FuncId(1111); // Channel.close(ch) -> Void
 

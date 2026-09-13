@@ -28,7 +28,7 @@ use crate::runtime::types::{
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
     ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, ORDER_TYPE_ID, RESULT_TYPE_ID,
-    TypeDef as LangTypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    SEND_ERROR_TYPE_ID, TypeDef as LangTypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{
     ExportDef, FieldDef as WasmFieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ModuleIR,
@@ -5805,10 +5805,47 @@ fn emit_channel_send_intrinsic(
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     ensure_channel_send_import(ctx);
+    let send_error_mono = MonoType::named(SEND_ERROR_TYPE_ID);
+    let result_mono = MonoType::Named {
+        type_id: RESULT_TYPE_ID,
+        args: vec![MonoType::Void, send_error_mono.clone()],
+    };
+    let result_sym = typed_general_option_sym(&result_mono);
+    let result_ref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(result_sym.clone()),
+    };
+    let ok_ty = mono_to_valtype_specialized(&MonoType::Void, ctx.type_env, &ctx.concrete_func_sigs);
+    let err_ty =
+        mono_to_valtype_specialized(&send_error_mono, ctx.type_env, &ctx.concrete_func_sigs);
+    ctx.request_typed_general_option(result_sym.clone(), result_mono);
+
+    let mut ok_body = vec![Instr::I32Const(0)];
+    ok_body.extend(emit_default_value_instrs(&ok_ty));
+    ok_body.extend(emit_default_value_instrs(&err_ty));
+    ok_body.push(Instr::StructNew(result_sym.clone()));
+
+    let mut err_body = vec![Instr::I32Const(1)];
+    err_body.extend(emit_default_value_instrs(&ok_ty));
+    err_body.extend(emit_variant_literal(
+        SEND_ERROR_TYPE_ID,
+        crate::ir::VariantId(0),
+        &[],
+        &err_ty,
+        Some(&send_error_mono),
+        ctx,
+    ));
+    err_body.push(Instr::StructNew(result_sym));
+
     let mut instrs = emit_channel_id(&args[0], ctx);
     instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
     instrs.push(Instr::Call(CHANNEL_SEND.to_string()));
-    instrs.extend(emit_coerce_stack(&ValType::I32, bind_ty));
+    instrs.push(Instr::If {
+        result: Some(result_ref.clone()),
+        then_body: ok_body,
+        else_body: err_body,
+    });
+    instrs.extend(emit_coerce_stack(&result_ref, bind_ty));
     instrs
 }
 

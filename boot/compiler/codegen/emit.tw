@@ -2518,7 +2518,7 @@ fn emit_intrinsic_call(
     .TaskYield => emit_intrinsic_task_yield(result_idx, buf),
     .ChannelNew => emit_intrinsic_channel_new(result_idx, buf),
     .ChannelBounded => emit_intrinsic_channel_bounded(args, result_idx, ctx, buf),
-    .ChannelSend => emit_intrinsic_channel_send(args, result_idx, ctx, buf),
+    .ChannelSend => emit_intrinsic_channel_send(args, result_idx, result_mono, ctx, buf),
     .ChannelRecv => emit_intrinsic_channel_recv(args, result_idx, result_mono, ctx, buf),
     .ChannelClose => emit_intrinsic_channel_close(args, result_idx, ctx, buf),
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
@@ -3359,12 +3359,37 @@ fn emit_intrinsic_channel_bounded(
 fn emit_intrinsic_channel_send(
   args: Vector<PreparedAtom>,
   result_idx: Int,
+  result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
+  err_mono := case result_mono {
+    .Result(_, err) => err,
+    _ => error("Channel.send: expected Result<Void, SendError> result"),
+  }
+  result_layout := get_sum_layout_ctx(result_mono, ctx)
+  send_error_layout := get_sum_layout_ctx(err_mono, ctx)
+  ok_slot_type := result_layout.variants[0].payload_types[0]
+  err_slot_type := result_layout.variants[1].payload_types[0]
+  result_ref := ValType.Ref(false, .Named(result_layout.sym))
+
+  // The host ABI keeps returning i32 so the scheduler does not depend on the
+  // language-level Result layout. Wrap true as Ok(Void) and false as
+  // Err(SendError.Closed) at the compiler boundary.
+  ok_body := [Instr.I32Const(0)]
+    .concat(emit_default_value(ok_slot_type, []))
+    .concat(emit_default_value(err_slot_type, []))
+    .concat([.StructNew(result_layout.sym)])
+  err_body := [Instr.I32Const(1)]
+    .concat(emit_default_value(ok_slot_type, []))
+    .concat([.I32Const(0), .StructNew(send_error_layout.sym), .StructNew(result_layout.sym)])
+
   buf2 := emit_channel_id(args[0], ctx, buf)
   buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
-  buf3.append(.Call(task_abi.sym_channel_send)).append(.LocalSet(result_idx))
+  buf3
+    .append(.Call(task_abi.sym_channel_send))
+    .append(.If(.Some(result_ref), ok_body, err_body))
+    .append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_channel_recv(

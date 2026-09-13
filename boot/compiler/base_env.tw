@@ -150,6 +150,11 @@ fn builtin_type_entries() Vector<TypeEntry> {
         .Record("Set", rtp_t, [.{ name: "entries", ty: .Dict(t, .Void) }]),
       ),
       builtin_type_entry(next_type_id, 1, .Record("Channel", rtp_t, [])),
+      builtin_type_entry(
+        next_type_id,
+        0,
+        .Sum("SendError", [], [.{ name: "Closed", fields: [], tag: 0 }]),
+      ),
     ],
   )
   types
@@ -227,7 +232,8 @@ fn with_reserved_stdlib_origins(env: ResolvedEnv, start_id: Int) ResolvedEnv {
 }
 
 /// Returns a ResolvedEnv seeded with the builtin named types (Option, Result,
-/// Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task, Set, Channel) plus
+/// Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task, Set, Channel,
+/// SendError) plus
 /// the reserved stdlib forward declarations.  No function signatures are added.
 /// Used by the signature-only bootstrap loader to resolve TypeExprs in
 /// prelude/signatures/*.tw without creating a circular dependency.

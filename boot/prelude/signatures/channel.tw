@@ -8,9 +8,10 @@ pub fn bounded<T>(capacity: Int) Channel<T> {
   []
 }
 
-/// Send a value, suspending when backpressure requires it. Returns false if closed.
-pub fn send<T>(ch: Channel<T>, value: T) Bool {
-  false
+/// Send a value, suspending when backpressure requires it. Returns Err(Closed)
+/// if the channel closed before the value was delivered.
+pub fn send<T>(ch: Channel<T>, value: T) Result<Void, SendError> {
+  .Ok({})
 }
 
 /// Receive the next value, or None once the channel is closed and drained.

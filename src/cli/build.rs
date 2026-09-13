@@ -323,6 +323,42 @@ mod tests {
     }
 
     #[test]
+    fn build_wat_channel_send_wraps_the_host_discriminant_as_result() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "twinkle-channel-send-stage0-{}-{stamp}.tw",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "ch: Channel<Int> = Channel.bounded(1)\nresult: Result<Void, SendError> = ch.send(1)\ncase result {\n  .Ok(_) => println(\"sent\"),\n  .Err(.Closed) => println(\"closed\"),\n}\n",
+        )
+        .expect("write channel send smoke source");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for channel send smoke: {e}"));
+        let _ = fs::remove_file(&path);
+
+        assert!(
+            wat.contains(r#"(import "task" "channel_send""#),
+            "missing channel_send import"
+        );
+        assert!(
+            wat.contains("$user__result__Void__T11"),
+            "missing Result<Void, SendError> layout"
+        );
+        assert!(
+            wat.contains("i32.const 11"),
+            "missing SendError type discriminant"
+        );
+        wat::parse_str(&wat).expect("channel send Result WAT should assemble");
+    }
+
+    #[test]
     fn build_wat_extern_types_validate_and_cross_anyref_boundaries() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let path = root.join("tests/run/extern_types.tw");

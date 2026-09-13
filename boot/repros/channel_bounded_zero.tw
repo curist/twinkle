@@ -7,4 +7,4 @@
 //   target/twk run boot/repros/channel_bounded_zero.tw   # expect non-zero exit +
 //                                                         # "capacity must be >= 1"
 ch: Channel<Int> = Channel.bounded(0)
-println("unreachable: ${ch.send(1)}")
+println("unreachable: ${ch.recv()}")

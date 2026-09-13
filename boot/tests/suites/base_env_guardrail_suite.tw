@@ -4,7 +4,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.base_env.{builtin_env}
+use compiler.base_env.{builtin_env, first_user_type_id}
 use compiler.resolver.{
   FunctionSig, lookup_function, lookup_function_origin, lookup_method, lookup_registered_function,
 }
@@ -35,6 +35,18 @@ fn require_method(type_name: String, method_name: String) Result<String, String>
 pub fn suite() runner.Suite {
   runner
     .suite("base_env guardrails")
+    .test(
+      "builtin and reserved type ids stay synchronized with stage0",
+      fn() {
+        env := builtin_env()
+        send_error := try env.lookup_type("SendError").ok_or("missing SendError builtin")
+        view := try env.lookup_type("View").ok_or("missing View reservation")
+
+        try assert.equal(send_error.id.id, 11)
+        try assert.equal(view.id.id, 12)
+        assert.equal(first_user_type_id(), 13)
+      },
+    )
     .test(
       "builtin_env has string$len",
       fn() {

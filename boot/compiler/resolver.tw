@@ -1329,6 +1329,7 @@ fn is_reserved_type_name(name: String) Bool {
     "Result" => true,
     "Cell" => true,
     "Channel" => true,
+    "SendError" => true,
     "Range" => true,
     "Iterator" => true,
     "IterItem" => true,

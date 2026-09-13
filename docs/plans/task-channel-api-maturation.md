@@ -453,23 +453,23 @@ channel scheduler does not execute during bootstrap.
 
 - [x] **Step 1: Settle and record the decision** — `Result<Void, SendError>`,
   with the nullary `.Closed` error.
-- [ ] **Step 2: Add failing behavior tests** covering successful unbuffered and
+- [x] **Step 2: Add failing behavior tests** covering successful unbuffered and
   buffered sends, send after close, a parked sender woken by close, and `try`
   propagation.
-- [ ] **Step 3: Add `SendError` to the boot and stage0 builtin type
+- [x] **Step 3: Add `SendError` to the boot and stage0 builtin type
   environments.** Keep fixed TypeIds synchronized and update pinned-ID tests and
   first-user-type thresholds.
-- [ ] **Step 4: Change the prelude and intrinsic contracts** to return
+- [x] **Step 4: Change the prelude and intrinsic contracts** to return
   `Result<Void, SendError>`; regenerate the embedded core library.
-- [ ] **Step 5: Wrap the existing runtime Boolean in both code generators** as
+- [x] **Step 5: Wrap the existing runtime Boolean in both code generators** as
   `.Ok({})` or `.Err(.Closed)`. Do not change the JS runtime ABI.
-- [ ] **Step 6: Migrate callers** to propagate or intentionally handle the
+- [x] **Step 6: Migrate callers** to propagate or intentionally handle the
   result, then format and lint every edited `.tw` file.
-- [ ] **Step 7: Document the API and delivery guarantee** in `docs/API.md` and
+- [x] **Step 7: Document the API and delivery guarantee** in `docs/API.md` and
   `docs/spec.md` §15.
-- [ ] **Step 8: Verify sequentially:** focused channel tests, Rust tests,
+- [x] **Step 8: Verify sequentially:** focused channel tests, Rust tests,
   `make boot-test`, `make stage2`, and `make bundle-cli`.
-- [ ] **Step 9: Commit** the feature, migrations, tests, and documentation.
+- [x] **Step 9: Commit** the feature, migrations, tests, and documentation.
 
 ---
 

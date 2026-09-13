@@ -45,7 +45,9 @@ workers := collect id in 1..4 {
     for n in jobs {
       if is_prime(n) {
         println("worker ${id}: ${n} is prime")
-        results.send(n)
+        if results.send(n).is_err() {
+          break
+        }
       }
     }
   })
@@ -55,7 +57,9 @@ workers := collect id in 1..4 {
 feeder := Task.spawn(fn() {
   defer jobs.close()
   for n in 2..30 {
-    jobs.send(n)
+    if jobs.send(n).is_err() {
+      break
+    }
   }
 })
 defer feeder.await()
