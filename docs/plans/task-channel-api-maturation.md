@@ -401,26 +401,75 @@ and recover from its failure.
 ignorable — easy to drop the check and lose data. This is a small,
 self-contained API-taste decision.
 
-**Design decision to settle first (pick one):**
-- **Keep `Bool`, add lint.** Add a `twk lint` rule flagging a `ch.send(...)`
-  whose result is discarded (like an unused `Result`). Lowest churn; preserves
-  the current API. Recommended.
-- **Trap on send-after-close.** Matches Go's panic-on-closed-send; makes the bug
-  loud. Breaking change to current semantics; `send` becomes `Void`.
-- **Return `Result<Void, SendError>`.** Consistent with `try`, but heavier for
-  the common always-open case.
+**Design decision (SETTLED 2026-09-13 with the API owner):** return a typed
+recoverable error:
 
-**Files (if "keep Bool + lint" chosen):**
-- Modify: `boot/compiler/lint.tw` (new rule; follow the existing rule structure
-  and `--explain` rationale convention).
-- Test: `boot/tests/suites/lint_*` (match the existing lint suite naming).
+```tw
+type SendError = { Closed }
 
-- [ ] **Step 1: Settle the decision** with the API owner; record it here.
-- [ ] **Step 2..N:** flesh out steps once the direction is chosen (lint rule vs
-  semantic change vs Result). Each path is small; do not pre-write both.
+fn send<T>(ch: Channel<T>, value: T) Result<Void, SendError>
+```
 
-> Left intentionally shallow: the right steps depend entirely on Step 1's
-> outcome, and writing three divergent step-lists would be speculative.
+- **Why `Result`, not `Bool`:** a failed send means the value was not delivered,
+  which is significant enough to require explicit handling and fits Twinkle's
+  `Result` / `try` error model. `Bool` hides the reason and is easy to discard.
+- **Why recoverable, not a trap:** Twinkle currently exposes one symmetric
+  `Channel<T>` handle whose users may send, receive, or close. It does not
+  enforce Go's convention that only the sending side closes, so a sender racing
+  with shutdown is ordinary concurrent control flow rather than necessarily a
+  broken protocol.
+- **Why `SendError.Closed` carries no value:** Twinkle values are immutable and
+  passing a value does not consume its binding. The caller already retains the
+  attempted value for retry, fallback, or logging, unlike ownership-moving APIs
+  such as Rust's `SendError<T>`.
+- **Delivery guarantee:** `.Err(.Closed)` means the submitted value was not
+  delivered. `.Ok({})` means the send completed successfully; it does not
+  promise that a receiver will remain alive afterward.
+- **Runtime ABI:** keep `channel_send` returning its existing `i32` success
+  discriminant. Both compilers construct `.Ok({})` / `.Err(.Closed)` at the
+  language boundary, so the JS scheduler stays independent of Twinkle sum
+  layouts.
+- **Breaking change:** this intentionally replaces the public `Bool` return.
+  Existing send sites must handle, propagate, or explicitly discard the
+  `Result`.
+
+**Bootstrap impact:** `boot/commands/lsp.tw` sends on channels and is reachable
+from `boot/main.tw`, so this change crosses the stage0 compile-time boundary.
+Stage0 must know the new nominal `SendError` type, the revised signature, and
+how to wrap the internal send discriminant as a `Result`, even though the LSP
+channel scheduler does not execute during bootstrap.
+
+**Files:**
+- Modify: `boot/prelude/signatures/channel.tw`.
+- Regenerate: `boot/lib/module/core_lib.tw`.
+- Modify: boot builtin type registration and Channel-send codegen.
+- Modify: stage0 builtin type registration, signature contract, and
+  Channel-send codegen in `src/`.
+- Update callers: `boot/commands/lsp.tw`, the playground concurrency example,
+  and any other discarded or Boolean-tested sends.
+- Test: `boot/tests/suites/channel_suite.tw` plus stage0 codegen/signature tests
+  where appropriate.
+- Document: `docs/API.md` and `docs/spec.md` §15.
+
+- [x] **Step 1: Settle and record the decision** — `Result<Void, SendError>`,
+  with the nullary `.Closed` error.
+- [ ] **Step 2: Add failing behavior tests** covering successful unbuffered and
+  buffered sends, send after close, a parked sender woken by close, and `try`
+  propagation.
+- [ ] **Step 3: Add `SendError` to the boot and stage0 builtin type
+  environments.** Keep fixed TypeIds synchronized and update pinned-ID tests and
+  first-user-type thresholds.
+- [ ] **Step 4: Change the prelude and intrinsic contracts** to return
+  `Result<Void, SendError>`; regenerate the embedded core library.
+- [ ] **Step 5: Wrap the existing runtime Boolean in both code generators** as
+  `.Ok({})` or `.Err(.Closed)`. Do not change the JS runtime ABI.
+- [ ] **Step 6: Migrate callers** to propagate or intentionally handle the
+  result, then format and lint every edited `.tw` file.
+- [ ] **Step 7: Document the API and delivery guarantee** in `docs/API.md` and
+  `docs/spec.md` §15.
+- [ ] **Step 8: Verify sequentially:** focused channel tests, Rust tests,
+  `make boot-test`, `make stage2`, and `make bundle-cli`.
+- [ ] **Step 9: Commit** the feature, migrations, tests, and documentation.
 
 ---
 
