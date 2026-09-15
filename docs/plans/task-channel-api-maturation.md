@@ -1,587 +1,220 @@
 # Task / Channel API Maturation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` (or
-> `superpowers:subagent-driven-development`) to implement this plan
-> task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. The
-> workstreams below are **independent** — each ships on its own and can be
-> sequenced or split into its own plan. WS-A is a quick doc win. WS-B was
-> reclassified after diagnosis (2026-09-12) from a quick fix to a core
-> type-inference change — see its section.
+> **For agentic workers:** Only WS-E and WS-F remain active. Both are
+> design-first workstreams: write and review the design before creating an
+> implementation plan. They can be developed independently except where WS-F
+> explicitly depends on decisions from WS-E.
 
 ## Goal
 
-Grow Twinkle's cooperative concurrency API (`Task<T>`, `Channel<T>`) from a
-clean happy-path MVP into something you can build real concurrent systems with:
-fix the one concrete inference bug, close the doc gap, make task failure
-recoverable, and design the two missing capabilities (`select`, structured
-joins/cancellation) that the current surface can't express.
+Complete Twinkle's cooperative-concurrency API by designing the two capabilities
+that the current surface cannot express:
 
-## Motivation
+- wait for whichever of several channel operations becomes ready (`select`);
+- manage related task lifetimes, joins, cancellation, and timeouts without
+  hand-written coordination.
 
-The current API is minimal, orthogonal, and philosophically coherent (immutable
-values + single-thread cooperative scheduling ⇒ no data races by construction).
-It nails producer/consumer and worker-pool shapes. But building the playground
-concurrency example (`playground/src/examples/concurrency.tw`) surfaced six
-gaps, ordered here by priority:
+The earlier API and inference work that enabled this design is complete and
+recorded below.
 
-1. **`Task<Void>` await is ambiguous** — a real inference bug (WS-B).
-2. **No `select`** — cannot wait on "whichever channel is ready first"; the
-   defining missing CSP capability (WS-E).
-3. **Task failure is a trap, not a `Result`** — inconsistent with the rest of
-   the language's recoverable-error story (WS-C).
-4. **No structured concurrency / cancellation** — no join-all, no cancel, no
-   timeout; fan-in close coordination is hand-rolled and deadlock-prone (WS-F).
-5. **`send` returns a silently-ignorable `Bool` on a closed channel** — a small
-   ergonomics/soundness decision (WS-D).
-6. **`Channel` is missing from `docs/API.md`** — doc gap (WS-A).
+## Current Baseline
 
----
+`Task<T>` and `Channel<T>` are compiler-recognized intrinsics backed by the
+cooperative scheduler in `tools/js_runtime/runtime.mjs`. Tasks run on one program
+thread and switch at explicit task points or task-aware host operations. Values
+are immutable, so cooperative tasks do not introduce data races through shared
+mutation.
 
-## Current Baseline (architecture)
-
-Task/Channel are **compiler-recognized intrinsics**, not ordinary library code.
-Three layers:
-
-* **API surface / type signatures** — placeholder-bodied prelude stubs that
-  declare the Twinkle-visible signatures:
-  * `boot/prelude/signatures/task.tw` — `spawn<T>(fn() T) Task<T>`,
-    `await<T>(Task<T>) T`, `yield() Void`.
-  * `boot/prelude/signatures/channel.tw` — `new<T>() Channel<T>`,
-    `bounded<T>(Int) Channel<T>`, `send<T>(Channel<T>, T) Bool`,
-    `recv<T>(Channel<T>) T?`, `close<T>(Channel<T>) Void`.
-  * `boot/prelude/channel.tw` — `iter<T>(Channel<T>) Iterator<T>` (backs
-    `for v in ch`, via `Iterator.unfold` over `recv()`).
-  * These stubs are also embedded verbatim in `boot/lib/module/core_lib.tw`
-    (generated; regenerate after editing prelude — see
-    `reference_intrinsic_builtin_wiring` in agent memory).
-* **Compiler recognition** — the checker/lowering treat `Task`/`Channel` as
-  builtin generic types and lower their methods to runtime imports in the
-  `task` / `channel_*` namespaces.
-* **Runtime** — `tools/js_runtime/runtime.mjs` implements the cooperative
-  scheduler (`task.*` intrinsics, JSPI `WebAssembly.promising`) and
-  `channel_new` / `channel_bounded` / `channel_send` / `channel_recv` /
-  `channel_recv_is_value` / `channel_recv_value` host functions. Non-JSPI
-  runtimes get fail-on-use stubs so unused imports still link.
-
-What already works and is tested:
-
-* `spawn`/`await`/`yield`, bounded + unbuffered channels, `send`/`recv`/`close`,
-  `for v in ch` drain — suites `boot/tests/suites/task_suite.tw`,
-  `channel_suite.tw`; JS-side `tools/js_runtime/runtime.test.mjs`.
-* **Deadlock is already detected**, not hung: the scheduler traps with
-  `"task deadlock: remaining tasks are all blocked on channels/awaits"` /
-  `"...blocked awaiting each other"` (`runtime.mjs` ~line 817). Repro:
-  `boot/repros/channel_deadlock.tw`.
-* **A spawned task that fails and is never awaited** surfaces as the program's
-  failure (`runtime.mjs` ~line 825).
-* `Channel.bounded(0)` traps with a clear message
-  (`boot/repros/channel_bounded_zero.tw`).
-
----
-
-## Global Constraints
-
-* **Self-host fixed point.** Any prelude/compiler change must survive
-  `make stage2` (rebuild `target/boot.wasm`) and keep `make boot-test` green
-  (3549 boot tests at time of writing).
-* **stage0 dependency is a COMPILE-time concern, not runtime.** The self-host
-  loop's first step is `./target/release/twk build boot/main.tw` — stage0 (the
-  Rust compiler in `src/`) compiles the entire `boot/main.tw` import graph to
-  produce stage1. That graph includes `boot/commands/lsp.tw`, which uses
-  `Channel<Vector<Byte>>` / `Channel<Bool>` (`lsp.tw:30-31`) — so stage0 must
-  *typecheck and lower* `Channel`, even though the LSP is never *run* during
-  bootstrap and the channel scheduler never *executes* under stage0. Since
-  `make stage2` passes today, stage0 already handles `Channel` compilation.
-  **A *new* primitive (`select`, `try_await`) is a stage0 concern only if boot
-  source reachable from `boot/main.tw` (notably `boot/compiler/*`,
-  `boot/commands/*`) adopts it — and then only for compilation, not execution**
-  (see `reference_stage0_bootstrap_dependency`). Simplest path: keep new
-  primitives out of boot compiler/command source (tests, stdlib, and the
-  playground don't cross stage0), so no stage0 work is needed. If boot source
-  must adopt one, verify with `make stage2` (which exercises the stage0→stage1
-  build) and add stage0 support only if that build breaks.
-* **Runtime wiring touches two runtimes.** New intrinsics need the host
-  function in `runtime.mjs` **and** a non-JSPI fail-on-use stub, plus a Safari
-  extern-metadata regression note per the comment at `runtime.mjs` ~line 387.
-* **Heavy verification runs sequentially**, never concurrently or backgrounded
-  (`feedback_sequential_heavy_verification`): `make boot-test`, then
-  `make stage2`, then `make bundle-cli`.
-* **Format + lint every edited `.tw`**: `target/twk fmt <file>` and
-  `target/twk lint <entry>`.
-* Commit style: short imperative subject, what/why/how body, no line-count
-  metrics.
-
----
-
-## Workstream Priority
-
-| Order | Workstream | Type | Ship independently? |
-|-------|------------|------|---------------------|
-| 1 | WS-A: Document `Channel` in API.md | Doc | Yes — **DONE** |
-| 2 | WS-B: Fix inferred-return propagation through closures | Bug (core inference) | Yes — **DONE** |
-| 3 | WS-C: Recoverable task failure (`try_await`) | Feature | Yes |
-| 4 | WS-D: `send`-on-closed ergonomics | Decision + small change | Yes |
-| 5 | WS-E: `select` over channels | Design-first feature | Yes (after design) |
-| 6 | WS-F: Structured concurrency / cancellation | Design-first feature | Yes (after design) |
-
----
-
-## WS-A: Document `Channel` in `docs/API.md`
-
-**Why:** `docs/API.md` has the `Task.*` rows but no `Channel` section, even
-though `Channel` is in `docs/spec.md` §15. Contributors (and the earlier
-analysis for this plan) were surprised it was absent.
-
-**Files:**
-- Modify: `docs/API.md` (add a `Channel` subsection next to the `Task` rows,
-  ~line 95).
-
-- [ ] **Step 1: Add the `Channel` API table.** Mirror the `Task` table style.
-  Copy signatures verbatim from `boot/prelude/signatures/channel.tw` and the
-  `iter` from `boot/prelude/channel.tw`:
-
-  | Op | Signature | Notes |
-  |----|-----------|-------|
-  | `Channel.new` | `fn<T>() Channel<T>` | Unbuffered rendezvous channel |
-  | `Channel.bounded` | `fn<T>(capacity: Int) Channel<T>` | Buffered; `capacity >= 1` (0/negative traps) |
-  | `ch.send` | `fn<T>(Channel<T>, T) Bool` | Suspends under backpressure; `false` if closed |
-  | `ch.recv` | `fn<T>(Channel<T>) T?` | `.None` once closed and drained |
-  | `ch.close` | `fn<T>(Channel<T>) Void` | Idempotent |
-  | `for v in ch` | — | Iterates until closed and drained (via `iter`) |
-
-- [ ] **Step 2: Cross-check against spec.** Confirm wording matches
-  `docs/spec.md` §15 (backpressure, close idempotency, drain semantics). Fix any
-  drift in whichever doc is wrong.
-
-- [ ] **Step 3: Commit.**
-  ```bash
-  git add docs/API.md
-  git commit -m "docs(api): document Channel in the API reference"
-  ```
-
----
-
-## WS-B: Fix inferred-return-type propagation through closure arguments
-
-> **Reclassified (2026-09-12): NOT a quick win.** Originally scoped as a small
-> `Task<Void>` await-defaulting fix. Diagnosis showed the true root cause is a
-> general type-inference ordering bug in `checker.tw`, not Task-specific.
-> Touching core inference requires full self-host re-verification and carries
-> real regression risk — treat this as its own careful workstream, not a
-> drive-by patch.
-
-**Why:** `a := Task.spawn(fn() { side_effect() })` then `a.await()` fails
-typecheck with `"cannot infer type / ambiguous type"` when `side_effect` itself
-has an inferred return type. Fire-and-forget and "spawn a side-effecting task
-then await it for completion" are normal patterns. Calls whose return type is
-already concrete work, which is why the existing `Cell.set`- and
-`Task.yield`-tailed task tests do not expose the bug.
-
-**Verified root cause (2026-09-12).** The bug is **not** about `Void`, `await`,
-or `Task` specifically. It reproduces with a plain user generic:
-```tw
-fn side(id: Int) { println("t${id}") }   // NO return annotation → inferred Void
-fn run<T>(f: fn() T) T { f() }
-run(fn() { side(1) })                     // ← "ambiguous type" on the closure
-```
-The trigger is precise: **a closure whose *tail expression* is a call to a
-function with an *inferred* (unannotated) return type, passed to a generic where
-that return drives instantiation, leaves the type variable unsolved.** Pass 0
-gives the callee a shared return meta-var. The call links that meta-var to the
-generic call's expected-return meta-var, but `check_function` later resolves the
-callee by calling `set_subst` on the original id directly. That destructive
-write replaces the link instead of resolving its terminal meta-var, so the
-call-site meta remains unsolved.
-
-This is also a checker soundness bug, not just an ambiguity bug. An earlier
-concrete constraint can be erased the same way:
-```tw
-fn inferred_int() { 1 }
-x: String = inferred_int()
-```
-The call first constrains the inferred return meta to `String`; the direct
-`set_subst` later overwrites it with `Int`, allowing the inconsistency to reach
-the backend verifier instead of producing a checker type mismatch.
-
-Confirmed by differential testing — all of these **work** (so they define the
-workarounds and bound the bug):
-- Annotate the callee's return: `fn side(...) Void { ... }` ✓
-- Annotate the closure: `fn() Void { side(1) }` ✓
-- Callee with an already-annotated return (e.g. `Task.yield()`) ✓
-- Closure body with **no tail expression** (a `for`-loop or a trailing
-  statement, e.g. `fn() { side(1) 0 }`) — the no-tail path unifies `Void` with
-  the expected type directly ✓ (this is why the worker-pool example's
-  loop-bodied worker closures compiled)
-- An int-literal / any concrete-typed tail ✓
-
-And these **fail** (same root cause): `fn() { side(1) }` (single void-call
-tail), `fn() { side(1) side(2) }` (void-call tail after a statement),
-`Task.spawn(fn(){side(1)}).await()` (chained), `collect ... { Task.spawn(fn(){
-side(id) }) }` then `for t in ts { t.await() }`.
-
-**Where it lives (traced):** `boot/compiler/checker.tw`. The relevant chain is
-`check_closure` (no-annotation branch, ~3056/3135) → `check_block` tail
-(~5025) → `check_expr` `.Call` path (~2988) → `synth_call` `.Ident` non-local
-branch (~1745) → `pre_unify_return` (~569). For a non-generic callee,
-`instantiate` (~1462) returns `sig.ret` directly; when `sig.ret` is an
-unresolved return meta (unannotated function), `pre_unify_return` unifies it
-with the closure's expected meta. The bug is in `check_function` (~5338): its
-direct `set_subst(mid, inferred_ret)` overwrites any existing substitution for
-`mid`, severing meta-to-meta links or erasing concrete constraints before the
-finalize sweep (~5567).
-
-**Chosen fix:** replace that destructive assignment with a dedicated
-substitution-preserving inferred-return binding step. Ordinary inferred returns
-must unify the Pass-0 signature return with the synthesized body return, which
-follows existing links and reports incompatible earlier constraints. `Never`
-needs a narrow special case because normal unification intentionally treats it
-as compatible with every type: resolve the signature return through the current
-substitution and bind only an unresolved terminal meta to `Never`. Keep writing
-the synthesized return into `env.functions` so later calls and lowering see the
-actual signature. Do not reorder functions or introduce dependency/SCC passes;
-that would add recursion complexity without repairing the unsafe overwrite.
-
-**Files (diagnosis and fix design complete):**
-- `boot/compiler/checker.tw` — substitution-preserving inferred-return binding.
-- Test: `boot/tests/suites/task_suite.tw` (Task-facing case) **and**
-  `boot/tests/suites/checker_suite.tw` (the general user-generic case, since the
-  bug is not Task-specific).
-
-- [x] **Step 1: Add failing tests** — a Task-facing inferred-`Void` propagation
-  case in `task_suite.tw`, plus propagation and constraint-preservation cases in
-  `checker_suite.tw`:
-  ```tw
-  // task_suite.tw
-  fn set_log(log: Cell<Int>) {
-    log.set(7)
-  }
-
-  .test(
-    "spawn and await a void task",
-    fn() {
-      log: Cell<Int> = Cell.new(0)
-      t := Task.spawn(fn() { set_log(log) })
-      t.await()
-      try assert.equal(log.get(), 7)
-      .Ok({})
-    },
-  )
-  ```
-  Add a `checker_suite.tw` case asserting `run(fn() { side(1) })`
-  (inferred-`Void` callee) type-checks clean, matching the suite's existing
-  check-success harness. Add a negative case asserting that assigning an
-  inferred-`Int` call to `String` produces a checker type mismatch; it must not
-  survive until backend verification. Include a forward-reference propagation
-  shape and preserve coverage for inferred `Never` returns.
-
-- [x] **Step 2: Run and confirm the propagation cases fail** with `ambiguous
-  type` and the constraint-preservation case fails because the checker emits no
-  diagnostic: `target/twk run boot/tests/main.tw`.
-
-- [x] **Step 3: Design the fix** against the traced root cause above. Preserve
-  the existing substitution graph by unifying ordinary inferred returns and
-  binding only the terminal unresolved meta for `Never`. This directly repairs
-  both lost meta propagation and erased concrete constraints without changing
-  function-check order.
-
-- [x] **Step 4: Implement** the substitution-preserving inferred-return binding
-  in `boot/compiler/checker.tw`.
-
-- [x] **Step 5: Verify** the new tests pass and nothing regresses:
-  `make boot-test` (full suite — a change this central must run all of it).
-
-- [x] **Step 6: Self-host check.** Run `make stage2` — the fixed point
-  (stage3 == stage4) is the real guard that a central inference change didn't
-  perturb codegen. The fix changes the boot compiler's own checker; existing boot
-  source doesn't rely on the buggy pattern (unannotated-return closures into
-  generics currently wouldn't compile), so the stage0 (Rust) → stage1 build
-  should be unaffected. stage0's Rust checker likely has the analogous gap, but
-  it only matters if boot source *adopts* the pattern — mirror the fix in `src/`
-  only if `make stage2` breaks.
-
-- [x] **Step 7: Commit.**
-  ```bash
-  git add docs/plans/task-channel-api-maturation.md docs/plans/README.md \
-    boot/compiler/checker.tw boot/tests/suites/checker_suite.tw \
-    boot/tests/suites/task_suite.tw
-  git commit -m "fix(check): preserve inferred return constraints"
-  ```
-
----
-
-## WS-C: Recoverable task failure (`try_await`)
-
-**Why:** `Task.await` "propagates a task failure as a trap" — one task erroring
-kills the whole program with no per-task recovery. That's inconsistent with the
-language's `Result`/`try` story for recoverable errors. Add a way to await a task
-and recover from its failure.
-
-**Design decisions (SETTLED 2026-09-13 with the API owner):**
-
-- **Error type: `try_await<T>(Task<T>) Result<T, String>`.** Failure surfaces as
-  the trap message string — the simplest first cut, consistent with the existing
-  `Result`/`try` story. A structured `TaskError` (message + source span) can be
-  layered on later without breaking this shape.
-- **Catch scope: ALL task failures are converted to `.Err(message)`.** Any
-  failure raised while the task body runs — explicit `error(...)`, out-of-bounds
-  panic, or a native Wasm trap (div0, unreachable) — is caught at the
-  `try_await` boundary and returned as `.Err`. This deliberately departs from the
-  spec §12 "hard traps are uncatchable" letter, on the rationale that a spawned
-  task's stack is isolated by JSPI and all values are immutable, so a crashed
-  task cannot corrupt the awaiter (an Erlang-style "isolate the crash" model).
-  It also sidesteps a concrete implementation blocker: `error(...)` and the
-  out-of-bounds panic (`__panic_oob`) both route through the same trap
-  string-sink and are tagged with the identical `twinkleMessage`, so the runtime
-  genuinely cannot tell a recoverable `error()` from an OOB panic without new
-  plumbing. "Catch all" needs no discriminator and keeps the semantics uniform.
-  The message is extracted exactly as the trap renderer does it
-  (`twinkleMessage ?? message`); `try_await` does **not** invoke the renderer, so
-  `.Err` carries the plain message, not a multi-line source-mapped trace.
-- **`await` is unchanged.** Plain `Task.await` still propagates a failure as a
-  trap; `try_await` is the opt-in recoverable variant.
-
-**Files:**
-- Modify: `boot/prelude/signatures/task.tw` (add `try_await` signature stub).
-- Regenerate: `boot/lib/module/core_lib.tw` (embedded prelude copy).
-- Modify: `tools/js_runtime/runtime.mjs` (new `task` intrinsic returning a
-  success/failure discriminant + value/message; the scheduler already tracks
-  `state === "failed"` and `t.error` at ~line 827 — expose it instead of
-  rejecting).
-- Modify: non-JSPI stub for the new intrinsic (`runtime.mjs` ~line 727 region).
-- Modify: stage0 `src/` if boot source will use `try_await` (see Global
-  Constraints). If boot source does not adopt it, a stage0 fail-stub is enough
-  to keep the module linking.
-- Test: `boot/tests/suites/task_suite.tw`, `tools/js_runtime/runtime.test.mjs`.
-
-- [x] **Step 1: Write the design note** capturing the error-type decision and
-  the catch-scope (error-only vs all-non-fatal) — settled above (2026-09-13):
-  `Result<T, String>`, catch all task failures.
-
-- [x] **Step 2: Add a failing boot test** for the success and failure paths:
-  ```tw
-  .test(
-    "try_await recovers from a failed task",
-    fn() {
-      good := Task.spawn(fn() Int { 1 })
-      bad := Task.spawn(fn() Int { error("boom") })
-      try assert.equal(good.try_await(), .Ok(1))
-      case bad.try_await() {
-        .Ok(_) => .Err("expected failure"),
-        .Err(msg) => assert.contains(msg, "boom"),
-      }
-    },
-  )
-  ```
-  (Confirm `assert.contains` exists in `@std.testing.assert`; if not, match on
-  the message with `.index_of`.)
-
-- [x] **Step 3: Add the JS-side failing test** in `runtime.test.mjs` mirroring
-  the two paths, so the runtime intrinsic is covered independently of the boot
-  compiler.
-
-- [x] **Step 4: Implement** the signature stub, the runtime intrinsic + non-JSPI
-  stub, regenerate `core_lib.tw`, and wire compiler recognition (follow
-  `reference_intrinsic_builtin_wiring` / `reference_runtime_builtin_wiring`).
-
-- [x] **Step 5: Verify** — `make boot-test`, the JS runtime tests
-  (`node --test tools/js_runtime/runtime.test.mjs` or the repo's runner), then
-  `make stage2`.
-
-- [x] **Step 6: Document** `try_await` in `docs/API.md` and `docs/spec.md` §15,
-  including the catch-scope rule (all task failures are caught).
-
-- [x] **Step 7: Commit** (one commit for the feature + tests + docs, or split
-  runtime/boot/docs if a reviewer would gate them separately).
-
----
-
-## WS-D: `send`-on-closed ergonomics
-
-**Why:** `send` returns `Bool` (`false` if closed), which is silently
-ignorable — easy to drop the check and lose data. This is a small,
-self-contained API-taste decision.
-
-**Design decision (SETTLED 2026-09-13 with the API owner):** return a typed
-recoverable error:
+The current public surface is:
 
 ```tw
-type SendError = { Closed }
+Task.spawn<T>(fn() T) Task<T>
+task.await<T>() T
+task.try_await<T>() Result<T, String>
+Task.yield() Void
 
-fn send<T>(ch: Channel<T>, value: T) Result<Void, SendError>
+Channel.new<T>() Channel<T>
+Channel.bounded<T>(capacity: Int) Channel<T>
+ch.send<T>(value: T) Result<Void, SendError>
+ch.recv<T>() T?
+ch.close<T>() Void
 ```
 
-- **Why `Result`, not `Bool`:** a failed send means the value was not delivered,
-  which is significant enough to require explicit handling and fits Twinkle's
-  `Result` / `try` error model. `Bool` hides the reason and is easy to discard.
-- **Why recoverable, not a trap:** Twinkle currently exposes one symmetric
-  `Channel<T>` handle whose users may send, receive, or close. It does not
-  enforce Go's convention that only the sending side closes, so a sender racing
-  with shutdown is ordinary concurrent control flow rather than necessarily a
-  broken protocol.
-- **Why `SendError.Closed` carries no value:** Twinkle values are immutable and
-  passing a value does not consume its binding. The caller already retains the
-  attempted value for retry, fallback, or logging, unlike ownership-moving APIs
-  such as Rust's `SendError<T>`.
-- **Delivery guarantee:** `.Err(.Closed)` means the submitted value was not
-  delivered. `.Ok({})` means the send completed successfully; it does not
-  promise that a receiver will remain alive afterward.
-- **Runtime ABI:** keep `channel_send` returning its existing `i32` success
-  discriminant. Both compilers construct `.Ok({})` / `.Err(.Closed)` at the
-  language boundary, so the JS scheduler stays independent of Twinkle sum
-  layouts.
-- **Breaking change:** this intentionally replaces the public `Bool` return.
-  Existing send sites must handle, propagate, or explicitly discard the
-  `Result`.
+`SendError` is `{ Closed }`. A channel can also be drained with `for v in ch`;
+iteration ends once it is closed and drained. The scheduler detects deadlock and
+surfaces unobserved task failures instead of silently hanging or dropping them.
 
-**Bootstrap impact:** `boot/commands/lsp.tw` sends on channels and is reachable
-from `boot/main.tw`, so this change crosses the stage0 compile-time boundary.
-Stage0 must know the new nominal `SendError` type, the revised signature, and
-how to wrap the internal send discriminant as a `Result`, even though the LSP
-channel scheduler does not execute during bootstrap.
+### Implementation layers
 
-**Files:**
-- Modify: `boot/prelude/signatures/channel.tw`.
-- Regenerate: `boot/lib/module/core_lib.tw`.
-- Modify: boot builtin type registration and Channel-send codegen.
-- Modify: stage0 builtin type registration, signature contract, and
-  Channel-send codegen in `src/`.
-- Update callers: `boot/commands/lsp.tw`, the playground concurrency example,
-  and any other discarded or Boolean-tested sends.
-- Test: `boot/tests/suites/channel_suite.tw` plus stage0 codegen/signature tests
-  where appropriate.
-- Document: `docs/API.md` and `docs/spec.md` §15.
+- Twinkle-visible signatures live in `boot/prelude/signatures/task.tw` and
+  `boot/prelude/signatures/channel.tw`; channel iteration lives in
+  `boot/prelude/channel.tw`. Generated copies are embedded in
+  `boot/lib/module/core_lib.tw`.
+- The boot compiler recognizes the builtin types and lowers their operations to
+  runtime imports. Stage0 has the corresponding compile-time support needed to
+  bootstrap boot source that uses channels.
+- `tools/js_runtime/runtime.mjs` implements the JSPI scheduler, task operations,
+  channels, and non-JSPI fail-on-use imports.
 
-- [x] **Step 1: Settle and record the decision** — `Result<Void, SendError>`,
-  with the nullary `.Closed` error.
-- [x] **Step 2: Add failing behavior tests** covering successful unbuffered and
-  buffered sends, send after close, a parked sender woken by close, and `try`
-  propagation.
-- [x] **Step 3: Add `SendError` to the boot and stage0 builtin type
-  environments.** Keep fixed TypeIds synchronized and update pinned-ID tests and
-  first-user-type thresholds.
-- [x] **Step 4: Change the prelude and intrinsic contracts** to return
-  `Result<Void, SendError>`; regenerate the embedded core library.
-- [x] **Step 5: Wrap the existing runtime Boolean in both code generators** as
-  `.Ok({})` or `.Err(.Closed)`. Do not change the JS runtime ABI.
-- [x] **Step 6: Migrate callers** to propagate or intentionally handle the
-  result, then format and lint every edited `.tw` file.
-- [x] **Step 7: Document the API and delivery guarantee** in `docs/API.md` and
-  `docs/spec.md` §15.
-- [x] **Step 8: Verify sequentially:** focused channel tests, Rust tests,
-  `make boot-test`, `make stage2`, and `make bundle-cli`.
-- [x] **Step 9: Commit** the feature, migrations, tests, and documentation.
+### Constraints for future primitives
 
----
+- Any prelude or compiler change must survive the self-host fixed point with
+  `make stage2` and keep `make boot-test` green.
+- A new primitive needs stage0 compiler support only when source reachable from
+  `boot/main.tw` adopts it. Tests, stdlib code outside that graph, and the
+  playground do not by themselves create a stage0 dependency.
+- Runtime intrinsics need both the JSPI implementation and a non-JSPI
+  fail-on-use import. Preserve the Safari extern-metadata behavior documented in
+  `runtime.mjs` when adding imports.
+- Run heavyweight verification sequentially: `make boot-test`, `make stage2`,
+  then `make bundle-cli`.
+- Format and lint every edited `.tw` file with `target/twk fmt` and
+  `target/twk lint`.
 
-## WS-E: `select` over channels (design-first)
+## Completed Foundation
 
-**Why:** The defining missing CSP capability. You cannot currently wait on
-"whichever of these channels is ready first," nor do a non-blocking try-recv.
-This blocks timeouts (race a work channel against a timer), multiplexing
-(fan-in from N channels without a dedicated task each), and cancellation
-patterns (WS-F depends on this).
+The following workstreams have shipped. Their implementation and canonical API
+semantics now live in the compiler, tests, `docs/API.md`, and `docs/spec.md`.
 
-**This is a design workstream — produce a design doc before any code.** Do NOT
-write implementation tasks until the design is reviewed; fabricating steps here
-would be guesswork.
+### WS-A: Document `Channel`
 
-**Open design questions to resolve in the design doc:**
-- **Surface syntax.** A `select { ch1.recv() => ..., ch2.send(v) => ..., _ => ...
-  }` block (like `case`)? Or a library form (`select.recv([ch1, ch2]) (Int, Int)`
-  returning which-index + value)? A syntax form reads best but is a parser +
-  checker + lowering change; a library form is intrinsics-only. Weigh against
-  the naming/parser rules (§16) and the existing `case`/`cond` machinery.
-- **Send arms.** Does `select` support send-arms (ready-to-send) or recv-only in
-  v1? Recv-only is much simpler and covers most needs; defer send-arms.
-- **Default / non-blocking.** A `_ =>` (or `default`) arm that makes `select`
-  non-blocking (returns immediately if nothing ready) — this is the try-recv
-  primitive. Include in v1.
-- **Timeout.** Express timeout as a `select` arm over a timer channel, or a
-  first-class `select` timeout clause? Prefer composition (timer channel) if a
-  timer-channel primitive is cheap; otherwise a clause.
-- **Fairness.** If multiple arms are ready, which wins — first-listed,
-  round-robin, or random? Go randomizes to avoid starvation. Decide and document;
-  cooperative single-thread makes this a pure scheduler-policy choice.
-- **Scheduler support.** What does the scheduler need? Today `recv` parks a task
-  on one channel's waiter list. `select` needs a task registered as a waiter on
-  *several* channels simultaneously, woken by whichever fires first, with the
-  others de-registered atomically. Scope this against the waiter-list model in
-  `runtime.mjs` (`waiters`, `blockedOnTask`).
-- **stage0.** If any boot-source concurrency adopts `select`, stage0 needs it
-  (Global Constraints). Likely keep `select` out of boot source initially.
+Completed in `66e88f6d` (`docs(api): document Channel in the API reference`).
+The API reference now covers construction, backpressure, close and drain
+behavior, iteration, and typed send failure.
 
-- [ ] **Step 1: Write `docs/plans/select-design.md`** (or `docs/design/`)
-  answering every question above with a chosen option + rationale, plus a
-  worked example and the runtime waiter-registration sketch.
-- [ ] **Step 2: Review the design** with the API owner. Only then split the
-  implementation into its own plan (parser? checker? lowering? runtime
-  intrinsic? stage0?) with bite-sized tasks.
+### WS-B: Preserve inferred-return constraints
 
----
+Completed in `f9be5362` (`fix(check): preserve inferred return constraints`).
+The checker now preserves substitution links when an inferred function return
+flows through a closure into a generic call. This fixes the original
+`Task<Void>` ambiguity and prevents an earlier concrete constraint from being
+silently overwritten.
 
-## WS-F: Structured concurrency / cancellation (design-first)
+### WS-C: Recover task failure with `try_await`
 
-**Why:** No cancel, no timeout, no scope that joins its children on exit. The
-fan-in close coordination is hand-rolled: the playground example needed a
-dedicated "closer" task that awaits all workers then closes the results channel.
-Forget it and you get a **deadlock trap** (the scheduler detects it — not a
-silent hang — but it's still a bug the API invites). A join/scope primitive and
-cancellation would remove this footgun class.
+Completed in `bc3558f4` (`feat(task): add recoverable task awaiting`).
+`task.try_await()` returns `Result<T, String>` and converts any failure raised by
+the spawned task—including explicit errors and runtime traps—into an error
+message. Plain `await` retains its trap-propagating behavior.
 
-**This is a design workstream — produce a design doc before any code.** It also
-likely **depends on WS-E** (cancellation is naturally expressed as a select over
-a cancel channel).
+### WS-D: Return typed send failures
 
-**Open design questions to resolve in the design doc:**
-- **Join primitive.** `Task.join_all(tasks: Vector<Task<T>>) Vector<T>`? Does it
-  short-circuit on first failure (with WS-C's recoverable variant
-  `try_join_all` returning `Result`)? This directly removes the "closer task"
-  boilerplate.
-- **Structured scope.** A `scope { ... }` block that auto-joins (or cancels)
-  child tasks spawned within it when the block exits — the structured-concurrency
-  model (nursery / task group). Interaction with `defer` and with `return`/`try`
-  unwinding needs care (both already unwind blocks at the CFG level).
-- **Cancellation model.** Cooperative cancel (a cancel token/channel a task polls
-  at task points) vs. forced. Cooperative fits the "switch only at task points"
-  invariant; forced does not. Almost certainly cooperative — specify how a task
-  observes cancellation (a `CancelToken` checked at `yield`/`recv`, or a
-  select-over-cancel-channel pattern from WS-E).
-- **Timeout.** `Task.await_timeout(t, ms) T?` or express via WS-E select + timer.
-  Prefer composition if the timer-channel primitive lands.
-- **Deadlock ergonomics.** The scheduler already traps on deadlock
-  (`runtime.mjs` ~line 817). Should a join/scope primitive convert common
-  deadlock shapes into a cleaner diagnostic, or is the existing trap message
-  enough? Decide.
+Completed in `d2dcdc18` (`feat(channel): return typed send failures`).
+`ch.send(value)` now returns `Result<Void, SendError>`. `.Err(.Closed)` means the
+value was not delivered; `.Ok({})` means the send completed, without promising
+that a receiver remains alive afterward. The caller retains the immutable value
+in either case.
 
-- [ ] **Step 1: Write `docs/plans/structured-concurrency-design.md`** answering
-  every question above, sequenced after WS-E, with worked examples that replace
-  the playground example's manual closer-task pattern.
-- [ ] **Step 2: Review**, then split into its own implementation plan.
+## Remaining Work
 
----
+| Order | Workstream | Deliverable | Dependency |
+|-------|------------|-------------|------------|
+| 1 | WS-E: `select` over channels | Reviewed design, then a separate implementation plan | None |
+| 2 | WS-F: Structured concurrency and cancellation | Reviewed design, then a separate implementation plan | Incorporate relevant WS-E decisions |
 
-## Cross-Cutting Notes
+## WS-E: `select` over channels
 
-* **Playground is not blocked by any of this.** The shipped concurrency example
-  works around WS-B (spawned fns return values) and WS-F (manual closer task).
-  None of these workstreams are prerequisites for it.
-* **Verification order for any code workstream:** `target/twk fmt` + `twk lint`
-  on edited `.tw` → `make boot-test` → `make stage2` → `make bundle-cli`, run
-  sequentially.
-* **After completion**, per repo lifecycle: move this doc to
-  `docs/plans/archive/` and remove its row from the plan index in
-  `docs/plans/README.md` (don't mark it "Done" in place).
+### Why
 
-## Self-Review
+There is no way to wait for whichever of several channels becomes ready or to
+attempt a non-blocking receive. This prevents direct multiplexing and makes
+timeouts and cancellation awkward to compose.
 
-- **Coverage:** all six analysis items map to a workstream (1→WS-B, 2→WS-E,
-  3→WS-C, 4→WS-F, 5→WS-D, 6→WS-A). ✓
-- **No fabricated steps:** WS-A (done) and WS-C have concrete steps; WS-B has a
-  complete, verified diagnosis but its *fix design* is left open (a core
-  inference change that must not be guessed); WS-D/WS-E/WS-F are design-gated
-  because their implementation depends on an unmade decision. Writing
-  step-by-step code for the open items would be placeholder guesswork, which this
-  plan deliberately avoids.
-- **Type consistency:** signatures (`try_await<T>(Task<T>) Result<T, String>`,
-  `join_all`) are proposed, not yet locked — flagged as design decisions, not
-  presented as final APIs to code against blindly.
+This is a design workstream. Do not write implementation tasks until the API and
+scheduler design has been reviewed.
+
+### Questions the design must settle
+
+- **Surface:** choose between syntax such as `select { ... }` and a library or
+  intrinsic form. Account for parser, checker, lowering, type inference, and the
+  difference between homogeneous and heterogeneous channel arms.
+- **Operations:** decide whether v1 supports receive arms only or both send and
+  receive arms. If send arms are deferred, state that explicitly.
+- **Non-blocking behavior:** define a default arm or a separate try-receive
+  operation, including its return shape.
+- **Closed channels:** specify whether a closed-and-drained receive arm is
+  immediately ready with `.None`. For send arms, specify whether a closed
+  channel is ready and produces `.Err(.Closed)` or is excluded.
+- **Duplicate channels:** define behavior when more than one arm refers to the
+  same channel, including two receives or a send and receive on one channel.
+- **Fairness and ordering:** define which arm wins when several are ready and
+  how selection interacts with the existing FIFO order of parked channel
+  waiters. Avoid starvation without making deterministic testing impractical.
+- **Timeouts:** choose composition with a timer channel or a first-class timeout
+  clause. If composition is preferred, include the required timer primitive in
+  the design scope rather than assuming it exists.
+- **Scheduler protocol:** describe multi-channel waiter registration, atomic
+  winner selection, deregistration of losing arms, close wakeups, and accurate
+  blocked-task accounting. Cover races caused by immediate readiness during
+  registration even though execution is single-threaded.
+- **Bootstrap boundary:** keep the primitive out of boot compiler and command
+  source initially if practical; otherwise include the necessary stage0
+  typechecking and lowering work.
+
+### Deliverables
+
+- [ ] Write `docs/plans/select-design.md` (or a design document under
+  `docs/design/`) with chosen semantics, rationale, worked examples, type rules,
+  and the runtime waiter-registration protocol.
+- [ ] Review the design with the API owner.
+- [ ] After approval, create a separate implementation plan covering the parser
+  or intrinsic surface, checker, lowering, runtime, tests, documentation, and
+  any demonstrated stage0 requirement.
+
+## WS-F: Structured concurrency and cancellation
+
+### Why
+
+There is no task group, cancellation mechanism, timeout, or structured scope
+that accounts for its children on exit. Fan-in code therefore needs a manual
+closer task, and missing that coordination produces a detected deadlock.
+
+This is a design workstream. It should follow WS-E far enough to reuse settled
+selection and timeout semantics, but joins and task-group failure policy can be
+designed independently.
+
+### Questions the design must settle
+
+- **Task groups and join policy:** decide whether the basic abstraction is
+  `join_all`, a task group, a lexical scope, or a small combination. Define
+  result ordering, homogeneous versus heterogeneous children, and whether
+  failure is fail-fast or accumulated. Provide both trapping and recoverable
+  behavior only if each has a clear use case.
+- **Scope exit:** specify behavior on normal completion, `return`, `try` early
+  return, and failure. Define whether remaining children are joined, cancelled,
+  or allowed to outlive the scope.
+- **Cancellation:** use cooperative cancellation and define exactly where it is
+  observed. Decide whether blocked `await`, `recv`, `send`, sleeps, and host I/O
+  are interruptible and what result each operation produces when cancelled.
+- **Channel lifecycle and ownership:** explain how a task group knows when a
+  result channel should close. A plain `join_all` cannot replace the closer task
+  when bounded producers must run concurrently with a draining consumer. Decide
+  whether closure remains explicit, task groups own resources, or the API gains
+  sender/receiver ownership or completion-aware receive semantics.
+- **Failure propagation:** define how child failure interacts with sibling
+  cancellation, `try_await`, unobserved-failure reporting, and failures raised
+  while cleaning up a scope.
+- **Timeouts:** define timeout as cancellation triggered by WS-E/timer
+  composition or as a task-group operation, including cleanup of the losing
+  task or timer.
+- **Deadlock diagnostics:** decide whether group-aware diagnostics should add
+  task/group relationships to the existing scheduler trap.
+- **Resource cleanup:** specify whether cancelled tasks run `defer` blocks and
+  how cleanup is bounded if a child never reaches another cooperative task
+  point.
+
+### Deliverables
+
+- [ ] Write `docs/plans/structured-concurrency-design.md` with chosen semantics,
+  rationale, and worked examples that safely replace the playground's manual
+  closer-task pattern.
+- [ ] Review the design with the API owner.
+- [ ] After approval, create a separate implementation plan covering compiler,
+  runtime, bootstrap, tests, diagnostics, and documentation as required by the
+  chosen model.
+
+## Lifecycle
+
+Once both design workstreams have moved into reviewed implementation plans,
+archive this umbrella document and remove its row from `docs/plans/README.md`.
+Each implementation plan should be tracked independently from that point.
