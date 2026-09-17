@@ -52,4 +52,38 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "to_fixed formats with a fixed number of decimals",
+      fn() {
+        try assert.equal(3.14159.to_fixed(2), "3.14")
+        try assert.equal(3.1.to_fixed(2), "3.10")
+        try assert.equal(2.0.to_fixed(0), "2")
+        try assert.equal(123.456.to_fixed(0), "123")
+        try assert.equal(1234.5.to_fixed(1), "1234.5")
+        try assert.equal(3.7.to_fixed(-2), "4")
+        .Ok({})
+      },
+    )
+    .test(
+      "to_fixed rounds halves toward +∞, matching Float.round",
+      fn() {
+        try assert.equal(2.5.to_fixed(0), "3")
+        try assert.equal(1.5.to_fixed(0), "2")
+        try assert.equal(0.005.to_fixed(2), "0.01")
+        try assert.equal((-2.5).to_fixed(0), "-2")
+        try assert.equal((-2.6).to_fixed(0), "-3")
+        try assert.equal((-0.005).to_fixed(2), "0.00")
+        .Ok({})
+      },
+    )
+    .test(
+      "to_fixed carries and avoids negative zero",
+      fn() {
+        try assert.equal(9.999.to_fixed(2), "10.00")
+        try assert.equal((-9.999).to_fixed(2), "-10.00")
+        try assert.equal(0.0.to_fixed(2), "0.00")
+        try assert.equal((-0.001).to_fixed(2), "0.00")
+        .Ok({})
+      },
+    )
 }

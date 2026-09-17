@@ -46,6 +46,160 @@ pub fn to_int(f: Float) Int {
   }
 }
 
+fn pow10(d: Int) Int {
+  r := 1
+  for i in 0..d {
+    r = r * 10
+  }
+  r
+}
+
+// First decimal digit of a digit string, or 0 when empty.
+fn first_digit(frac: String) Int {
+  if frac.len() == 0 {
+    0
+  } else {
+    case Int.from_string(frac.slice(0, 1)) {
+      .Some(v) => v,
+      .None => 0,
+    }
+  }
+}
+
+// Whether the fractional digit string is >= 0.5 (positive half-up boundary).
+fn frac_ge_half(frac: String) Bool {
+  first_digit(frac) >= 5
+}
+
+// Whether the fractional digit string is strictly > 0.5. For negatives, halves
+// round toward +∞ (i.e. toward zero), so only a strict excess bumps magnitude.
+fn frac_gt_half(frac: String) Bool {
+  d := first_digit(frac)
+
+  if d > 5 {
+    true
+  } else if d < 5 {
+    false
+  } else {
+    has_more := false
+
+    for i in 1..frac.len() {
+      if frac.slice(i, i + 1) != "0" {
+        has_more = true
+      }
+    }
+
+    has_more
+  }
+}
+
+fn index_of_dot(s: String) Int {
+  result := -1
+
+  for i in 0..s.len() {
+    if result < 0 and s.slice(i, i + 1) == "." {
+      result = i
+    }
+  }
+
+  result
+}
+
+// Round a plain decimal string (no exponent) to the nearest Int, halves toward
+// +∞ — the string analogue of `Float.round`, usable from the prelude where the
+// native f64 rounding intrinsics are unavailable to stage0.
+fn round_decimal_to_int(s: String) Int {
+  neg := s.slice(0, 1) == "-"
+  body := if neg {
+    s.slice(1, s.len())
+  } else {
+    s
+  }
+  dot := index_of_dot(body)
+  int_str := if dot < 0 {
+    body
+  } else {
+    body.slice(0, dot)
+  }
+  frac_str := if dot < 0 {
+    ""
+  } else {
+    body.slice(dot + 1, body.len())
+  }
+  ip := case Int.from_string(int_str) {
+    .Some(v) => v,
+    .None => 0,
+  }
+  bump := if neg {
+    frac_gt_half(frac_str)
+  } else {
+    frac_ge_half(frac_str)
+  }
+  mag := if bump {
+    ip + 1
+  } else {
+    ip
+  }
+
+  if neg {
+    0 - mag
+  } else {
+    mag
+  }
+}
+
+/// Format `f` with exactly `digits` decimal places, rounded to nearest with
+/// halves toward +∞ (matching `Float.round`). Negative `digits` clamp to 0.
+/// Very large magnitudes (where the scaled value reaches exponential notation)
+/// fall back to `to_string`.
+pub fn to_fixed(f: Float, digits: Int) String {
+  d := digits.max(0)
+  scale := pow10(d)
+  scaled_str := (f * scale.to_float()).to_string()
+
+  if index_of_e(scaled_str) >= 0 {
+    return f.to_string()
+  }
+
+  n := round_decimal_to_int(scaled_str)
+  neg := n < 0
+  mag := if neg {
+    0 - n
+  } else {
+    n
+  }
+  int_part := mag / scale
+  frac_part := mag % scale
+  sign := if neg {
+    "-"
+  } else {
+    ""
+  }
+
+  if d == 0 {
+    sign.concat(int_part.to_string())
+  } else {
+    frac := frac_part.to_string().pad_start(d, "0")
+    sign.concat(int_part.to_string()).concat(".").concat(frac)
+  }
+}
+
+fn index_of_e(s: String) Int {
+  result := -1
+
+  for i in 0..s.len() {
+    if result < 0 {
+      c := s.slice(i, i + 1)
+
+      if c == "e" or c == "E" {
+        result = i
+      }
+    }
+  }
+
+  result
+}
+
 // Trigonometric, exponential, and logarithmic helpers bridge to the host's
 // `Math` object via `extern`, so they require the JS/Deno runner (the same host
 // that backs `target/twk run`); the imports are tree-shaken away when unused.

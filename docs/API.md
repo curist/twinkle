@@ -225,6 +225,7 @@ traps with a source-mapped trace (headline + snippet + backtrace); see spec §6.
 |----------|-----------|-------------|
 | `Int.to_string` | `fn(n: Int) String` | Convert `Int` to `String` |
 | `Float.to_string` | `fn(f: Float) String` | Convert `Float` to `String` |
+| `Float.to_fixed` | `fn(f: Float, digits: Int) String` | Format with exactly `digits` decimal places, rounded to nearest (halves toward +∞, matching `Float.round`); negative `digits` clamp to 0 |
 | `Bool.to_string` | `fn(b: Bool) String` | Convert `Bool` to `String` |
 | `String.to_string` | `fn(s: String) String` | Identity (returns input) |
 | `Int.from_string` | `fn(s: String) Option<Int>` | Parse string to `Int` |
