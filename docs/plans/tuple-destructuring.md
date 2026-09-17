@@ -115,9 +115,13 @@ The same shape applies to both compilers unless noted.
 
 ### 2. Type checking
 
-* `check_pattern` gains a tuple case: zonk the expected type, unify with the
-  `TupleN` named type of matching arity, take element types from the type args,
-  and recurse `check_pattern` on each element against its element type.
+* `check_pattern` gains a tuple case: zonk the expected type, unify with a
+  `Named(tuple_tid, [fresh metavars])` of the arity implied by the pattern
+  (`Tuple2`/`Tuple3`/`Tuple4`), then recurse `check_pattern` on element `i`
+  against type-arg `i`. This works because tuple records declare fields `_i`
+  bound to type param `i` (see `synth_tuple` in `checker.tw`, which builds the
+  same `Named` shape via `synth_named_record`), so positional index == field
+  index == type-arg index.
 * Arity/shape mismatch (e.g. a 3-tuple pattern against a `Tuple2` scrutinee, or
   a tuple pattern against a non-tuple scrutinee) produces a clear diagnostic
   (reuse the existing arity/variant-mismatch diagnostics or add a
@@ -149,22 +153,34 @@ element patterns }`, with element types resolved from the tuple type's args.
 
 ### 5. Codegen
 
-Tuples are records (no variant tag) but reuse the variant Core pattern, so the
-variant emit paths are gated on "is this `type_id` a record type?":
+Tuples are records (no variant tag) but reuse the variant Core pattern. The
+`.Variant` emit paths currently guard on `can_match_variant_pattern`, which
+returns `false` for a record `type_id` — so an unmodified `.Variant(tuple_tid,…)`
+would emit `I32Const(0)` (never matches) with no bindings. A record/tuple-tid
+branch must therefore be added **before** that guard in both
+`emit_pattern_condition` (`emit.tw:3911`) and `emit_pattern_bindings`
+(`emit.tw:4041`):
 
-* `emit_pattern_condition` / `emit_variant_pattern_condition`: for a record tid,
-  emit the AND of the sub-pattern conditions over record field projections
-  (`StructGet(record_sym, i)`) with **no** tag test; emit `I32Const(1)` when all
-  sub-patterns are trivial. This mirrors the existing
+* **Condition** (`emit_pattern_condition`): for a record tid, emit the AND of the
+  sub-pattern conditions over record field projections, with **no** tag test;
+  emit `I32Const(1)` when all sub-patterns are trivial. Field `i` is projected
+  via the record layout: `record_layout_of_ctx(scrutinee_mono, ctx).sym` +
+  `StructGet(sym, i)` (see `emit_record_get`/`layout_helpers.tw`), *not* the
+  sum-layout `struct_field_offset`. Structurally this mirrors the existing
   `is_nullable_extern_option` special-case already in these functions.
-* `emit_pattern_bindings`: for a record tid, project field `i` via the record
-  layout (fields at offset `i`), **not** the sum-layout tag offset, then recurse.
+* **Bindings** (`emit_pattern_bindings`): for a record tid, project field `i`
+  through the same record layout, then recurse.
 * `is_br_table_eligible`: record tids are ineligible (no tag to switch on),
   forcing the `emit_arm_chain` path, which already handles nested refutable
   patterns and fallthrough.
 
-Stage0 codegen applies the analogous record-layout gating. Stage0 already emits
-record field reads (tuple `._0` access works), so the record layout is available.
+Stage0 applies the analogous gating. Its pattern emit (`src/codegen/emit.rs`,
+`emit_pattern_condition`/`emit_pattern_bindings`) works over an erased
+`T_VARIANT` layout plus typed-sum specialization; a record/tuple-tid branch must
+precede **both** and instead project fields via `record_struct_sym(tuple_tid, …)`
++ `StructGet(sym, i)` (the same path `emit_record_get` uses for `._i`, at
+`emit.rs:3943`). Record field access already works there, so the layout is
+reachable.
 
 ### 6. Formatter
 
