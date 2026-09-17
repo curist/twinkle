@@ -998,17 +998,21 @@ fn test_rt_arr_make() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "make").ok_or("missing make func")
   try assert.equal(f.params.len(), 2)
+
+  // make fills through the mutable builder (builder_new/push/freeze) — the O(n)
+  // flat-append path — not per-element persistent `push`, which rebuilt the trie
+  // each step and made reference-element Vector.make an order slower than make_i64.
   try assert.ok(
     has_instr(
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "push",
+          .Call(sym) => sym == "builder_push",
           _ => false,
         }
       },
     ),
-    "make should call push",
+    "make should fill via builder_push",
   )
   .Ok({})
 }

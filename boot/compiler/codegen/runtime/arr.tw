@@ -1296,54 +1296,47 @@ fn push_fn() FuncDef {
 // Public API
 // ═══════════════════════════════════════════════════════════════════════
 // make(len: i32, fill: anyref) -> PVec
+// Fills through the mutable builder (builder_new/push/freeze), the O(n) flat-append
+// path — never per-element persistent `push`, which rebuilds the trie each step and
+// made reference-element `Vector.make` an order slower than the typed `make_i64`.
 fn make_fn() FuncDef {
-  // p0=len, p1=fill, L2=vec, L3=i
+  // p0=len, p1=fill, L2=builder, L3=i
   .{
     name: "make",
     params: [.I32, .Anyref],
     results: [pvec_ref()],
-    locals: [pvec_null(), .I32],
+    locals: [arr_null(), .I32],
     body: [
-      .LocalGet(0),
-      .I32Eqz,
-      .If(
-        .Some(pvec_ref()),
-        [.GlobalGet("empty_pvec")],
+      .Call("builder_new"),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
         [
-          .GlobalGet("empty_pvec"),
-          .LocalSet(2),
-          .I32Const(0),
-          .LocalSet(3),
-          .Block(
-            "brk",
+          .Loop(
+            "lp",
             .None,
             [
-              .Loop(
-                "lp",
-                .None,
-                [
-                  .LocalGet(3),
-                  .LocalGet(0),
-                  .I32GeS,
-                  .BrIf("brk"),
-                  .LocalGet(2),
-                  .RefAsNonNull,
-                  .LocalGet(1),
-                  .Call("push"),
-                  .LocalSet(2),
-                  .LocalGet(3),
-                  .I32Const(1),
-                  .I32Add,
-                  .LocalSet(3),
-                  .Br("lp"),
-                ],
-              ),
+              .LocalGet(3),
+              .LocalGet(0),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(2),
+              .LocalGet(1),
+              .Call("builder_push"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("lp"),
             ],
           ),
-          .LocalGet(2),
-          .RefAsNonNull,
         ],
       ),
+      .LocalGet(2),
+      .Call("builder_freeze"),
     ],
   }
 }
