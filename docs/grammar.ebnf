@@ -282,7 +282,17 @@ PrimaryExpr =
     | CaseExpr
     | CondExpr
     | CollectExpr
+    | TupleLiteral
     | "(" Expr ")" ;
+
+TupleLiteral =
+    "(" Expr "," Expr { "," Expr } [ "," ] ")" ;
+(* Implementation note:
+   - A top-level comma inside parens makes a tuple; a single parenthesized
+     expression stays grouping. Arity is 2–4 (Tuple2/Tuple3/Tuple4); larger
+     is a parse error — use a record.
+   - Desugars to construction of the compiler-known TupleN record with fields
+     _0.._n; access is positional (`t._0`). *)
 
 VariantExpr =
     "." UpperIdent [ "(" ArgList ")" ] ;
@@ -683,7 +693,16 @@ BaseType =
       PrimitiveType
     | RecordType
     | GenericType
+    | TupleType
     | TypeName ;
+
+TupleType =
+    "(" Type "," Type { "," Type } [ "," ] ")" ;
+(* Implementation note:
+   - `(A, B)` … `(A, B, C, D)` denote the compiler-known TupleN types
+     (arity 2–4). Larger is a parse error — use a record.
+   - Postfix `?`/`!E` wrap the whole tuple: `(A, B)?` is Option<Tuple2<A, B>>,
+     `(A, B)!E` is Result<Tuple2<A, B>, E>. *)
 
 PrimitiveType =
       "Int"

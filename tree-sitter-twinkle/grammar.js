@@ -415,12 +415,26 @@ module.exports = grammar({
       $.case_expression,
       $.cond_expression,
       $.collect_expression,
+      $.tuple_literal,
       $.parenthesized_expression,
     ),
 
     parenthesized_expression: $ => seq(
       '(',
       $._expression,
+      ')',
+    ),
+
+    // A tuple needs at least one top-level comma; `(a)` stays a
+    // parenthesized_expression. Arity 2-4 is enforced by the compiler, not the
+    // grammar.
+    tuple_literal: $ => seq(
+      '(',
+      $._expression,
+      ',',
+      $._expression,
+      repeat(seq(',', $._expression)),
+      optional(','),
       ')',
     ),
 
@@ -787,6 +801,19 @@ module.exports = grammar({
       $.generic_type,
       $.type_name,
       $.record_type_def,
+      $.tuple_type,
+    ),
+
+    // Tuple type `(A, B)` … `(A, B, C, D)`; the compiler enforces the 2-4 cap.
+    // Postfix `?`/`!E` wrap the whole tuple (handled by the `type` rule).
+    tuple_type: $ => seq(
+      '(',
+      $.type,
+      ',',
+      $.type,
+      repeat(seq(',', $.type)),
+      optional(','),
+      ')',
     ),
 
     primitive_type: $ => choice(
