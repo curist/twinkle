@@ -1,5 +1,12 @@
-fn is_nan(x: Float) Bool {
+/// Whether `x` is NaN (the only value not equal to itself).
+pub fn is_nan(x: Float) Bool {
   x != x
+}
+
+/// Whether `x` is finite — neither NaN nor an infinity. `x - x` is `0.0` for
+/// every finite value and NaN for the infinities.
+pub fn is_finite(x: Float) Bool {
+  !is_nan(x) and x - x == 0.0
 }
 
 /// Compare two Floats. NaN compares as greater than all other values.

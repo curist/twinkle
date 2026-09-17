@@ -303,4 +303,16 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "trim_start and trim_end strip one side only",
+      fn() {
+        try assert.equal("  hi  ".trim_start(), "hi  ")
+        try assert.equal("  hi  ".trim_end(), "  hi")
+        try assert.equal("hi".trim_start(), "hi")
+        try assert.equal("hi".trim_end(), "hi")
+        try assert.equal("   ".trim_start(), "")
+        try assert.equal("   ".trim_end(), "")
+        .Ok({})
+      },
+    )
 }

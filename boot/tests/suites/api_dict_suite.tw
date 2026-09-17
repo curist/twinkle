@@ -400,4 +400,46 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "upsert inserts on absence and transforms on presence",
+      fn() {
+        counts: Dict<String, Int> = Dict.new()
+        bump := fn(cur: Option<Int>) Int {
+          case cur {
+            .Some(n) => n + 1,
+            .None => 1,
+          }
+        }
+        counts = .upsert("a", bump)
+        counts = .upsert("a", bump)
+        counts = .upsert("b", bump)
+        try assert.equal(counts.get("a"), .Some(2))
+        try assert.equal(counts.get("b"), .Some(1))
+        .Ok({})
+      },
+    )
+    .test(
+      "update seeds default on absence, applies f on presence",
+      fn() {
+        counts: Dict<String, Int> = Dict.new()
+        counts = .update("a", 1, fn(n: Int) Int { n + 1 })
+        counts = .update("a", 1, fn(n: Int) Int { n + 1 })
+        try assert.equal(counts.get("a"), .Some(2))
+        .Ok({})
+      },
+    )
+    .test(
+      "merge lets the right-hand dict win on key clashes",
+      fn() {
+        a: Dict<String, Int> = Dict.new()
+        a = .set("x", 1).set("y", 2)
+        b: Dict<String, Int> = Dict.new()
+        b = .set("y", 99).set("z", 3)
+        m := a.merge(b)
+        try assert.equal(m.get("x"), .Some(1))
+        try assert.equal(m.get("y"), .Some(99))
+        try assert.equal(m.get("z"), .Some(3))
+        .Ok({})
+      },
+    )
 }

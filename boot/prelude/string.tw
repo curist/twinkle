@@ -681,6 +681,30 @@ pub fn trim(s: String) String {
   s.slice(start, end + 1)
 }
 
+/// Strip leading ASCII whitespace only.
+pub fn trim_start(s: String) String {
+  n := s.len()
+  start := 0
+
+  for start < n and is_ascii_space(s.char_code_at(start)) {
+    start = start + 1
+  }
+
+  s.slice(start, n)
+}
+
+/// Strip trailing ASCII whitespace only.
+pub fn trim_end(s: String) String {
+  n := s.len()
+  end := n
+
+  for end > 0 and is_ascii_space(s.char_code_at(end - 1)) {
+    end = end - 1
+  }
+
+  s.slice(0, end)
+}
+
 /// Concatenate `n` copies of the string. `n <= 0` yields the empty string.
 pub fn repeat(s: String, n: Int) String {
   if n <= 0 {

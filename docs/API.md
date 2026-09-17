@@ -243,6 +243,8 @@ traps with a source-mapped trace (headline + snippet + backtrace); see spec §6.
 | `Float.min` | `fn(a: Float, b: Float) Float` | Lesser float, lowered to native `f64.min` |
 | `Float.max` | `fn(a: Float, b: Float) Float` | Greater float, lowered to native `f64.max` |
 | `Float.round` | `fn(f: Float) Float` | Round to nearest integer with halves toward +∞, matching JS `Math.round` |
+| `Float.is_nan` | `fn(f: Float) Bool` | Whether `f` is NaN |
+| `Float.is_finite` | `fn(f: Float) Bool` | Whether `f` is finite (neither NaN nor an infinity) |
 | `Float.sin` / `cos` / `tan` | `fn(x: Float) Float` | Trigonometric functions, radians (host `Math.*`) |
 | `Float.asin` / `acos` / `atan` | `fn(x: Float) Float` | Inverse trigonometric functions, radians (host `Math.*`) |
 | `Float.atan2` | `fn(y: Float, x: Float) Float` | Quadrant-aware arc-tangent (host `Math.atan2`) |
@@ -316,6 +318,8 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.split(sep)` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
 | `.lines()` | `fn(s: String) Vector<String>` | Split on newlines (handles both `\n` and `\r\n`) |
 | `.trim()` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
+| `.trim_start()` | `fn(s: String) String` | Strip leading ASCII whitespace only |
+| `.trim_end()` | `fn(s: String) String` | Strip trailing ASCII whitespace only |
 | `.strip_prefix(prefix)` | `fn(s: String, prefix: String) Option<String>` | Remove prefix and return remainder, or `None` |
 | `.strip_suffix(suffix)` | `fn(s: String, suffix: String) Option<String>` | Remove suffix and return remainder, or `None` |
 | `.count(needle)` | `fn(s: String, needle: String) Int` | Count non-overlapping occurrences of `needle` |
@@ -378,6 +382,7 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.flat_map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B>` | Map each element to a vector and flatten |
 | `.compact()` | `fn<A>(xs: Vector<Option<A>>) Vector<A>` | Drop `.None` entries and unwrap `.Some` values |
 | `.dedup()` | `fn<A: Eq>(xs: Vector<A>) Vector<A>` | Remove adjacent duplicate elements |
+| `.unique()` | `fn<A: Eq>(xs: Vector<A>) Vector<A>` | Remove duplicates globally, keeping the first occurrence of each (order-preserving, O(n²)) |
 | `.intersperse(sep)` | `fn<A>(xs: Vector<A>, sep: A) Vector<A>` | Insert `sep` between elements |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
 | `.sort()` | `fn<T: Ord>(xs: Vector<T>) Vector<T>` | Return a new sorted vector using the `Ord` contract (e.g. `nums.sort()`) |
@@ -500,6 +505,9 @@ existing key keeps its position, and remove+reinsert appends it at the end.
 | `.keys()` | `fn<K,V>(d: Dict<K,V>) Vector<K>` | All keys as a vector |
 | `.values()` | `fn<K,V>(d: Dict<K,V>) Vector<V>` | All values as a vector |
 | `.remove(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Dict<K,V>` | Remove key, return new dict |
+| `.upsert(key, f)` | `fn<K,V>(d: Dict<K,V>, key: K, f: fn(Option<V>) V) Dict<K,V>` | Insert or transform: `f` sees `.Some(v)` if present, `.None` if absent, and returns the new value. General form |
+| `.update(key, default, f)` | `fn<K,V>(d: Dict<K,V>, key: K, default: V, f: fn(V) V) Dict<K,V>` | Apply `f` to the existing value, or seed `default` when absent (`f` not applied to the default). Common case for counters/accumulators |
+| `.merge(other)` | `fn<K,V>(d: Dict<K,V>, other: Dict<K,V>) Dict<K,V>` | Merge `other` into `d`; `other`'s value wins on shared keys |
 
 **Lookup syntax:** `d[key]` — returns `Option<V>`.
 

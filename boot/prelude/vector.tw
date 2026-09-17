@@ -425,6 +425,21 @@ pub fn compact<A>(xs: Vector<Option<A>>) Vector<A> {
 }
 
 /// Remove adjacent duplicate elements.
+/// Remove duplicate elements, keeping the first occurrence of each (order-
+/// preserving, global — unlike `dedup`, which only collapses adjacent runs).
+/// O(n²) via `Eq` comparison.
+pub fn unique<A: Eq>(xs: Vector<A>) Vector<A> {
+  out: Vector<A> = []
+
+  for x in xs {
+    if !out.contains(x) {
+      out = .append(x)
+    }
+  }
+
+  out
+}
+
 pub fn dedup<A: Eq>(xs: Vector<A>) Vector<A> {
   if xs.len() == 0 {
     return xs

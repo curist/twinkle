@@ -86,4 +86,15 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "is_nan and is_finite classify floats",
+      fn() {
+        try assert.ok(!1.5.is_nan(), "1.5 is not NaN")
+        try assert.ok((0.0 / 0.0).is_nan(), "0/0 is NaN")
+        try assert.ok(1.5.is_finite(), "1.5 is finite")
+        try assert.ok(!(1.0 / 0.0).is_finite(), "inf is not finite")
+        try assert.ok(!(0.0 / 0.0).is_finite(), "NaN is not finite")
+        .Ok({})
+      },
+    )
 }

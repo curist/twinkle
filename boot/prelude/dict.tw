@@ -9,3 +9,32 @@ pub fn values<K, V>(d: Dict<K, V>) Vector<V> {
     v
   }
 }
+
+/// Insert or transform the value at `key`. `f` receives the current value —
+/// `.Some(v)` when present, `.None` when absent — and returns the new value.
+/// The general form; use `update` for the common "modify existing or seed" case.
+pub fn upsert<K, V>(d: Dict<K, V>, key: K, f: fn(Option<V>) V) Dict<K, V> {
+  d.set(key, f(d.get(key)))
+}
+
+/// Modify the value at `key` with `f`, seeding `default` when `key` is absent
+/// (`f` is not applied to the default). The clean common case for counters and
+/// accumulators; use `upsert` when insert and update must diverge.
+pub fn update<K, V>(d: Dict<K, V>, key: K, default: V, f: fn(V) V) Dict<K, V> {
+  case d.get(key) {
+    .Some(v) => d.set(key, f(v)),
+    .None => d.set(key, default),
+  }
+}
+
+/// Merge `other` into `d`, returning a new dict. On a key present in both,
+/// `other`'s value wins.
+pub fn merge<K, V>(d: Dict<K, V>, other: Dict<K, V>) Dict<K, V> {
+  result := d
+
+  for k, v in other {
+    result = .set(k, v)
+  }
+
+  result
+}
