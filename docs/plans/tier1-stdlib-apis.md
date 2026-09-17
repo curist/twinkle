@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add the two highest-frequency missing stdlib APIs surfaced by the API audit — `Int` base/radix conversion and `Vector` reductions (`sum`/`product`/`min`/`max` and their comparator/key variants).
+**Goal:** Add the two highest-frequency missing stdlib APIs surfaced by the API audit — `Int.to_hex` and `Vector` reductions (`sum`/`product`/`min`/`max` and their comparator/key variants).
 
 **Architecture:** Both are pure prelude additions in Twinkle source (`boot/prelude/int.tw`, `boot/prelude/vector.tw`) — ordinary `pub fn`s auto-registered as inherent methods, exactly like the existing `Int.gcd` / `Vector.fold` / `Vector.sort`. No Rust/stage0 changes, no runtime-builtin FuncId wiring. Everything uses only integer, string, generic, and `Ord`-contract operations, all of which stage0 already lowers (verified: `Vector.sort` uses `T: Ord`/`.compare` and `Int.from_string`-style string parsing already ships in the eagerly-lowered prelude). No `Float` rounding intrinsics are involved, so none of the stage0 f64 constraints that shaped `Float.to_fixed` apply here.
 
@@ -22,19 +22,19 @@
 
 ---
 
-## Component A — Int radix conversion
+## Component A — Int hex rendering
 
-Two functions in `boot/prelude/int.tw`: render an `Int` in any base 2–36, and parse one back. `Int.from_string` today is base-10 only and there is no base rendering at all, so hex/binary/octal work is currently impossible without hand-rolling.
+One function in `boot/prelude/int.tw`: render an `Int` as a hexadecimal string. There is no base rendering in the stdlib today, so hex dumps, byte/color formatting, and debug output all require hand-rolling. Hex is the overwhelmingly common case; binary/octal and hex *parsing* are deferred (see Notes on scope) until a real caller needs them.
 
-### Task A1: `Int.to_string_radix`
+### Task A1: `Int.to_hex`
 
 **Files:**
-- Modify: `boot/prelude/int.tw` (add `to_string_radix`)
+- Modify: `boot/prelude/int.tw` (add `to_hex`)
 - Modify: `boot/tests/suites/api_int_suite.tw` (add a test block)
 - Modify: `docs/API.md` (add a row under `## Numeric (Int)`)
 
 **Interfaces:**
-- Produces: `Int.to_string_radix(n: Int, radix: Int) String` — base-`radix` (2–36) rendering, lowercase digits, leading `-` for negatives, `"0"` for zero. Traps if `radix` is outside `2..=36`.
+- Produces: `Int.to_hex(n: Int) String` — lowercase base-16 rendering, **no `0x` prefix**, leading `-` for negatives (signed, not two's-complement), `"0"` for zero.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -42,14 +42,13 @@ Append a new `.test(...)` block inside the `api Int` suite builder chain in `boo
 
 ```tw
     .test(
-      "to_string_radix renders in any base 2..36",
+      "to_hex renders lowercase hex, signed, no prefix",
       fn() {
-        try assert.equal(255.to_string_radix(16), "ff")
-        try assert.equal(10.to_string_radix(2), "1010")
-        try assert.equal(0.to_string_radix(16), "0")
-        try assert.equal((-255).to_string_radix(16), "-ff")
-        try assert.equal(35.to_string_radix(36), "z")
-        try assert.equal(1000.to_string_radix(10), "1000")
+        try assert.equal(255.to_hex(), "ff")
+        try assert.equal(0.to_hex(), "0")
+        try assert.equal(16.to_hex(), "10")
+        try assert.equal(4096.to_hex(), "1000")
+        try assert.equal((-255).to_hex(), "-ff")
         .Ok({})
       },
     )
@@ -58,25 +57,21 @@ Append a new `.test(...)` block inside the `api Int` suite builder chain in `boo
 - [ ] **Step 2: Run the suite to verify it fails**
 
 Run: `make bundle-cli && make boot-test`
-Expected: FAIL — `to_string_radix` is unresolved (method not found on `Int`).
+Expected: FAIL — `to_hex` is unresolved (method not found on `Int`).
 
 - [ ] **Step 3: Write the implementation**
 
 Add to `boot/prelude/int.tw`. The loop works in **negative magnitude** so `Int.min` does not overflow when negated:
 
 ```tw
-/// Render `n` in base `radix` (2..=36) with lowercase digits. Traps on an
-/// out-of-range radix. Negative values get a leading `-`; zero renders "0".
-pub fn to_string_radix(n: Int, radix: Int) String {
-  if radix < 2 or radix > 36 {
-    error("Int.to_string_radix: radix must be in 2..=36")
-  }
-
+/// Render `n` as lowercase hexadecimal with no `0x` prefix. Negative values get
+/// a leading `-` (signed, not two's-complement); zero renders "0".
+pub fn to_hex(n: Int) String {
   if n == 0 {
     return "0"
   }
 
-  digits := "0123456789abcdefghijklmnopqrstuvwxyz"
+  digits := "0123456789abcdef"
   neg := n < 0
   // Work with a non-positive magnitude so Int.min has no positive counterpart.
   m := if neg {
@@ -87,8 +82,8 @@ pub fn to_string_radix(n: Int, radix: Int) String {
   out := ""
 
   for m != 0 {
-    r := 0 - m % radix // 0..radix-1 (m <= 0, so m % radix <= 0)
-    m = m / radix
+    r := 0 - m % 16 // 0..15 (m <= 0, so m % 16 <= 0)
+    m = m / 16
     out = digits.slice(r, r + 1).concat(out)
   }
 
@@ -110,135 +105,14 @@ Expected: PASS — `Ran N tests: N passed`.
 Add under `## Numeric (Int)` in `docs/API.md`:
 
 ```markdown
-| `Int.to_string_radix` | `fn(n: Int, radix: Int) String` | Render `n` in base `radix` (2–36), lowercase digits, leading `-` for negatives; traps if `radix` is outside `2..=36` |
+| `Int.to_hex` | `fn(n: Int) String` | Render `n` as lowercase hexadecimal, no `0x` prefix, leading `-` for negatives (signed); `"0"` for zero |
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add boot/prelude/int.tw boot/tests/suites/api_int_suite.tw docs/API.md
-git commit -m "feat(int): add Int.to_string_radix for base rendering"
-```
-
-### Task A2: `Int.from_string_radix`
-
-**Files:**
-- Modify: `boot/prelude/int.tw` (add `from_string_radix` and a private `radix_digit_value` helper)
-- Modify: `boot/tests/suites/api_int_suite.tw` (add a test block)
-- Modify: `docs/API.md` (add a row under `## Numeric (Int)`)
-
-**Interfaces:**
-- Consumes: nothing from A1 (independent).
-- Produces: `Int.from_string_radix(s: String, radix: Int) Option<Int>` — parse `s` (optional leading `+`/`-`, digits valid for `radix`) into an `Int`; `.None` on empty input or any invalid digit. Traps if `radix` is outside `2..=36`.
-
-- [ ] **Step 1: Write the failing test**
-
-Append inside the `api Int` suite builder chain in `boot/tests/suites/api_int_suite.tw`:
-
-```tw
-    .test(
-      "from_string_radix parses any base and rejects bad digits",
-      fn() {
-        try assert.equal(Int.from_string_radix("ff", 16), .Some(255))
-        try assert.equal(Int.from_string_radix("1010", 2), .Some(10))
-        try assert.equal(Int.from_string_radix("-ff", 16), .Some(-255))
-        try assert.equal(Int.from_string_radix("Z", 36), .Some(35))
-        try assert.equal(Int.from_string_radix("", 10), .None)
-        try assert.equal(Int.from_string_radix("2", 2), .None)
-        try assert.equal(Int.from_string_radix("-", 10), .None)
-        .Ok({})
-      },
-    )
-```
-
-- [ ] **Step 2: Run the suite to verify it fails**
-
-Run: `make bundle-cli && make boot-test`
-Expected: FAIL — `from_string_radix` is unresolved.
-
-- [ ] **Step 3: Write the implementation**
-
-Add to `boot/prelude/int.tw`. The helper returns `Option<Int>` so the parse loop can `try` it (early-returning `.None` on the first invalid digit, since `from_string_radix` itself returns `Option<Int>`):
-
-```tw
-// Value of a single ASCII digit character for the given radix, or .None when
-// the character is not a valid digit (0-9, a-z / A-Z) below `radix`.
-fn radix_digit_value(ch: String, radix: Int) Option<Int> {
-  b := ch.to_ascii_lower().char_code_at(0)
-  v := if b >= 48 and b <= 57 {
-    b - 48
-  } else if b >= 97 and b <= 122 {
-    b - 97 + 10
-  } else {
-    -1
-  }
-
-  if v < 0 or v >= radix {
-    .None
-  } else {
-    .Some(v)
-  }
-}
-
-/// Parse `s` in base `radix` (2..=36) into an Int. Accepts an optional leading
-/// `+`/`-`. Returns `.None` on empty input or any invalid digit. Traps on an
-/// out-of-range radix.
-pub fn from_string_radix(s: String, radix: Int) Option<Int> {
-  if radix < 2 or radix > 36 {
-    error("Int.from_string_radix: radix must be in 2..=36")
-  }
-
-  if s.len() == 0 {
-    return .None
-  }
-
-  first := s.slice(0, 1)
-  neg := first == "-"
-  start := if neg or first == "+" {
-    1
-  } else {
-    0
-  }
-
-  if start >= s.len() {
-    return .None
-  }
-
-  acc := 0
-  i := start
-
-  for i < s.len() {
-    d := try radix_digit_value(s.slice(i, i + 1), radix)
-    acc = acc * radix + d
-    i = i + 1
-  }
-
-  if neg {
-    .Some(0 - acc)
-  } else {
-    .Some(acc)
-  }
-}
-```
-
-- [ ] **Step 4: Format, regenerate, rebuild, and run the suite**
-
-Run: `target/twk fmt boot/prelude/int.tw boot/tests/suites/api_int_suite.tw && python3 tools/generate_core_lib.py && make bundle-cli && make boot-test`
-Expected: PASS.
-
-- [ ] **Step 5: Document**
-
-Add under `## Numeric (Int)` in `docs/API.md`:
-
-```markdown
-| `Int.from_string_radix` | `fn(s: String, radix: Int) Option<Int>` | Parse `s` in base `radix` (2–36); optional leading `+`/`-`; `.None` on empty or invalid digit; traps if `radix` is outside `2..=36` |
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add boot/prelude/int.tw boot/tests/suites/api_int_suite.tw docs/API.md
-git commit -m "feat(int): add Int.from_string_radix for base parsing"
+git commit -m "feat(int): add Int.to_hex for hexadecimal rendering"
 ```
 
 ---
@@ -638,5 +512,6 @@ git commit -m "feat(vector): add key-projection min_by_key and max_by_key"
 
 ## Notes on scope (YAGNI)
 
+- **Hex only, render only.** `Int.to_hex` covers the overwhelmingly common base (bytes, colors, hashes, debug dumps). General `to_string_radix`/`from_string_radix` (bases 2–36), binary/octal shorthands, and hex *parsing* (`from_hex`) are deliberately omitted — they add API surface for cases that rarely arise and are a trivial follow-up when a real caller appears. Signed rendering (`-ff`) is chosen over two's-complement bit patterns; a `to_hex_bits` could serve the bit-pattern need later.
 - **`sum`/`product` are `Int`-only** by design — there is no numeric contract, and `Vector.join` sets the precedent for element-type-specific reductions. `Vector<Float>` totals use `fold(0.0, fn(a, x) { a + x })`.
 - **Deferred (Tier 2/3, not in this plan):** `Dict.update`/`get_or`/`merge`, `String.split_once`/`trim_start`/`trim_end`, public `Float.is_nan`/`is_finite`, and `Vector.partition`/`distinct`/`zip`. Each is its own future plan.
