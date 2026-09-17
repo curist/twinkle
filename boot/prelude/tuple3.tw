@@ -1,0 +1,19 @@
+//! Witnesses for the compiler-known tuple type `Tuple3` (arity-3 tuple).
+//!
+//! Lives in its own top-level prelude module because the signature loader
+//! derives a module's receiver type from its filename stem, one type per
+//! module. See `tuple.tw` for the full tuple rationale.
+
+pub fn compare<A: Ord, B: Ord, C: Ord>(x: Tuple3<A, B, C>, y: Tuple3<A, B, C>) Order {
+  case x._0.compare(y._0) {
+    .Eq => case x._1.compare(y._1) {
+      .Eq => x._2.compare(y._2),
+      other => other,
+    },
+    other => other,
+  }
+}
+
+pub fn to_string<A: Stringify, B: Stringify, C: Stringify>(t: Tuple3<A, B, C>) String {
+  "(${t._0}, ${t._1}, ${t._2})"
+}

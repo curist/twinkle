@@ -156,6 +156,7 @@ use .suites.symbolicate_suite
 use .suites.tail_match_result_typing_suite
 use .suites.task_suite
 use .suites.trace_render_suite
+use .suites.tuple_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
 use .suites.typed_record_fields_suite
@@ -199,6 +200,7 @@ runner.run_all([
   stdlib_queue_suite.suite(),
   stdlib_regexp_suite.suite(),
   stdlib_tuple_suite.suite(),
+  tuple_suite.suite(),
   stdlib_crypto_suite.suite(),
   stdlib_buffer_suite.suite(),
   stdlib_math_suite.suite(),

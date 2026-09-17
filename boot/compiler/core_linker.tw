@@ -41,6 +41,9 @@ fn is_builtin_method_type(type_name: String) Bool {
     or type_name == "SendError"
     or type_name == "Result"
     or type_name == "Order"
+    or type_name == "Tuple2"
+    or type_name == "Tuple3"
+    or type_name == "Tuple4"
 }
 
 // ── Public API ──────────────────────────────────────────────────────

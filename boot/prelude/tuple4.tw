@@ -1,0 +1,22 @@
+//! Witnesses for the compiler-known tuple type `Tuple4` (arity-4 tuple, the cap).
+//!
+//! Lives in its own top-level prelude module because the signature loader
+//! derives a module's receiver type from its filename stem, one type per
+//! module. See `tuple.tw` for the full tuple rationale.
+
+pub fn compare<A: Ord, B: Ord, C: Ord, D: Ord>(x: Tuple4<A, B, C, D>, y: Tuple4<A, B, C, D>) Order {
+  case x._0.compare(y._0) {
+    .Eq => case x._1.compare(y._1) {
+      .Eq => case x._2.compare(y._2) {
+        .Eq => x._3.compare(y._3),
+        other => other,
+      },
+      other => other,
+    },
+    other => other,
+  }
+}
+
+pub fn to_string<A: Stringify, B: Stringify, C: Stringify, D: Stringify>(t: Tuple4<A, B, C, D>) String {
+  "(${t._0}, ${t._1}, ${t._2}, ${t._3})"
+}

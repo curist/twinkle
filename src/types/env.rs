@@ -6,7 +6,8 @@ use super::ty::{
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     CHANNEL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType,
     OPTION_TYPE_ID, ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SEND_ERROR_TYPE_ID,
-    SET_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, VIEW_TYPE_ID, Variant,
+    SET_TYPE_ID, TASK_TYPE_ID, TUPLE2_TYPE_ID, TUPLE3_TYPE_ID, TUPLE4_TYPE_ID, TypeDef, TypeId,
+    UNFOLD_STEP_TYPE_ID, VIEW_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -316,6 +317,84 @@ impl TypeEnv {
                 doc: Some("Reserved stdlib view type.".to_string()),
             }),
             VIEW_TYPE_ID,
+        );
+
+        // TypeId(13) = Tuple2<A, B> — compiler-known arity-2 tuple record.
+        // Desugaring target of `(a, b)` / `(A, B)` syntax; fields `_0`, `_1`.
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Tuple2".to_string(),
+                type_params: vec!["A".to_string(), "B".to_string()],
+                fields: vec![
+                    RecordField {
+                        name: "_0".to_string(),
+                        ty: MonoType::Var("A".to_string()),
+                    },
+                    RecordField {
+                        name: "_1".to_string(),
+                        ty: MonoType::Var("B".to_string()),
+                    },
+                ],
+                doc: Some("Arity-2 tuple: positional pair.".to_string()),
+            }),
+            TUPLE2_TYPE_ID,
+        );
+
+        // TypeId(14) = Tuple3<A, B, C> — compiler-known arity-3 tuple record.
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Tuple3".to_string(),
+                type_params: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+                fields: vec![
+                    RecordField {
+                        name: "_0".to_string(),
+                        ty: MonoType::Var("A".to_string()),
+                    },
+                    RecordField {
+                        name: "_1".to_string(),
+                        ty: MonoType::Var("B".to_string()),
+                    },
+                    RecordField {
+                        name: "_2".to_string(),
+                        ty: MonoType::Var("C".to_string()),
+                    },
+                ],
+                doc: Some("Arity-3 tuple: positional triple.".to_string()),
+            }),
+            TUPLE3_TYPE_ID,
+        );
+
+        // TypeId(15) = Tuple4<A, B, C, D> — compiler-known arity-4 tuple record.
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Tuple4".to_string(),
+                type_params: vec![
+                    "A".to_string(),
+                    "B".to_string(),
+                    "C".to_string(),
+                    "D".to_string(),
+                ],
+                fields: vec![
+                    RecordField {
+                        name: "_0".to_string(),
+                        ty: MonoType::Var("A".to_string()),
+                    },
+                    RecordField {
+                        name: "_1".to_string(),
+                        ty: MonoType::Var("B".to_string()),
+                    },
+                    RecordField {
+                        name: "_2".to_string(),
+                        ty: MonoType::Var("C".to_string()),
+                    },
+                    RecordField {
+                        name: "_3".to_string(),
+                        ty: MonoType::Var("D".to_string()),
+                    },
+                ],
+                doc: Some("Arity-4 tuple: positional quad.".to_string()),
+            }),
+            TUPLE4_TYPE_ID,
         );
 
         // Register all builtin method mappings.

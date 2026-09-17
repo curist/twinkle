@@ -41,10 +41,16 @@ pub fn suite() runner.Suite {
         env := builtin_env()
         send_error := try env.lookup_type("SendError").ok_or("missing SendError builtin")
         view := try env.lookup_type("View").ok_or("missing View reservation")
+        tuple2 := try env.lookup_type("Tuple2").ok_or("missing Tuple2 builtin")
+        tuple3 := try env.lookup_type("Tuple3").ok_or("missing Tuple3 builtin")
+        tuple4 := try env.lookup_type("Tuple4").ok_or("missing Tuple4 builtin")
 
         try assert.equal(send_error.id.id, 11)
         try assert.equal(view.id.id, 12)
-        assert.equal(first_user_type_id(), 13)
+        try assert.equal(tuple2.id.id, 13)
+        try assert.equal(tuple3.id.id, 14)
+        try assert.equal(tuple4.id.id, 15)
+        assert.equal(first_user_type_id(), 16)
       },
     )
     .test(

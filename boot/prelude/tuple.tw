@@ -1,0 +1,28 @@
+//! Witnesses for the compiler-known tuple type `Tuple2` (arity-2 tuple).
+//!
+//! `Tuple2/3/4` are builtin nominal records with fields `_0.._3`, registered in
+//! `base_env.tw`. Users never write these names directly — the `(a, b)` /
+//! `(A, B)` sugar desugars to them. `==`/`!=` come for free from record `Eq`
+//! auto-derivation; `compare` (`Ord`, lexicographic by position) and
+//! `to_string` (`Stringify`, rendering `(a, b)`) are the conditional witnesses
+//! provided here, resolved like any other builtin-type prelude method (the way
+//! `Order.to_string` witnesses `Stringify` for `Order`).
+//!
+//! Tuples are the sanctioned exception to Twinkle's nominal "name your data"
+//! rule — for genuinely positional, short-lived groupings and multi-return, not
+//! for values whose fields have meaningful names (coordinates, colors, parser
+//! state want records). The 2–4 arity cap reinforces this. Each arity lives in
+//! its own top-level prelude module (`tuple.tw`, `tuple3.tw`, `tuple4.tw`)
+//! because the signature loader derives a module's receiver type from its
+//! filename stem, one type per module.
+
+pub fn compare<A: Ord, B: Ord>(x: Tuple2<A, B>, y: Tuple2<A, B>) Order {
+  case x._0.compare(y._0) {
+    .Eq => x._1.compare(y._1),
+    other => other,
+  }
+}
+
+pub fn to_string<A: Stringify, B: Stringify>(t: Tuple2<A, B>) String {
+  "(${t._0}, ${t._1})"
+}

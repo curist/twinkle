@@ -1335,6 +1335,9 @@ fn is_reserved_type_name(name: String) Bool {
     "IterItem" => true,
     "UnfoldStep" => true,
     "Order" => true,
+    "Tuple2" => true,
+    "Tuple3" => true,
+    "Tuple4" => true,
     _ => false,
   }
 }
@@ -2407,6 +2410,9 @@ fn is_builtin_interface_type(name: String) Bool {
     "IterItem" => true,
     "UnfoldStep" => true,
     "Order" => true,
+    "Tuple2" => true,
+    "Tuple3" => true,
+    "Tuple4" => true,
     _ => false,
   }
 }

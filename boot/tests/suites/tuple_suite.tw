@@ -1,0 +1,33 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("tuple")
+    .test(
+      "Tuple2 equality, ordering, and stringify",
+      fn() {
+        a := Tuple2.{ _0: 1, _1: "x" }
+        b := Tuple2.{ _0: 1, _1: "x" }
+        c := Tuple2.{ _0: 2, _1: "x" }
+        try assert.ok(a == b, "equal tuples")
+        try assert.ok(a != c, "unequal tuples")
+        try assert.ok(a.compare(c) == .Lt, "lexicographic compare")
+        try assert.equal(a.to_string(), "(1, x)")
+        try assert.equal("${a}", "(1, x)")
+        .Ok({})
+      },
+    )
+    .test(
+      "Tuple3 and Tuple4 witnesses",
+      fn() {
+        t3 := Tuple3.{ _0: 1, _1: 2, _2: 3 }
+        t4 := Tuple4.{ _0: 1, _1: 2, _2: 3, _3: 4 }
+        try assert.equal(t3.to_string(), "(1, 2, 3)")
+        try assert.equal(t4.to_string(), "(1, 2, 3, 4)")
+        try assert.ok(t3 == Tuple3.{ _0: 1, _1: 2, _2: 3 }, "t3 eq")
+        try assert.ok(t4.compare(Tuple4.{ _0: 1, _1: 2, _2: 3, _3: 5 }) == .Lt, "t4 compare")
+        .Ok({})
+      },
+    )
+}

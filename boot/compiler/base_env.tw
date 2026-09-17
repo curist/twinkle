@@ -160,6 +160,54 @@ fn builtin_type_entries() Vector<TypeEntry> {
   types
 }
 
+/// Compiler-known tuple types `Tuple2/3/4` — fully-defined builtin records with
+/// fields `_0.._3`, the desugaring target of `(a, b)` / `(A, B)` syntax. Seeded
+/// after the builtins and the reserved stdlib forward declarations (so `View`'s
+/// pinned id stays put), starting at `start_id`. Witnesses (`compare`,
+/// `to_string`) live in the top-level `tuple.tw` / `tuple3.tw` / `tuple4.tw`
+/// prelude modules.
+fn builtin_tuple_type_entries(start_id: Int) Vector<TypeEntry> {
+  next := Cell.new(start_id)
+  [
+    builtin_type_entry(
+      next,
+      2,
+      .Record(
+        "Tuple2",
+        plain_resolved_type_params(["A", "B"]),
+        [.{ name: "_0", ty: .Var("A") }, .{ name: "_1", ty: .Var("B") }],
+      ),
+    ),
+    builtin_type_entry(
+      next,
+      3,
+      .Record(
+        "Tuple3",
+        plain_resolved_type_params(["A", "B", "C"]),
+        [
+          .{ name: "_0", ty: .Var("A") },
+          .{ name: "_1", ty: .Var("B") },
+          .{ name: "_2", ty: .Var("C") },
+        ],
+      ),
+    ),
+    builtin_type_entry(
+      next,
+      4,
+      .Record(
+        "Tuple4",
+        plain_resolved_type_params(["A", "B", "C", "D"]),
+        [
+          .{ name: "_0", ty: .Var("A") },
+          .{ name: "_1", ty: .Var("B") },
+          .{ name: "_2", ty: .Var("C") },
+          .{ name: "_3", ty: .Var("D") },
+        ],
+      ),
+    ),
+  ]
+}
+
 /// Reserved stdlib types.
 ///
 /// A prelude-backed method may name a type that is defined in stdlib source
@@ -185,7 +233,7 @@ pub fn reserved_stdlib_types() Vector<ReservedStdlibType> {
 /// from builtins (e.g. typed variant-payload routing, which is unsound for the
 /// builtin sums with specialized erased bridge helpers) gate on this threshold.
 pub fn first_user_type_id() Int {
-  builtin_type_entries().len() + reserved_stdlib_types().len()
+  builtin_type_entries().len() + reserved_stdlib_types().len() + builtin_tuple_type_entries(0).len()
 }
 
 pub fn reserved_stdlib_type_origin(name: String) String? {
@@ -240,11 +288,14 @@ fn with_reserved_stdlib_origins(env: ResolvedEnv, start_id: Int) ResolvedEnv {
 pub fn builtin_type_env() ResolvedEnv {
   types := builtin_type_entries()
   reserved := reserved_stdlib_type_entries(types.len())
+  tuples := builtin_tuple_type_entries(types.len() + reserved.len())
   env := resolver
     .empty_env()
     .with_types(
-      types.concat(reserved),
-      builtin_type_names(types).concat(reserved_stdlib_type_names()),
+      types.concat(reserved).concat(tuples),
+      builtin_type_names(types)
+        .concat(reserved_stdlib_type_names())
+        .concat(builtin_type_names(tuples)),
     )
   with_reserved_stdlib_origins(env, types.len())
 }
@@ -358,10 +409,11 @@ pub fn builtin_env() ResolvedEnv {
   ]
   builtin_named_types := builtin_type_entries()
   reserved_types := reserved_stdlib_type_entries(builtin_named_types.len())
-  all_named_types := builtin_named_types.concat(reserved_types)
-  all_named_type_names := builtin_type_names(builtin_named_types).concat(
-    reserved_stdlib_type_names(),
-  )
+  tuple_types := builtin_tuple_type_entries(builtin_named_types.len() + reserved_types.len())
+  all_named_types := builtin_named_types.concat(reserved_types).concat(tuple_types)
+  all_named_type_names := builtin_type_names(builtin_named_types)
+    .concat(reserved_stdlib_type_names())
+    .concat(builtin_type_names(tuple_types))
   env := resolver
     .empty_env()
     .with_types(all_named_types, all_named_type_names)

@@ -30,6 +30,12 @@ pub const SET_TYPE_ID: TypeId = TypeId(9);
 pub const CHANNEL_TYPE_ID: TypeId = TypeId(10);
 pub const SEND_ERROR_TYPE_ID: TypeId = TypeId(11);
 pub const VIEW_TYPE_ID: TypeId = TypeId(12);
+// Compiler-known tuple types. Fully-defined builtin records (fields `_0.._3`),
+// the desugaring target of `(a, b)` / `(A, B)` syntax. Appended after View so
+// the pinned low ids above stay stable.
+pub const TUPLE2_TYPE_ID: TypeId = TypeId(13);
+pub const TUPLE3_TYPE_ID: TypeId = TypeId(14);
+pub const TUPLE4_TYPE_ID: TypeId = TypeId(15);
 // Synthetic method-only TypeIds for builtin receiver types that are not
 // represented as MonoType::Named variants.
 pub const BUILTIN_VECTOR_TYPE_ID: TypeId = TypeId(u32::MAX - 5);
