@@ -266,6 +266,9 @@ git commit -m "feat(tuple): parse (a, b) literals to ExprKind.Tuple in boot"
         // (A, B)? must parse as Option<Tuple2<A,B>> — load-bearing for Vector.pop
         maybe: (Int, Int)? = .Some((1, 2))
         try assert.equal(maybe.unwrap()._1, 2)
+        // (A, B)!E must parse as Result<Tuple2<A,B>, E>
+        res: (Int, String)!String = .Ok((5, "q"))
+        try assert.equal(res.unwrap()._0, 5)
         .Ok({})
       },
     )
@@ -277,7 +280,13 @@ Run: `make bundle-cli && make boot-test` → FAIL (`(Int, String)` type unparsed
 
 - [ ] **Step 3: AST + parse**
 
-Add `Tuple(Vector<TypeExpr>)` to `TypeExprKind` in `ast.tw`. In `parse_type_expr_base`, add a `.LParen` case: parse a comma-separated type list, require 2–4, build `.Tuple(elems)`. (There is no existing `(` type case, so nothing conflicts; `fn(...)` types are handled under the `fn` keyword path.) **Verify the trailing-`?` interaction:** the tuple type must be produced by the *base* type parser so the existing `T?` postfix (`Optional`) wraps it — `(A, B)?` must resolve to `Option<Tuple2<A, B>>`, not `Tuple2<A, B?>`. `Vector.pop` (Task 7) depends on this; the test above asserts it.
+Add `Tuple(Vector<TypeExpr>)` to `TypeExprKind` in `ast.tw`. In `parse_type_expr_base`, add a `.LParen` case: parse a comma-separated type list, require 2–4, build `.Tuple(elems)`. (There is no existing `(` type case, so nothing conflicts; `fn(...)` types are handled under the `fn` keyword path.)
+
+**Both type postfixes must wrap the tuple** — verified against the parser:
+- `?` (Optional) is applied **per-branch** inside `parse_type_expr_base` (e.g. lines 916–919 for the Path branch — there is no shared tail). So the new tuple branch must append its **own** trailing-`.Question` check, copying the 916–919 pattern, or `(A, B)?` won't become `Option<Tuple2<…>>` (it must not become `Tuple2<A, B?>`).
+- `!` / `!E` (Result) is handled by the outer `parse_type_expr` wrapper (762–789) *after* calling the base, so it wraps the tuple automatically — `(A, B)!E` → `Result<Tuple2<…>, E>` needs no tuple-specific code.
+
+Both are asserted in the Step 1 test. `Vector.pop` (Task 7, `(T, Vector<T>)?`) depends on the `?` case. The stage0 mirror (Task 5) must preserve both: put the tuple desugar in the base type parse so the existing `?`/`!` postfix logic wraps the resulting `Type::Named("TupleN", …)`.
 
 - [ ] **Step 4: Resolve + thread**
 
@@ -348,7 +357,7 @@ This touches essentially just `src/syntax/parser.rs` (no new AST variants, no ~1
 
 - [ ] **Step 1: Write failing Rust tests**
 
-Add unit tests in `src/syntax/mod.rs` asserting `(1, 2)` parses to `RecordLit{name: Some("Tuple2"), …}`, `(Int, String)` to `Type::Named{name: "Tuple2", …}`, and `(Int, String)?` to `Type::Named{name: "Option", args: [Type::Named{"Tuple2", …}]}` (the trailing-`?` interaction — load-bearing for `Vector.pop`). Run `cargo test --release <names>` → FAIL.
+Add unit tests in `src/syntax/mod.rs` asserting `(1, 2)` parses to `RecordLit{name: Some("Tuple2"), …}`, `(Int, String)` to `Type::Named{name: "Tuple2", …}`, `(Int, String)?` to `Type::Named{name: "Option", args: [Tuple2 …]}` (load-bearing for `Vector.pop`), and `(Int, String)!String` to `Type::Named{name: "Result", args: [Tuple2 …, String]}`. Run `cargo test --release <names>` → FAIL.
 
 - [ ] **Step 2: Desugar in the parser**
 
