@@ -2162,6 +2162,48 @@ fn parse_prefix(c: Cursor) ExprParse {
         return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
       }
 
+      // A top-level comma turns the parens into a tuple literal `(a, b, ...)`.
+      // A single parenthesized expression stays grouping (handled above).
+      if c.kind() == .Comma {
+        elems: Vector<Expr> = [expr]
+
+        for c.kind() == .Comma {
+          c = .advance()
+
+          // Tolerate a trailing comma; arity is validated on the final count.
+          if c.kind() == .RParen {
+            break
+          }
+
+          parsed_elem := parse_expr_in(c, "tuple element")
+          diagnostics_out = .concat(parsed_elem.diagnostics)
+          elems = .append(parsed_elem.value)
+          c = parsed_elem.cursor
+        }
+
+        if c.kind() == .RParen {
+          tuple_span := open_span.merge(c.span())
+
+          if elems.len() < 2 or elems.len() > 4 {
+            diagnostics_out = .append(
+              diag.error(tuple_span, "tuples support 2–4 elements; use a record for more"),
+            )
+          }
+
+          tuple_expr := Expr.{ id: c.alloc_expr_id(), kind: .Tuple(elems), span: tuple_span }
+
+          return .{ value: tuple_expr, cursor: c.advance(), diagnostics: diagnostics_out }
+        }
+
+        diagnostics_out = .append(diag.error(c.span(), "expected ',' or ')' in tuple"))
+        tuple_expr := Expr.{
+          id: c.alloc_expr_id(),
+          kind: .Tuple(elems),
+          span: open_span.merge(c.span()),
+        }
+        return .{ value: tuple_expr, cursor: c, diagnostics: diagnostics_out }
+      }
+
       diagnostics_out = .append(diag.error(c.span(), "expected ')'"))
       expr.span.start = open_span.start
       .{ value: expr, cursor: c, diagnostics: diagnostics_out }

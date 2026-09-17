@@ -153,6 +153,7 @@ fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
     ) }),
     .Cond(arms) => find_call_in_cond_arms(arms, offset),
     .Array(elems) => find_call_in_exprs(elems, offset),
+    .Tuple(elems) => find_call_in_exprs(elems, offset),
     .Record(entries) => find_call_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_call_in_entries(entries, offset),
     .Variant(_, fields) => find_call_in_exprs(fields, offset),

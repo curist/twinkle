@@ -35,6 +35,21 @@ pub fn lower_named_record(
   lower_record_fields(ctx, tid, entries, ty, s, lower_expr_fn)
 }
 
+/// Lower a tuple literal `(a, b, ...)` as construction of the compiler-known
+/// `TupleN` record, with fields `_0.._n` taken positionally from the elements.
+pub fn lower_tuple(
+  ctx: LowerCtx,
+  elems: Vector<Expr>,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
+  entries := collect i in range(elems.len()) {
+    ast.RecordEntry.{ name: "_${i}", value: .Some(elems[i]), span: elems[i].span }
+  }
+  lower_named_record(ctx, "Tuple${elems.len()}", entries, ty, s, lower_expr_fn)
+}
+
 pub fn lower_anon_record(
   ctx: LowerCtx,
   entries: Vector<ast.RecordEntry>,

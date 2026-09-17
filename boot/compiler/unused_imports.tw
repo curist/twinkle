@@ -426,6 +426,11 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
         collect_used_names_expr(e, used)
       }
     },
+    .Tuple(elems) => {
+      for e in elems {
+        collect_used_names_expr(e, used)
+      }
+    },
     .Record(entries) => {
       for entry in entries {
         case entry.value {

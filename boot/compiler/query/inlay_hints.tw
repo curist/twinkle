@@ -203,6 +203,15 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
 
       out
     },
+    .Tuple(elems) => {
+      out: Vector<InlayHint> = []
+
+      for e in elems {
+        out = .concat(ctx.hints_from_expr(e))
+      }
+
+      out
+    },
     .Index(base, idx) => ctx.hints_from_expr(base).concat(ctx.hints_from_expr(idx)),
     .Field(base, _) => ctx.hints_from_expr(base),
     .Variant(_, args) => {

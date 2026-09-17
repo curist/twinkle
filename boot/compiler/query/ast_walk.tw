@@ -117,6 +117,7 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
     ) }),
     .Cond(arms) => find_node_in_cond_arms(arms, offset),
     .Array(elems) => find_node_in_exprs(elems, offset),
+    .Tuple(elems) => find_node_in_exprs(elems, offset),
     .Record(entries) => find_node_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_node_in_entries(entries, offset),
     .Variant(_, fields) => find_node_in_exprs(fields, offset),

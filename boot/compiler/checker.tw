@@ -1560,6 +1560,7 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
     .StringInterp(parts) => synth_string_interp(parts, ctx, diags),
     .Field(base, field_name) => synth_field(base, field_name, expr.span, ctx, diags),
     .Array(elems) => synth_array(elems, expr.span, ctx, diags),
+    .Tuple(elems) => synth_tuple(elems, expr.id, expr.span, ctx, diags),
     .If(cond_e, then_block, else_expr) => synth_if(
       cond_e,
       then_block,
@@ -2924,6 +2925,16 @@ fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<DiagKi
   .{ ty: .Vector(first.ty), ctx: cur_ctx, diags: cur_diags }
 }
 
+// Synthesize a tuple literal `(a, b, ...)` as construction of the compiler-known
+// `TupleN` record (fields `_0.._n`), reusing the named-record inference path so
+// element types, generic instantiation, and bounds checking all flow through it.
+fn synth_tuple(elems: Vector<Expr>, record_id: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+  entries := collect i in range(elems.len()) {
+    RecordEntry.{ name: "_${i}", value: .Some(elems[i]), span: elems[i].span }
+  }
+  synth_named_record("Tuple${elems.len()}", entries, record_id, s.start, s, ctx, diags)
+}
+
 // ── Check mode ──────────────────────────────────────────────────────
 fn int_literal_fits_byte(n: Int) Bool {
   n >= 0 and n <= 255
@@ -2967,6 +2978,15 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
     },
     .Record(entries) => {
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
+      return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
+    },
+    .Tuple(elems) => {
+      // Push each expected TupleN field type into the corresponding element
+      // (e.g. so `t: (Byte, Byte) = (1, 2)` coerces the int literals).
+      tuple_entries := collect i in range(elems.len()) {
+        RecordEntry.{ name: "_${i}", value: .Some(elems[i]), span: elems[i].span }
+      }
+      r := check_record_lit(tuple_entries, expected, expr.span, ctx, diags)
       return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Variant(name, args) => {

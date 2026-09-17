@@ -191,6 +191,17 @@ fn ranges_from_expr(expr: ast.Expr) Vector<FoldingRange> {
 
       result
     },
+    .Tuple(elems) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+
+      for elem in elems {
+        result = .concat(ranges_from_expr(elem))
+      }
+
+      result
+    },
     .Record(entries) => {
       result: Vector<FoldingRange> = [
         .{ start: expr.span.start, end: expr.span.end, kind: .Region },

@@ -20,7 +20,7 @@ use .lower_core.helpers.{void_expr}
 use .lower_core.iteration.{lower_collect, lower_for}
 use .lower_core.lvalues.{lower_lvalue_assign}
 use .lower_core.operators.{lower_binary, lower_unary}
-use .lower_core.records.{lower_anon_record, lower_field, lower_named_record}
+use .lower_core.records.{lower_anon_record, lower_field, lower_named_record, lower_tuple}
 use .lower_core.statements.{lower_stmts}
 use .lower_core.strings.{lower_string_interp}
 use .lower_core.variants.{lower_array, lower_case, lower_index, lower_variant}
@@ -84,6 +84,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .Case(scrut, arms) => lower_case(ctx, scrut, arms, ty, s, lower_expr),
     .Cond(arms) => lower_cond(ctx, arms, ty, s, lower_expr),
     .Array(elems) => lower_array(ctx, elems, ty, s, lower_expr),
+    .Tuple(elems) => lower_tuple(ctx, elems, ty, s, lower_expr),
     .Index(base_expr, idx_expr) => lower_index(ctx, expr, base_expr, idx_expr, ty, s, lower_expr),
     .Binary(ast_op, lhs, rhs) => lower_binary(ctx, ast_op, lhs, rhs, ty, s, lower_expr),
     .Unary(ast_op, operand) => lower_unary(ctx, ast_op, operand, ty, s, lower_expr),

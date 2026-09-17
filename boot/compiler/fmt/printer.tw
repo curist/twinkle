@@ -1347,6 +1347,28 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
         )
       }
     },
+    .Tuple(elems) => {
+      elem_docs := collect e in elems {
+        format_list_element(e, tm)
+      }
+      ml_flags := collect e in elems {
+        expr_is_multiline(e, tm)
+      }
+
+      if any_true(ml_flags) {
+        format_items_with_multiline("(", ")", elem_docs, ml_flags)
+      } else {
+        format_bracketed_items(
+          "(",
+          ")",
+          doc.tight_bracketed("(", ")", elem_docs),
+          elem_docs,
+          expr_spans(elems),
+          expr.span.end,
+          tm,
+        )
+      }
+    },
     .Record(entries) => {
       entry_docs := collect e in entries {
         format_record_entry(e, tm)
@@ -2626,6 +2648,7 @@ fn needs_receiver_parens(expr: Expr) Bool {
     .Field(_, _) => false,
     .Index(_, _) => false,
     .Array(_) => false,
+    .Tuple(_) => false,
     .Record(_) => false,
     .NamedRecord(_, _) => false,
     .Variant(_, _) => false,

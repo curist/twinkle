@@ -30,4 +30,16 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple literal constructs and accesses via ._n",
+      fn() {
+        t := (1, "x")
+        try assert.equal(t._0, 1)
+        try assert.equal(t._1, "x")
+        try assert.equal((1, 2, 3)._2, 3)
+        try assert.equal((1, 2, 3, 4)._3, 4)
+        try assert.equal("${(1, 2)}", "(1, 2)")
+        .Ok({})
+      },
+    )
 }

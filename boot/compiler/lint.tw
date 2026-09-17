@@ -259,6 +259,15 @@ fn refs_in_expr(expr: Expr, name: String) NameRefs {
 
       out
     },
+    .Tuple(elems) => {
+      out := empty_name_refs()
+
+      for e in elems {
+        out = .merge_name_refs(refs_in_expr(e, name))
+      }
+
+      out
+    },
     .Record(entries) => refs_in_entries(entries, name),
     .NamedRecord(_, entries) => refs_in_entries(entries, name),
     .Variant(_, args) => {
@@ -1164,6 +1173,14 @@ fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
       }
       out
     },
+    .Tuple(elems) => {
+      out: Vector<LintFinding> = []
+
+      for e in elems {
+        out = .concat(lint_expr(e, ctx))
+      }
+      out
+    },
     .Record(entries) => lint_record_entries(entries, ctx),
     .NamedRecord(_, entries) => lint_record_entries(entries, ctx),
     .Variant(_, args) => {
@@ -1299,6 +1316,7 @@ fn expr_uses_name(e: Expr, name: String) Bool {
     .Field(base, _) => expr_uses_name(base, name),
     .Index(base, idx) => expr_uses_name(base, name) or expr_uses_name(idx, name),
     .Array(elems) => exprs_use_name(elems, name),
+    .Tuple(elems) => exprs_use_name(elems, name),
     .Variant(_, args) => exprs_use_name(args, name),
     .Record(entries) => record_entries_use_name(entries, name),
     .NamedRecord(_, entries) => record_entries_use_name(entries, name),
@@ -1596,6 +1614,7 @@ fn expr_ident_spans(e: Expr, name: String) IdentSpans {
       expr_ident_spans(index, name),
     ),
     .Array(elems) => exprs_ident_spans(elems, name),
+    .Tuple(elems) => exprs_ident_spans(elems, name),
     .Variant(_, args) => exprs_ident_spans(args, name),
     .Record(entries) => record_ident_spans(entries, name),
     .NamedRecord(_, entries) => record_ident_spans(entries, name),
@@ -2536,6 +2555,15 @@ fn walk_expr(ctx: PrefixCtx, expr: Expr, expected: Bool) Vector<LintFinding> {
     .Field(base, _) => ctx.walk_expr(base, false),
     .Index(a, b) => ctx.walk_expr(a, false).concat(ctx.walk_expr(b, false)),
     .Array(elems) => {
+      out: Vector<LintFinding> = []
+
+      for el in elems {
+        out = .concat(ctx.walk_expr(el, false))
+      }
+
+      out
+    },
+    .Tuple(elems) => {
       out: Vector<LintFinding> = []
 
       for el in elems {

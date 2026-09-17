@@ -347,6 +347,7 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
       []
     },
     .Array(elems) => path_in_exprs(elems, offset),
+    .Tuple(elems) => path_in_exprs(elems, offset),
     .Record(entries) => path_in_entries(entries, offset),
     .NamedRecord(_, entries) => path_in_entries(entries, offset),
     .Variant(_, fields) => path_in_exprs(fields, offset),

@@ -324,6 +324,13 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
 
       b
     },
+    .Tuple(elems) => {
+      for e in elems {
+        b = ctx.walk_expr(b, env, e)
+      }
+
+      b
+    },
     .Record(entries) => ctx.walk_record_entries(b, env, entries, ctx.expr_type(expr.id)),
     .NamedRecord(name, entries) => {
       if ctx.meta() {

@@ -919,6 +919,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
       .None => find_pattern_variant_in_expr(idx, offset),
     },
     .Array(elems) => find_pattern_variant_in_exprs(elems, offset),
+    .Tuple(elems) => find_pattern_variant_in_exprs(elems, offset),
     .Record(entries) => find_pattern_variant_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_pattern_variant_in_entries(entries, offset),
     .Variant(_, fields) => find_pattern_variant_in_exprs(fields, offset),
