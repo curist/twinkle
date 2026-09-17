@@ -1,6 +1,3 @@
-use @std.tuple
-use @std.tuple.{Pair}
-
 use @std.testing.assert as assert
 use @std.testing as runner
 
@@ -8,9 +5,9 @@ use @std.testing as runner
 // Expand encodings like "3[a2[c]]" -> "accaccacc". Two stacks hold the pending
 // repeat counts and prefixes; a stray ']' pops an empty stack and surfaces as
 // an Err via `try`, and an unclosed '[' is caught at the end.
-fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
+fn pop<T>(stack: Vector<T>) Result<(T, Vector<T>), String> {
   case stack.last() {
-    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
+    .Some(v) => .Ok((v, stack.drop_last())),
     .None => .Err("stack underflow"),
   }
 }
@@ -48,11 +45,11 @@ fn decode(s: String) Result<String, String> {
       },
       code == ']' => {
         k := try pop(counts)
-        counts = k.second
+        counts = k._1
         prefix := try pop(prefixes)
-        prefixes = prefix.second
-        expanded := repeat(cur, k.first)
-        cur = prefix.first
+        prefixes = prefix._1
+        expanded := repeat(cur, k._0)
+        cur = prefix._0
         cur = .concat(expanded)
       },
       _ => {
@@ -69,7 +66,8 @@ fn decode(s: String) Result<String, String> {
 }
 
 pub fn suite() {
-  runner.suite("0394 decode-string")
+  runner
+    .suite("0394 decode-string")
     .test("nested encoding", fn() { assert.equal(decode("3[a2[c]]").unwrap_or("?"), "accaccacc") })
     .test(
       "sequential groups with suffix",

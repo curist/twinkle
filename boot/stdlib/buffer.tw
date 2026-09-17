@@ -2,7 +2,7 @@
 //! second mutate-in-place reference type alongside `Cell`. Opt-in; correctness
 //! (calling `free`, no use-after-free) is the programmer's responsibility.
 //!
-//! Two import lines give the full surface (mirroring `@std.view` / `@std.tuple`):
+//! Two import lines give the full surface (mirroring `@std.view`):
 //!
 //!   use @std.buffer                          // `buffer.new(n)`, `buf.view_i64(..)`
 //!   use @std.buffer.{Buffer, U8View, I64View, F64View}   // name the types

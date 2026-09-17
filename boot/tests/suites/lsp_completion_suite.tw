@@ -456,14 +456,14 @@ pub fn suite() runner.Suite {
     .test(
       "import completion does not duplicate modules backed by both file and dir",
       fn() {
-        // `crypto`, `regexp`, and `tuple` each exist as both `<name>.tw` and a
-        // `<name>/` submodule directory; completion should list each once.
+        // `crypto` and `regexp` each exist as both `<name>.tw` and a `<name>/`
+        // submodule directory; completion should list each once.
         valid := "x := 1\n"
         incomplete := "use @std.\nx := 1\n"
         step := open_then_complete(valid, incomplete, 0, 9)
         labels := try completion_labels(step)
 
-        for name in ["crypto", "regexp", "tuple"] {
+        for name in ["crypto", "regexp"] {
           count := count_label(labels, name)
           if count != 1 {
             return .Err("expected '${name}' exactly once, got ${count}: ${labels}")
