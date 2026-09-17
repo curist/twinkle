@@ -47,6 +47,7 @@ throughput.
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
+| Tier-1 stdlib APIs | Highest-frequency missing stdlib methods from the API audit: `Int` radix conversion + `Vector` reductions (`sum`/`product`/`min`/`max`/`min_by`/`max_by`/`min_by_key`/`max_by_key`). Pure prelude, no stage0 changes | Planned | [tier1-stdlib-apis.md](tier1-stdlib-apis.md) |
 | Embeddable lib build | `twk build --lib` exports the entry's `pub` primitive functions/values as named wasm exports; compiler-free `loadLib` + Node/web scaffold harness | Done | [embeddable-lib-build.md](embeddable-lib-build.md) |
 | Full lib-export ABI | Widen lib exports beyond primitives: `String`, callbacks, compounds (`Vector`/`Dict`/records), and returned closures, with bridge-backed `loadLib` marshalling | Done | [lib-export-abi.md](lib-export-abi.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
