@@ -80,6 +80,15 @@ pub fn last<A>(xs: Vector<A>) A? {
   }
 }
 
+/// The last element and the vector without it, or `.None` when empty.
+pub fn pop<T>(xs: Vector<T>) (T, Vector<T>)? {
+  if xs.is_empty() {
+    .None
+  } else {
+    .Some((xs[xs.len() - 1], xs.drop_last()))
+  }
+}
+
 /// Return a new vector without the first element, or the empty vector if already empty.
 pub fn drop_first<A>(xs: Vector<A>) Vector<A> {
   if xs.len() == 0 {

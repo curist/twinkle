@@ -1376,4 +1376,20 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "pop returns the last element and the rest",
+      fn() {
+        empty: Vector<Int> = []
+        try assert.equal(empty.pop(), .None)
+
+        case [1, 2, 3].pop() {
+          .Some(p) => {
+            try assert.equal(p._0, 3)
+            try assert.equal(p._1, [1, 2])
+          },
+          .None => return assert.fail("expected Some"),
+        }
+        .Ok({})
+      },
+    )
 }
