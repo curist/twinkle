@@ -115,7 +115,9 @@ site:
 - `tuple.pair(a, b)` / `tuple.triple(a, b, c)` → `(a, b)` / `(a, b, c)`
 - `Pair<A, B>` / `Triple<A, B, C>` type annotations → `(A, B)` / `(A, B, C)`
 - `.first` / `.second` / `.third` → `._0` / `._1` / `._2`
-- `.swap()` → drop, or inline `(p._1, p._0)` at the call site
+- `.swap()` → dropped entirely (no `TupleN` helper methods in v1); the sole
+  call site lives in the deleted tuple test suite. Callers that need it write
+  `(p._1, p._0)`
 - remove the `use @std.tuple` / `use @std.tuple.{Pair, Triple}` import lines
 
 Known live sites: `boot/stdlib/regexp/parse.tw` (the one production stdlib
