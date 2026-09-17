@@ -365,6 +365,7 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.last()` | `fn<A>(xs: Vector<A>) Option<A>` | Last element, or `.None` if empty |
 | `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty. O(log n) via structural slice |
 | `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty. O(log n) worst-case, O(1) when shrinking the tail |
+| `.pop()` | `fn<T>(xs: Vector<T>) (T, Vector<T>)?` | `.Some((last, rest))`, or `.None` when empty — the last element together with the vector without it |
 | `.take(n)` | `fn<A>(xs: Vector<A>, n: Int) Vector<A>` | First `n` elements; clamps negative counts to zero and too-large counts to length |
 | `.drop(n)` | `fn<A>(xs: Vector<A>, n: Int) Vector<A>` | Skip first `n` elements; clamps negative counts to zero and too-large counts to length |
 | `.take_while(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Longest prefix whose elements satisfy `f` |
@@ -593,7 +594,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.io.stdin`, `use @std.io.stdout`, `use @std.io.stderr`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`, `use @std.buffer`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.io.stdin`, `use @std.io.stdout`, `use @std.io.stderr`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.regexp`, `use @std.crypto`, `use @std.buffer`.
 
 ### `@std.crypto`
 
@@ -902,48 +903,50 @@ materializer `to_vector` and the structural windowers `chunks` / `windows`
 | `.all(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Bool` | True if all elements match |
 | `.position(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Option<Int>` | Index of first matching element |
 
-### `@std.tuple`
+### Tuples
 
-Ad-hoc grouping of a few values without declaring a domain record. `Pair<A, B>`
-is the common case; `Triple<A, B, C>` is the escalation. Both are nominal
-records, so they get conditional structural `==`/`!=` for free when their fields
-satisfy `Eq`, and both satisfy `Stringify` (`(a, b)` / `(a, b, c)`). Use a named
-record instead when the fields carry meaningful API names.
+First-class positional grouping for lightweight multi-return, built into the
+language — no import. `(a, b)` … `(a, b, c, d)` construct a tuple; `(A, B)` …
+`(A, B, C, D)` are the corresponding types; elements are accessed positionally
+as `._0` … `._3` (0-indexed, matching vectors and strings).
 
-Like `@std.view`, the full surface is two import lines: `use @std.tuple` for the
-`tuple.pair` / `tuple.triple` constructors, and `use @std.tuple.{Pair, Triple}`
-to name the types in annotations. `Triple` is transparently re-exported from a
-submodule (so each arity can own its `to_string`); you never need to import
-`@std.tuple.triple` directly.
+Tuples are the sanctioned exception to Twinkle's nominal "name your data" rule.
+Reach for them for genuinely positional, short-lived groupings and multi-return
+— **not** for values whose fields have meaningful names. Coordinates
+(`x, y, z`), colors (`r, g, b, a`), and parser state want a record. The arity
+cap is 2–4; past four you are almost certainly describing a record.
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `tuple.pair(a, b)` | `fn<A, B>(first: A, second: B) Pair<A, B>` | Construct a `Pair` |
-| `tuple.triple(a, b, c)` | `fn<A, B, C>(first: A, second: B, third: C) Triple<A, B, C>` | Construct a `Triple` |
-| `.swap()` | `fn<A, B>(p: Pair<A, B>) Pair<B, A>` | Swap the two components |
-| `.to_string()` | `fn<A: Stringify, B: Stringify>(p: Pair<A, B>) String` | Render as `(a, b)`; backs `Stringify` |
-| `.to_string()` | `fn<A: Stringify, B: Stringify, C: Stringify>(t: Triple<A, B, C>) String` | Render as `(a, b, c)`; backs `Stringify` |
+They are backed by compiler-known records `Tuple2`/`Tuple3`/`Tuple4` (you never
+write those names). Being records, they get conditional structural `==`/`!=` for
+free when their elements satisfy `Eq`, plus `compare` (`Ord`, lexicographic by
+position) and `to_string` (`Stringify`, rendering `(a, b)`) when their elements
+satisfy those contracts — so `${t}` interpolation and `assert.equal` just work.
 
-Fields are named `first` / `second` (and `third` for `Triple`):
+| Syntax | Meaning |
+|--------|---------|
+| `(a, b)` | Construct a 2-tuple |
+| `(a, b, c)` / `(a, b, c, d)` | 3- and 4-tuples |
+| `(A, B)` … `(A, B, C, D)` | Tuple types |
+| `t._0` … `t._3` | Positional element access |
+| `(A, B)?` | `Option<(A, B)>` — the `?` wraps the whole tuple |
+| `(A, B)!E` | `Result<(A, B), E>` |
 
 ```tw
-use @std.tuple
-use @std.tuple.{Pair, Triple}
+divmod := fn(a: Int, b: Int) (Int, Int) { (a / b, a % b) }
+qr := divmod(17, 5)
+q := qr._0   // 3
+r := qr._1   // 2
 
-fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
-  case stack.last() {
-    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
-    .None => .Err("stack underflow"),
-  }
+// Value-and-rest multi-return (see Vector.pop):
+case [1, 2, 3].pop() {
+  .Some(p) => use(p._0, p._1),   // 3, [1, 2]
+  .None => {},
 }
-
-top := try pop(stack)
-value := top.first
-rest := top.second
-
-t: Triple<Int, Int, Bool> = tuple.triple(1, 2, true)
-"${t}"   // "(1, 2, true)"
 ```
+
+Grouping is unaffected: `(a)` is still just a parenthesized expression, and `()`
+is not a value (use `{}` / `Void`). Tuple destructuring in `let`/`case` is not
+in this release.
 
 ### `@std.buffer`
 
@@ -956,7 +959,7 @@ free is that all access stays within linear memory, so the worst case is corrupt
 another buffer's bytes or trapping, never an escape from the sandbox. See
 [docs/design/buffer.md](design/buffer.md) for the design rationale.
 
-Like `@std.view` and `@std.tuple`, two import lines give the full surface:
+Like `@std.view`, two import lines give the full surface:
 
 ```tw
 use @std.buffer                                    // buffer.new(n), buf.view_i64(..)
