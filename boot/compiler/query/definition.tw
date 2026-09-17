@@ -703,6 +703,16 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
       .Some(r) => .Some(r),
       .None => find_type_ref(err, offset),
     },
+    .Tuple(elems) => {
+      for el in elems {
+        case find_type_ref(el, offset) {
+          .Some(r) => return .Some(r),
+          .None => {},
+        }
+      }
+
+      .None
+    },
     .Record(fields) => {
       for f in fields {
         case find_type_ref(f.ty, offset) {

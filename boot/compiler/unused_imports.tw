@@ -287,6 +287,11 @@ fn collect_used_names_type_expr(te: TypeExpr, used: Cell<Dict<String, Bool>>) {
       collect_used_names_type_expr(ok, used)
       collect_used_names_type_expr(err, used)
     },
+    .Tuple(elems) => {
+      for el in elems {
+        collect_used_names_type_expr(el, used)
+      }
+    },
     .Record(fields) => {
       for f in fields {
         collect_used_names_type_expr(f.ty, used)

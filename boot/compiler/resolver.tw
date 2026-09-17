@@ -2186,10 +2186,40 @@ pub fn resolve_type_expr(env: ResolvedEnv, ty_expr: TypeExpr, type_vars: Vector<
     .Function(param_exprs, ret_expr) => env.resolve_fn_type(param_exprs, ret_expr, type_vars),
     .Optional(inner_expr) => env.resolve_optional_type(inner_expr, type_vars),
     .Result(ok_expr, err_expr) => env.resolve_result_type(ok_expr, err_expr, type_vars),
+    .Tuple(elem_exprs) => env.resolve_tuple_type(elem_exprs, ty_expr.span, type_vars),
     .Record(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
     .Sum(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
     .ErrorType => .{ ty: .None, diagnostics: [] },
   }
+}
+
+// Resolve `(A, B, ...)` to the compiler-known `TupleN` named type applied to the
+// resolved element types — mirrors resolve_applied_type with a synthetic path.
+fn resolve_tuple_type(
+  env: ResolvedEnv,
+  elem_exprs: Vector<TypeExpr>,
+  s: Span,
+  type_vars: Vector<String>,
+) TypeResolveResult {
+  all_diags: Vector<diag.DiagKind> = []
+  resolved := collect e in elem_exprs {
+    r := env.resolve_type_expr(e, type_vars)
+    all_diags = .concat(r.diagnostics)
+
+    case r.ty {
+      .Some(t) => t,
+      .None => continue,
+    }
+  }
+
+  if resolved.len() != elem_exprs.len() {
+    return .{ ty: .None, diagnostics: all_diags }
+  }
+
+  path := TypePath.{ segments: ["Tuple${elem_exprs.len()}"], type_args: [], span: s }
+  r := env.resolve_type_path(path, resolved, type_vars)
+  all_diags = .concat(r.diagnostics)
+  .{ ty: r.ty, diagnostics: all_diags }
 }
 
 fn resolve_applied_type(
@@ -2961,6 +2991,11 @@ fn collect_type_expr_refs(
     .Result(ok, err) => {
       result = collect_type_expr_refs(ok, names, type_params, result)
       result = collect_type_expr_refs(err, names, type_params, result)
+    },
+    .Tuple(elems) => {
+      for el in elems {
+        result = collect_type_expr_refs(el, names, type_params, result)
+      }
     },
     .Record(fields) => {
       for f in fields {

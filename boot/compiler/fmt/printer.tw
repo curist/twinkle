@@ -838,6 +838,12 @@ fn format_type_expr(ty: TypeExpr) Doc {
     },
     .Optional(inner) => doc.concat([format_type_expr(inner), doc.text("?")]),
     .Result(ok, err) => doc.concat([format_type_expr(ok), doc.text("!"), format_type_expr(err)]),
+    .Tuple(elems) => {
+      elem_docs := collect e in elems {
+        format_type_expr(e)
+      }
+      doc.tight_bracketed("(", ")", elem_docs)
+    },
     .ErrorType => doc.text("/* error */"),
   }
 }

@@ -874,6 +874,42 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
     return .{ value: error_type(start_span), cursor: c, diagnostics: diagnostics_out }
   }
 
+  if k == .LParen {
+    start_span := c.span()
+    c = .advance()
+    elems_parsed := parse_type_list_until(c, TokenKind.RParen)
+    diagnostics_out = .concat(elems_parsed.diagnostics)
+    c = elems_parsed.cursor
+
+    if c.kind() != .RParen {
+      diagnostics_out = .append(diag.error(c.span(), "expected ')' to close tuple type"))
+      return .{ value: error_type(start_span), cursor: c, diagnostics: diagnostics_out }
+    }
+
+    end_span := c.span()
+    c = .advance()
+    tuple_span := start_span.merge(end_span)
+    elems := elems_parsed.value
+
+    if elems.len() < 2 or elems.len() > 4 {
+      diagnostics_out = .append(
+        diag.error(tuple_span, "tuple types support 2–4 elements; use a record for more"),
+      )
+    }
+
+    ty := TypeExpr.{ kind: .Tuple(elems), span: tuple_span }
+
+    // `?` binds per-branch (there is no shared postfix tail), so `(A, B)?`
+    // becomes Option<Tuple> here rather than Tuple<..., B?>.
+    if c.kind() == .Question {
+      q_span := c.span()
+      c = .advance()
+      ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
+    }
+
+    return .{ value: ty, cursor: c, diagnostics: diagnostics_out }
+  }
+
   if k != .Ident {
     diagnostics_out = .append(diag.error(c.span(), "expected type"))
     return .{ value: error_type(c.span()), cursor: c.advance(), diagnostics: diagnostics_out }

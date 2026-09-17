@@ -42,4 +42,24 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple type annotation resolves, including optional and result",
+      fn() {
+        p: (Int, String) = (7, "z")
+        try assert.equal(p._0, 7)
+        make := fn(a: Int, b: Int) (Int, Int) {
+          (a, b)
+        }
+        try assert.equal(make(3, 4)._1, 4)
+
+        // (A, B)? must parse as Option<Tuple2<A, B>> — load-bearing for Vector.pop
+        maybe: (Int, Int)? = .Some((1, 2))
+        try assert.equal(maybe.unwrap()._1, 2)
+
+        // (A, B)!E must parse as Result<Tuple2<A, B>, E>
+        res: (Int, String)!String = .Ok((5, "q"))
+        try assert.equal(res.unwrap()._0, 5)
+        .Ok({})
+      },
+    )
 }

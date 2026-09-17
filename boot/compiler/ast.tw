@@ -99,6 +99,7 @@ pub type TypeExprKind = {
   Sum(Vector<VariantDecl>),
   Optional(TypeExpr),
   Result(TypeExpr, TypeExpr),
+  Tuple(Vector<TypeExpr>),
   ErrorType,
 }
 

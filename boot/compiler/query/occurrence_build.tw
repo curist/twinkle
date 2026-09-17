@@ -707,6 +707,13 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
     },
     .Optional(inner) => ctx.walk_type_expr(b, inner),
     .Result(ok, err) => ctx.walk_type_expr(ctx.walk_type_expr(b, ok), err),
+    .Tuple(elems) => {
+      for el in elems {
+        b = ctx.walk_type_expr(b, el)
+      }
+
+      b
+    },
     .Record(fields) => {
       for f in fields {
         b = ctx.walk_type_expr(b, f.ty)

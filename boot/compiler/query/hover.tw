@@ -693,6 +693,7 @@ fn hover_type_expr(ctx: HoverContext, t: TypeExpr) HoverResult? {
       .Some(r) => .Some(r),
       .None => ctx.hover_type_expr(err),
     },
+    .Tuple(elems) => ctx.hover_type_exprs(elems),
     .Record(fields) => ctx.hover_record_field_types(fields),
     .Sum(vars) => ctx.hover_variant_decl_types(vars),
     _ => .None,
