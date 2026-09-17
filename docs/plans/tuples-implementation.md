@@ -52,9 +52,11 @@ Lands the type + contracts with **zero parser change**, using only ordinary gene
 
 **Structure — mirror the proven `@std.tuple` layout.** `@std.tuple` puts `Pair` + its `to_string` in `tuple.tw` and `Triple` + its `to_string` in a `tuple/triple.tw` submodule, because a type's inherent methods must live in the type's defining module and two same-named `to_string` cannot share one module scope. Follow the same shape: one module per arity, each owning its `compare`/`to_string`, transparently re-exported into the top prelude tuple module.
 
-**Two investigations before writing code (the design's flagged unknowns):**
-1. **Global resolvability.** For `(a, b)` sugar to resolve to `Tuple2` with no import, the `TupleN` types must be in scope everywhere — like `Option`/`Result`/`Cell`. Check how those are registered (builtin `TypeId` registration vs prelude auto-import in the resolver, `boot/compiler/resolver.tw`) and register `TupleN` the same way. If they are ordinary auto-imported prelude records that resolve unqualified, no builtin `TypeId` is needed; if they need builtin registration, add it.
-2. **Per-arity witness resolution.** Confirm the per-arity-module + re-export pattern makes `t.compare(u)` / `t.to_string()` resolve for each `TupleN` (exactly as `@std.tuple`'s `Triple.to_string` resolves today). If prelude subdirectories are not supported, fall back to distinct top-level prelude files.
+**Note on precedent:** `@std.tuple` provides `to_string` (`Stringify`) for `Pair`/`Triple` but **no `compare` (`Ord`) witness** — so the `to_string` half has an exact template to copy, while the `compare` half is new code (the resolution *mechanism*, generic `prove_contract_method` lookup, is the same, but there is nothing to copy line-for-line). Do not assume a `compare` precedent exists.
+
+**Two investigations before writing code (the design's flagged unknowns), plus a reserved-name guard:**
+1. **Global resolvability.** For `(a, b)` sugar to resolve to `Tuple2` with no import, the `TupleN` types must resolve unqualified everywhere — like `Cell`/`Range`/`Iterator`/`Order`. Verified by the plan review: those are *not* dedicated `MonoType` variants (unlike `Vector`/`Dict`/`Option`/`Result` at `resolver.tw:2640-2665`); they resolve as ordinary auto-imported prelude named types. So `TupleN` needs **no** `MonoType` variant. **Do** add `Tuple2`/`Tuple3`/`Tuple4` to `is_reserved_type_name` (`resolver.tw:~1317`) to block user shadowing — this is the one required resolver edit.
+2. **Per-arity witness resolution.** The per-arity-module + re-export pattern makes `t.compare(u)` / `t.to_string()` resolve via `resolver.tw` `method_source_tid` (~185-201), which follows alias chains — the same mechanism `@std.tuple`'s re-exported `Triple.to_string` uses. Prelude subdirectories are supported (`generate_core_lib.py` recurses; both loaders filter by `.tw` and resolve relative paths directory-agnostically). This is verified by symmetry with stdlib but **untested for the prelude specifically** — the Tuple2 checkpoint below is where you confirm it for real.
 
 **Files:**
 - Create: `boot/prelude/tuple.tw` (Tuple2 + witnesses), `boot/prelude/tuple/tuple3.tw`, `boot/prelude/tuple/tuple4.tw` (Tuple3/Tuple4 + witnesses), re-exported into `tuple.tw` — mirroring `boot/stdlib/tuple.tw` + `boot/stdlib/tuple/triple.tw`
@@ -131,7 +133,11 @@ pub fn to_string<A: Stringify, B: Stringify, C: Stringify>(t: Tuple3<A, B, C>) S
 }
 ```
 
-`boot/prelude/tuple/tuple4.tw` follows the same shape with a fourth field. `boot/prelude/tuple.tw` holds `Tuple2` and re-exports the others (mirror `boot/stdlib/tuple.tw`'s `use .tuple.triple as triple_mod` + `pub type Triple<…> = triple_mod.Triple<…>`):
+`boot/prelude/tuple/tuple4.tw` follows the same shape with a fourth field.
+
+**Do `Tuple2` first as a checkpoint (the design's Tuple2-only spike).** Land only `boot/prelude/tuple.tw` with `Tuple2` + its witnesses (no submodules yet), add it to `is_reserved_type_name`, and run Step 4's verification — this confirms the prelude-record resolution, the witness resolution, and the bootstrap all work on one arity **before** you replicate into the `tuple3`/`tuple4` submodules and confirm the subdirectory re-export path. If the prelude-subdirectory or witness pattern has a wrinkle, you find it at 1× cost, not 3×.
+
+`boot/prelude/tuple.tw` holds `Tuple2` and (once the checkpoint passes) re-exports the others (mirror `boot/stdlib/tuple.tw`'s `use .tuple.triple as triple_mod` + `pub type Triple<…> = triple_mod.Triple<…>`):
 
 ```tw
 use .tuple.tuple3 as tuple3_mod
@@ -153,7 +159,7 @@ pub fn to_string<A: Stringify, B: Stringify>(t: Tuple2<A, B>) String {
 }
 ```
 
-Then apply the two investigations above: ensure `Tuple2/3/4` resolve unqualified everywhere (register like `Option`/`Cell` if needed), and confirm each arity's `compare`/`to_string` resolves as an inherent method. `==` needs nothing — record `Eq` auto-derivation covers it.
+Add `Tuple2`/`Tuple3`/`Tuple4` to `is_reserved_type_name` (`resolver.tw`). No `MonoType` variant is needed (they resolve as ordinary prelude named types, like `Cell`/`Order`). `==` needs nothing — record `Eq` auto-derivation covers it. Confirm each arity's `compare`/`to_string` resolves as an inherent method at the checkpoint.
 
 - [ ] **Step 4: Verify witnesses resolve and bootstrap stays green**
 
@@ -172,7 +178,7 @@ git commit -m "feat(tuple): add Tuple2/3/4 records and Ord/Stringify witnesses"
 ## Task 2: Boot — `(a, b)` literal parsing → `ExprKind.Tuple` → `TupleN` lowering
 
 **Files:**
-- Modify: `boot/compiler/ast.tw` (`ExprKind`), `boot/compiler/parser.tw` (`.LParen` primary), lowering (`boot/compiler/lower_core/*.tw`), and every exhaustive `ExprKind` match the compiler flags (`fmt/printer.tw`, `lint.tw`, `checker.tw`, `summary.tw`, `cfg.tw`, etc.)
+- Modify: `boot/compiler/ast.tw` (`ExprKind`), `boot/compiler/parser.tw` (`.LParen` primary), `boot/compiler/lower_core.tw` + `lower_core/records.tw`, `boot/compiler/checker.tw`, plus every pass matching `ExprKind` — `fmt/printer.tw`, `lint.tw`, `summary.tw`, `cfg.tw`, and **`boot/compiler/query/*.tw`** (`occurrence_build.tw`, `ast_walk.tw`, `ast_path.tw`, `definition.tw`, `folding_range.tw`, `signature_help.tw` — several are exhaustive and were omitted from the first draft).
 - Test: `boot/tests/suites/tuple_suite.tw` (add literal tests)
 
 **Interfaces:**
@@ -215,9 +221,14 @@ In `boot/compiler/ast.tw`, add to `ExprKind` (after `Array(Vector<Expr>)`):
 
 In `boot/compiler/parser.tw`, extend the `.LParen` primary case (~2152). After parsing the first inner expression, if the next token is `.Comma`, loop collecting elements (mirror the array-literal `.LBracket` case at ~2169, but close on `.RParen` and error message "expected ',' or ')' in tuple"). Build `Expr.{ kind: .Tuple(elems), … }` when there is at least one comma; keep the existing single-expression grouping path when there is no comma. Reject arity > 4 with a diagnostic ("tuples support 2–4 elements; use a record").
 
-- [ ] **Step 5: Thread `.Tuple` through exhaustive matches + lowering**
+- [ ] **Step 5: Thread `.Tuple` through the matches — including the non-exhaustive ones**
 
-Build (`make bundle-cli`) and let exhaustiveness errors guide you: add a `.Tuple(elems)` arm everywhere the compiler flags a non-exhaustive `ExprKind` match. Key ones: lowering (`lower_core/*.tw`) maps `.Tuple(elems)` to a `TupleN` `NamedRecord` construction with fields `_0.._n` (`Tuple2`/`Tuple3`/`Tuple4` by element count); `fmt/printer.tw` is handled in Task 4; `lint.tw`/`checker.tw`/others recurse into the element expressions.
+Build (`make bundle-cli`) and let exhaustiveness errors guide you for the **exhaustive** dispatchers (`checker.tw` `synth_expr` ~2549, fmt, lint recursion). But **two consequential dispatchers end in a `_ =>` wildcard and will NOT be flagged** — you must add `.Tuple` arms to them by hand or get silently wrong behavior:
+
+- **`checker.tw` `check_expr` (~2932, wildcard `_ =>` synth+unify fallback at ~3016).** This is where expected-type pushdown lives (e.g. `.Array` pushes element type for `Byte`-literal coercion at ~2980). Without a `.Tuple` arm, `t: (Byte, Byte) = (1, 2)` and nested-literal elements type-check wrong with no diagnostic. Add a `.Tuple` arm that pushes the expected `TupleN`'s element types into each element (model it on the `.Array` arm).
+- **`lower_core.tw` `lower_expr` (~46, wildcard `_ => emit_error("unsupported expression kind")`).** A missing arm here traps at runtime, caught only by the Task-2 test. Add the arm.
+
+For lowering, reuse the existing named-record machinery directly: **`lower_core/records.tw` `lower_named_record` / `lower_record_fields` (~19-58)** already take a type-name string + `Vector<RecordEntry>` — build `RecordEntry`s `_0.._n` and call it with `"Tuple2"`/`"Tuple3"`/`"Tuple4"` by element count. For the checker synth arm, **`checker.tw` `synth_named_record` (~2721) + `check_record_lit` (~2771)** are the near-exact template (fresh metas per type param → `MonoType.Named(entry.id, args)` → `check_record_lit` → bounds check).
 
 - [ ] **Step 6: Run to verify it passes**
 
@@ -246,12 +257,15 @@ git commit -m "feat(tuple): parse (a, b) literals to ExprKind.Tuple in boot"
 
 ```tw
     .test(
-      "tuple type annotation resolves",
+      "tuple type annotation resolves, including optional and nested",
       fn() {
         p: (Int, String) = (7, "z")
         try assert.equal(p._0, 7)
         make := fn(a: Int, b: Int) (Int, Int) { (a, b) }
         try assert.equal(make(3, 4)._1, 4)
+        // (A, B)? must parse as Option<Tuple2<A,B>> — load-bearing for Vector.pop
+        maybe: (Int, Int)? = .Some((1, 2))
+        try assert.equal(maybe.unwrap()._1, 2)
         .Ok({})
       },
     )
@@ -263,7 +277,7 @@ Run: `make bundle-cli && make boot-test` → FAIL (`(Int, String)` type unparsed
 
 - [ ] **Step 3: AST + parse**
 
-Add `Tuple(Vector<TypeExpr>)` to `TypeExprKind` in `ast.tw`. In `parse_type_expr_base`, add a `.LParen` case: parse a comma-separated type list, require 2–4, build `.Tuple(elems)`. (There is no existing `(` type case, so nothing conflicts; `fn(...)` types are handled under the `fn` keyword path.)
+Add `Tuple(Vector<TypeExpr>)` to `TypeExprKind` in `ast.tw`. In `parse_type_expr_base`, add a `.LParen` case: parse a comma-separated type list, require 2–4, build `.Tuple(elems)`. (There is no existing `(` type case, so nothing conflicts; `fn(...)` types are handled under the `fn` keyword path.) **Verify the trailing-`?` interaction:** the tuple type must be produced by the *base* type parser so the existing `T?` postfix (`Optional`) wraps it — `(A, B)?` must resolve to `Option<Tuple2<A, B>>`, not `Tuple2<A, B?>`. `Vector.pop` (Task 7) depends on this; the test above asserts it.
 
 - [ ] **Step 4: Resolve + thread**
 
@@ -316,42 +330,39 @@ git commit -m "feat(tuple): format tuple literals and types, idempotent round-tr
 
 ---
 
-## Task 5: Stage0 (Rust) tuple parity
+## Task 5: Stage0 (Rust) tuple parity — parse-time desugar
 
-Mirror Tasks 2–4 in `src/` so `make stage2` reaches a fixed point with tuple syntax present in stage0-compiled source. Use the boot implementation as the reference spec. Happy path only — no diagnostic polish.
+Give stage0 enough tuple support that `make stage2` reaches a fixed point with tuple syntax in stage0-compiled source (the prelude witness modules from Task 1 are sugar-free, but `Vector.pop`'s `(T, Vector<T>)?` signature in Task 7 forces stage0 to parse tuple *types*). **Do NOT mirror boot's dedicated-AST-node approach** — stage0 has no fmt-idempotence requirement (Global Constraints: happy path only), and it already has the cheaper precedent:
+
+- stage0 desugars `T?` and `!E`/`T!E` **at parse time** into `Type::Named { name: "Option"/"Result", args }` with **no** dedicated `Type` variant (`src/syntax/parser.rs:2354-2400`, `parse_type`). Do the same for tuples: `(A, B)` → `Type::Named { name: "Tuple2", args: [A, B] }`.
+- `ExprKind::RecordLit { name: Option<String>, fields: Vec<(String, Expr)> }` already exists (`src/syntax/ast.rs:222-225`) and is handled by every downstream pass (`check.rs`, `ir/lower.rs`, `monomorphize.rs`, `dce.rs`). Desugar `(a, b)` → `RecordLit { name: Some("Tuple2"), fields: [("_0", a), ("_1", b)] }` at parse time.
+
+This touches essentially just `src/syntax/parser.rs` (no new AST variants, no ~12-file thread). stage0's Wasm need not byte-match boot's — the fixed point is compared between boot-compiled stages (`stage3 == stage4`), so stage0 only needs to compile the tuple-bearing prelude correctly.
 
 **Files:**
-- Modify: `src/syntax/ast.rs`, `src/syntax/parser.rs`, `src/syntax/pretty.rs`, `src/types/resolve.rs`, `src/types/check.rs`, stage0 Core-IR lowering.
-- Test: `cargo test --release` (add unit tests near existing parser/type tests); `make stage2`.
+- Modify: `src/syntax/parser.rs` (expression `(` primary + `parse_type` `(` case, both desugaring). Add `Tuple2/3/4` to stage0's reserved-type-name set if it maintains one (parallel to boot's `is_reserved_type_name`).
+- Test: `cargo test --release` (parser unit tests near existing ones); `make stage2`.
 
 **Interfaces:**
-- Produces: stage0 parses `(a, b)` / `(A, B)` / `._n`, resolves to the same `TupleN` record shape, and lowers identically to boot.
+- Produces: stage0 parses `(a, b)` → `RecordLit("Tuple2"|"Tuple3"|"Tuple4", _0.._n)` and `(A, B)` → `Type::Named("TupleN", …)`, arity 2–4.
 
 - [ ] **Step 1: Write failing Rust tests**
 
-Add unit tests in `src/syntax/mod.rs` (parser) and `src/types/` asserting `(1, 2)` parses to a tuple expr, `(Int, String)` to a tuple type, and both lower/check without error. Run `cargo test --release <names>` → FAIL.
+Add unit tests in `src/syntax/mod.rs` asserting `(1, 2)` parses to `RecordLit{name: Some("Tuple2"), …}`, `(Int, String)` to `Type::Named{name: "Tuple2", …}`, and `(Int, String)?` to `Type::Named{name: "Option", args: [Type::Named{"Tuple2", …}]}` (the trailing-`?` interaction — load-bearing for `Vector.pop`). Run `cargo test --release <names>` → FAIL.
 
-- [ ] **Step 2: AST nodes**
+- [ ] **Step 2: Desugar in the parser**
 
-Add tuple variants to `Expr`/`TypeExpr` in `src/syntax/ast.rs` (match the boot `ExprKind.Tuple`/`TypeExprKind.Tuple` shape: a vector of children).
+In `src/syntax/parser.rs`: extend the `(` expression primary with a comma-loop building a `RecordLit` with `_0.._n` field names; add a `(` case to `parse_type` building `Type::Named("TupleN", args)`, ensuring the existing `T?` postfix wraps it (so `(A, B)?` = `Option<Tuple2<…>>`). Enforce arity 2–4 with an error.
 
-- [ ] **Step 3: Parser**
+- [ ] **Step 3: Verify parity**
 
-In `src/syntax/parser.rs`, extend the `(` expression primary (find the grouping case) with a comma-loop → tuple; add a `(` case to the type parser. Enforce arity 2–4.
+Run: `cargo test --release` (green) then `make stage2`. Expected: `Fixed point reached: stage3 == stage4`. This is the acceptance gate.
 
-- [ ] **Step 4: Resolve + lower**
-
-In `src/types/resolve.rs`/`check.rs`, resolve tuple types to `TupleN<…>` and tuple literals to `TupleN` record construction, mirroring `Option`/`Result` handling; ensure `pretty.rs` can render the nodes (validity, not byte-parity with boot fmt).
-
-- [ ] **Step 5: Verify parity**
-
-Run: `cargo test --release` (green) then `make stage2`. Expected: `Fixed point reached: stage3 == stage4`. This is the acceptance gate — stage0 and boot now produce identical Wasm for tuple-bearing source.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/
-git commit -m "feat(tuple): stage0 parity for tuple literals and types"
+git commit -m "feat(tuple): stage0 tuple parity via parse-time desugar to RecordLit/Named"
 ```
 
 ---
@@ -516,4 +527,7 @@ git commit -m "docs(tuple): document tuple syntax and Vector.pop; drop @std.tupl
 
 - **Destructuring** (`(a, b) :=`, `case (a, b) =>`) is the immediate fast-follow, in both compilers — its own plan. Compiler source (`boot/compiler/*.tw`) adopts tuples only after it lands.
 - **Pair-returning stdlib** (`split_once`, `zip`, `partition`) becomes natural once destructuring exists — revisit then.
-- **Open uncertainty carried from the design:** whether same-named `compare`/`to_string` witnesses overload cleanly per `TupleN` receiver, and whether `Ord`/`Stringify` conditional satisfaction needs a `try_builtin_container_contract` entry. Task 1 Step 3 resolves both before any parser work.
+- **Monomorphization** of `TupleN` is assumed to fall through the existing generic-record path (no special handling). The Task 2 literal test already exercises multiple instantiations (`Tuple2<Int,String>`, `Tuple2<Int,Int>`, `Tuple3`, `Tuple4`) in one function; if a mono issue surfaces, add a generic helper (`fn fst<A,B>(t: (A,B)) A { t._0 }`) used at two instantiations.
+- **Linter:** check whether `t._0 = x` rebinding sugar (if legal on a positionally-built record) needs `direct-rebinding`/`record-copy-helper` rule awareness, and whether `lint.tw`'s `ExprKind` walks are exhaustive or wildcarded (Task 2 must cover the walks either way).
+
+**Assumptions verified by plan review (evidence in the reviews):** `Eq`/`==` auto-derives for `TupleN` records; `Ord`/`Stringify` need no `try_builtin_container_contract` entry (resolve via generic `prove_contract_method`); `TupleN` needs no `MonoType` variant; per-arity submodule witness re-export resolves via `method_source_tid`; the boot parser line citations (`.LParen` ~2152, `.LBracket` ~2169, `parse_type_expr_base` ~792) are accurate. The two dispatchers that are **not** exhaustiveness-guarded — `checker.tw` `check_expr` (~2932) and `lower_core.tw` `lower_expr` (~46) — are called out in Task 2 Step 5.
