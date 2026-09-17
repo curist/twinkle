@@ -47,6 +47,7 @@ throughput.
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
+| First-class tuples | Language tuple syntax `(a, b)` / `(A, B)` / `._0` for arity 2–4, synthesized nominal `TupleN` records, replacing and deleting `@std.tuple`. Destructuring patterns are a fast-follow | Planned (design done) | [tuples.md](tuples.md) |
 | Embeddable lib build | `twk build --lib` exports the entry's `pub` primitive functions/values as named wasm exports; compiler-free `loadLib` + Node/web scaffold harness | Done | [embeddable-lib-build.md](embeddable-lib-build.md) |
 | Full lib-export ABI | Widen lib exports beyond primitives: `String`, callbacks, compounds (`Vector`/`Dict`/records), and returned closures, with bridge-backed `loadLib` marshalling | Done | [lib-export-abi.md](lib-export-abi.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
