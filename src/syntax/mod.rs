@@ -310,6 +310,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tuple_literal_desugars_to_tuple_record() {
+        let (ast, _) = parse_source("p := (1, 2)\n", "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Stmt(ast::Stmt::Let { value, .. })) = ast.items.first() else {
+            panic!("expected a let statement");
+        };
+        let ast::ExprKind::RecordLit { name, fields } = &value.kind else {
+            panic!("expected tuple to desugar to a record literal, got {:?}", value.kind);
+        };
+        assert_eq!(name.as_deref(), Some("Tuple2"));
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "_0");
+        assert_eq!(fields[1].0, "_1");
+    }
+
+    #[test]
+    fn triple_literal_desugars_to_tuple3_record() {
+        let (ast, _) = parse_source("p := (1, 2, 3)\n", "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Stmt(ast::Stmt::Let { value, .. })) = ast.items.first() else {
+            panic!("expected a let statement");
+        };
+        let ast::ExprKind::RecordLit { name, fields } = &value.kind else {
+            panic!("expected a record literal");
+        };
+        assert_eq!(name.as_deref(), Some("Tuple3"));
+        assert_eq!(fields.len(), 3);
+    }
+
+    #[test]
+    fn single_paren_expr_stays_grouping() {
+        let (ast, _) = parse_source("p := (1)\n", "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Stmt(ast::Stmt::Let { value, .. })) = ast.items.first() else {
+            panic!("expected a let statement");
+        };
+        assert!(
+            matches!(value.kind, ast::ExprKind::Literal(ast::Literal::Int(1))),
+            "a single parenthesized expression must stay grouping, got {:?}",
+            value.kind
+        );
+    }
+
+    #[test]
+    fn tuple_type_desugars_to_tuple_named() {
+        let (ast, _) =
+            parse_source("fn f() (Int, String) { f() }\n", "test.tw").expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected a function");
+        };
+        let Some(ast::Type::Named { name, args, .. }) = &decl.return_type else {
+            panic!("expected a named return type");
+        };
+        assert_eq!(name, "Tuple2");
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn optional_tuple_type_wraps_in_option() {
+        let (ast, _) = parse_source("fn f() (Int, Int)? { f() }\n", "test.tw")
+            .expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected a function");
+        };
+        let Some(ast::Type::Named { name, args, .. }) = &decl.return_type else {
+            panic!("expected a named return type");
+        };
+        assert_eq!(name, "Option", "(A, B)? must be Option<Tuple2<..>>");
+        let ast::Type::Named { name: inner, .. } = &args[0] else {
+            panic!("expected inner named type");
+        };
+        assert_eq!(inner, "Tuple2");
+    }
+
+    #[test]
+    fn result_tuple_type_wraps_in_result() {
+        let (ast, _) = parse_source("fn f() (Int, String)!String { f() }\n", "test.tw")
+            .expect("parse should succeed");
+        let Some(ast::Item::Function(decl)) = ast.items.first() else {
+            panic!("expected a function");
+        };
+        let Some(ast::Type::Named { name, args, .. }) = &decl.return_type else {
+            panic!("expected a named return type");
+        };
+        assert_eq!(name, "Result", "(A, B)!E must be Result<Tuple2<..>, E>");
+        let ast::Type::Named { name: inner, .. } = &args[0] else {
+            panic!("expected inner named type");
+        };
+        assert_eq!(inner, "Tuple2");
+    }
+
+    #[test]
     fn doc_comments_attach_to_next_function_decl() {
         let source = r#"/// Adds one.
 /// Useful for tests.

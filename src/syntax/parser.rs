@@ -1459,10 +1459,50 @@ impl Parser {
     }
 
     fn parse_grouped(&mut self) -> ParseResult<Expr> {
-        self.expect(TokenKind::LParen)?;
-        let expr = self.parse_expr_in("grouped expression")?;
+        let open = self.expect(TokenKind::LParen)?;
+        let first = self.parse_expr_in("grouped expression")?;
+
+        // A top-level comma makes this a tuple literal `(a, b, ...)`, desugared
+        // at parse time to a TupleN record with positional fields `_0.._n`.
+        // A single parenthesized expression stays grouping.
+        if self.peek_is(TokenKind::Comma) {
+            let mut elems = vec![first];
+
+            while self.consume_if(TokenKind::Comma) {
+                if self.peek_is(TokenKind::RParen) {
+                    break; // tolerate a trailing comma
+                }
+                elems.push(self.parse_expr_in("tuple element")?);
+            }
+
+            let end = self.expect(TokenKind::RParen)?;
+
+            if elems.len() < 2 || elems.len() > 4 {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: vec!["tuple with 2-4 elements".to_string()],
+                        found: format!("{}-element tuple", elems.len()),
+                    },
+                    open.span.merge(&end.span),
+                ));
+            }
+
+            let name = Some(format!("Tuple{}", elems.len()));
+            let fields = elems
+                .into_iter()
+                .enumerate()
+                .map(|(i, e)| (format!("_{i}"), e))
+                .collect();
+
+            return Ok(Expr::new(
+                self.alloc_expr_id(),
+                ExprKind::RecordLit { name, fields },
+                open.span.merge(&end.span),
+            ));
+        }
+
         self.expect(TokenKind::RParen)?;
-        Ok(expr)
+        Ok(first)
     }
 
     // Postfix operators
@@ -2404,6 +2444,40 @@ impl Parser {
         if self.peek_is(TokenKind::Dot) {
             let (span, fields) = self.parse_record_type_fields()?;
             return Ok(Type::Record { fields, span });
+        }
+
+        // Tuple type `(A, B, ...)` — desugared to the TupleN named type. The
+        // `?`/`!` postfix wrapping is applied by parse_type over this base.
+        if self.peek_is(TokenKind::LParen) {
+            let open = self.expect(TokenKind::LParen)?;
+            let mut args = Vec::new();
+
+            while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
+                args.push(self.parse_type()?);
+
+                if !self.peek_is(TokenKind::RParen) {
+                    self.expect(TokenKind::Comma)?;
+                }
+            }
+
+            let end = self.expect(TokenKind::RParen)?;
+            let span = open.span.merge(&end.span);
+
+            if args.len() < 2 || args.len() > 4 {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: vec!["tuple type with 2-4 elements".to_string()],
+                        found: format!("{}-element tuple type", args.len()),
+                    },
+                    span,
+                ));
+            }
+
+            return Ok(Type::Named {
+                name: format!("Tuple{}", args.len()),
+                args,
+                span,
+            });
         }
 
         // Check for function type: fn(T1, T2) RetType
