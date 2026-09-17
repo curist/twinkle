@@ -3109,4 +3109,33 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple types render with (A, B) sugar, not TupleN",
+      fn() {
+        env := base_env.builtin_env()
+        t2 := case env.lookup_type("Tuple2") {
+          .Some(e) => e,
+          .None => return .Err("missing Tuple2 builtin"),
+        }
+        ty2 := mono_type.MonoType.Named(t2.id, [mono_type.MonoType.Int, mono_type.MonoType.String])
+        try assert.equal(resolver.ty_to_string_env(env, ty2), "(Int, String)")
+
+        t3 := case env.lookup_type("Tuple3") {
+          .Some(e) => e,
+          .None => return .Err("missing Tuple3 builtin"),
+        }
+        ty3 := mono_type.MonoType.Named(
+          t3.id,
+          [mono_type.MonoType.Int, mono_type.MonoType.Int, mono_type.MonoType.Bool],
+        )
+        try assert.equal(resolver.ty_to_string_env(env, ty3), "(Int, Int, Bool)")
+
+        // Nesting composes: the ? sugar wraps the parenthesized tuple.
+        try assert.equal(
+          resolver.ty_to_string_env(env, mono_type.MonoType.Optional(ty2)),
+          "(Int, String)?",
+        )
+        .Ok({})
+      },
+    )
 }

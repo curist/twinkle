@@ -3113,6 +3113,12 @@ fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<Int, Boo
 
 // Environment-aware type stringifier — resolves Named(id) to actual type names.
 // Use this for user-facing diagnostics.
+/// True for the compiler-known tuple record names, whose `Named` types render
+/// with the `(A, B)` sugar in diagnostics rather than `Tuple2<A, B>`.
+pub fn is_tuple_type_name(name: String) Bool {
+  name == "Tuple2" or name == "Tuple3" or name == "Tuple4"
+}
+
 pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
   case ty {
     .Int => "Int",
@@ -3145,7 +3151,12 @@ pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
         joined := collect a in args {
           env.ty_to_string_env(a)
         }
-        "${name}<${joined.join(", ")}>"
+
+        if is_tuple_type_name(name) {
+          "(${joined.join(", ")})"
+        } else {
+          "${name}<${joined.join(", ")}>"
+        }
       }
     },
     .Function(params, ret) => {

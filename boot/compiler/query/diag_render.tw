@@ -10,7 +10,7 @@
 
 use compiler.ast.{Module}
 use compiler.mono_type.{MonoType, ty_to_string}
-use compiler.resolver.{ResolvedEnv}
+use compiler.resolver.{ResolvedEnv, is_tuple_type_name}
 use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind, ErrorDiag, WarningDiag}
 use lib.source.registry.{FileRegistry}
@@ -38,7 +38,12 @@ fn fmt_ty(ty: MonoType, ctx: RenderCtx) String {
         joined := collect a in args {
           fmt_ty(a, ctx)
         }
-        "${name}<${joined.join(", ")}>"
+
+        if is_tuple_type_name(name) {
+          "(${joined.join(", ")})"
+        } else {
+          "${name}<${joined.join(", ")}>"
+        }
       }
     },
     _ => case ctx.env {

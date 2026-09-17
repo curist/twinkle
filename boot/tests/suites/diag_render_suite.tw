@@ -1,6 +1,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.base_env
 use compiler.mono_type.{MonoType}
 use compiler.query.diag_render
 use compiler.query.diag_render.{RenderCtx}
@@ -321,6 +322,35 @@ pub fn suite() runner.Suite {
         r := diag_render.to_report(kind, ctx())
         try assert.is_true(r.title.contains("does not belong to"))
         try assert.is_true(r.title.contains("Int"))
+        .Ok({})
+      },
+    )
+    .test(
+      "TypeMismatch: tuple types render as (A, B), not Tuple2<..>",
+      fn() {
+        env := base_env.builtin_env()
+        t2 := case env.lookup_type("Tuple2") {
+          .Some(e) => e,
+          .None => return assert.fail("missing Tuple2 builtin"),
+        }
+        tup := MonoType.Named(t2.id, [MonoType.Int, MonoType.Int])
+        kind := DiagKind.Error(
+          .TypeMismatch(.{ span: s(0, 5), expected: MonoType.String, found: tup }),
+        )
+        env_ctx := RenderCtx.{
+          registry: registry.empty(),
+          env: .Some(env),
+          module: .None,
+          config: .{ color: false },
+          type_names: .None,
+        }
+        r := diag_render.to_report(kind, env_ctx)
+        label := case r.labels[0].label {
+          .Some(l) => l,
+          .None => return assert.fail("expected a primary label"),
+        }
+        try assert.is_true(label.contains("(Int, Int)"))
+        try assert.is_false(label.contains("Tuple2<"))
         .Ok({})
       },
     )
