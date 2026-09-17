@@ -104,8 +104,20 @@ contract:
 - `to_string` / `Stringify`, rendering `(a, b)` / `(a, b, c)` / `(a, b, c, d)`
   (so `${t}` interpolation works).
 
-These are provided the same way `@std.tuple` provides them today, now capped at
-four arities and moved into the prelude/compiler surface.
+**All three are auto-synthesized structurally by the compiler**, not hand-written
+per arity — one arity-parameterized generator walks the `_0.._n` fields. This
+matters because of how record derivation works today (`docs/contracts.md`):
+
+- `Eq` is **already auto-derived for records** when all fields satisfy `Eq`, so
+  `==`/`!=` come for free once `TupleN` is a record.
+- `Ord` and `Stringify` are **deliberately not auto-derived for user records** —
+  that language rule stays unchanged. Instead, because `TupleN` types are
+  compiler-owned, the compiler synthesizes their `Ord` and `Stringify` witnesses
+  structurally (lexicographic `compare`; `(…)`-form `to_string`), guarded on the
+  element types satisfying `Ord` / `Stringify` respectively.
+
+The generator is arity-generic, so the arity-4 cap is a policy bound on what is
+blessed, not a limit forced by hand-written witness count.
 
 ### Migration (part of v1)
 
@@ -174,9 +186,11 @@ Once destructuring lands, revisit the deferred pair-returning stdlib
 
 ## Risks / notes
 
-- **Contract-witness generation is the arity cost.** Capping at 4 bounds it to
-  four hand-provided (or four generated) witness sets, mirroring why Rust caps
-  its tuple trait impls.
+- **Contract witnesses are structurally generated, not hand-written.** `Eq` is
+  already free (record auto-derivation); the new work is an arity-generic
+  synthesizer for `Ord` and `Stringify` over the `TupleN` types, leaving the
+  "user records don't auto-derive `Ord`/`Stringify`" rule intact. This is the
+  main compiler task and the first thing the implementation plan should stand up.
 - **Migration is a breaking change.** Acceptable: `@std.tuple` was a stopgap, and
   the in-repo surface is small and mechanical.
 - **Tree-sitter regen needs Docker + a human test run** (project rule).
