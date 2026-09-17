@@ -1110,6 +1110,36 @@ all of them. A `Cell` does **not** change update-sugar semantics — `x.y = v`,
 `arr[i] = v`, and `m[k] = v` still rebuild-and-rebind. Its operations
 (`Cell.new`/`get`/`set`/`update`) are in [docs/API.md](API.md).
 
+### 13.7 Tuples
+
+Tuples are **immutable** positional groupings for lightweight multi-return — the
+sanctioned exception to the otherwise-nominal "name your data" model (§4). Use
+them for genuinely positional, short-lived groups; values whose fields have
+meaningful names (coordinates, colors, parser state) want a record.
+
+* **Literal:** `(a, b)`, `(a, b, c)`, `(a, b, c, d)`. A top-level comma makes a
+  tuple; a single parenthesized expression `(a)` stays grouping, and `()` is not
+  a value (use `{}` / `Void`).
+* **Type:** `(A, B)` … `(A, B, C, D)`. The `?`/`!E` postfixes wrap the whole
+  tuple: `(A, B)?` is `Option<(A, B)>` and `(A, B)!E` is `Result<(A, B), E>`.
+* **Access:** `t._0` … `t._3`, positional and 0-indexed (matching vectors and
+  strings). There is no destructuring binding in this release.
+* **Arity is 2–4.** There are no 1-tuples and no unit tuple; past four elements,
+  use a record.
+
+Tuples desugar to compiler-known nominal records `Tuple2`/`Tuple3`/`Tuple4`
+(fields `_0.._3`); the names are reserved and never written directly. Being
+records, they get conditional structural `==`/`!=` for free when their elements
+satisfy `Eq`, plus `compare` (`Ord`, lexicographic by position) and `to_string`
+(`Stringify`, rendering `(a, b)`) when their elements satisfy those contracts.
+
+```tw
+divmod := fn(a: Int, b: Int) (Int, Int) { (a / b, a % b) }
+qr := divmod(17, 5)
+qr._0   // 3
+qr._1   // 2
+```
+
 ---
 
 ## 14. Type System and Checking
