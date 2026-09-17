@@ -495,3 +495,135 @@ pub fn compare<T: Ord>(a: Vector<T>, b: Vector<T>) Order {
     .Eq
   }
 }
+
+/// Sum of an Int vector; 0 for an empty vector.
+pub fn sum(xs: Vector<Int>) Int {
+  acc := 0
+
+  for x in xs {
+    acc = acc + x
+  }
+
+  acc
+}
+
+/// Product of an Int vector; 1 for an empty vector.
+pub fn product(xs: Vector<Int>) Int {
+  acc := 1
+
+  for x in xs {
+    acc = acc * x
+  }
+
+  acc
+}
+
+/// Least element by the Ord contract, or .None when empty.
+pub fn min<T: Ord>(xs: Vector<T>) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+
+  for i in 1..xs.len() {
+    if xs[i].compare(best) == .Lt {
+      best = xs[i]
+    }
+  }
+
+  .Some(best)
+}
+
+/// Greatest element by the Ord contract, or .None when empty.
+pub fn max<T: Ord>(xs: Vector<T>) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+
+  for i in 1..xs.len() {
+    if xs[i].compare(best) == .Gt {
+      best = xs[i]
+    }
+  }
+
+  .Some(best)
+}
+
+/// Least element by a comparator, or .None when empty.
+pub fn min_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+
+  for i in 1..xs.len() {
+    if cmp(xs[i], best) == .Lt {
+      best = xs[i]
+    }
+  }
+
+  .Some(best)
+}
+
+/// Greatest element by a comparator, or .None when empty.
+pub fn max_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+
+  for i in 1..xs.len() {
+    if cmp(xs[i], best) == .Gt {
+      best = xs[i]
+    }
+  }
+
+  .Some(best)
+}
+
+/// Element with the least projected Ord key, or .None when empty.
+pub fn min_by_key<T, K: Ord>(xs: Vector<T>, f: fn(T) K) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+  best_key := f(best)
+
+  for i in 1..xs.len() {
+    k := f(xs[i])
+
+    if k.compare(best_key) == .Lt {
+      best = xs[i]
+      best_key = k
+    }
+  }
+
+  .Some(best)
+}
+
+/// Element with the greatest projected Ord key, or .None when empty.
+pub fn max_by_key<T, K: Ord>(xs: Vector<T>, f: fn(T) K) Option<T> {
+  if xs.is_empty() {
+    return .None
+  }
+
+  best := xs[0]
+  best_key := f(best)
+
+  for i in 1..xs.len() {
+    k := f(xs[i])
+
+    if k.compare(best_key) == .Gt {
+      best = xs[i]
+      best_key = k
+    }
+  }
+
+  .Some(best)
+}

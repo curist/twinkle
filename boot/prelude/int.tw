@@ -173,3 +173,34 @@ pub fn to_float(n: Int) Float {
     },
   }
 }
+
+/// Render `n` as lowercase hexadecimal with no `0x` prefix. Negative values get
+/// a leading `-` (signed, not two's-complement); zero renders "0".
+pub fn to_hex(n: Int) String {
+  if n == 0 {
+    return "0"
+  }
+
+  digits := "0123456789abcdef"
+  neg := n < 0
+
+  // Work with a non-positive magnitude so Int.min has no positive counterpart.
+  m := if neg {
+    n
+  } else {
+    0 - n
+  }
+  out := ""
+
+  for m != 0 {
+    r := 0 - m % 16 // 0..15 (m <= 0, so m % 16 <= 0)
+    m = m / 16
+    out = digits.slice(r, r + 1).concat(out)
+  }
+
+  if neg {
+    "-".concat(out)
+  } else {
+    out
+  }
+}

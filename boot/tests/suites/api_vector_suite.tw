@@ -1322,4 +1322,48 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "sum and product reduce Int vectors with identity on empty",
+      fn() {
+        empty: Vector<Int> = []
+        try assert.equal([1, 2, 3, 4].sum(), 10)
+        try assert.equal(empty.sum(), 0)
+        try assert.equal([1, 2, 3, 4].product(), 24)
+        try assert.equal(empty.product(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "min and max find extremes via the Ord contract",
+      fn() {
+        empty: Vector<Int> = []
+        try assert.equal([3, 1, 4, 1, 5].min(), .Some(1))
+        try assert.equal([3, 1, 4, 1, 5].max(), .Some(5))
+        try assert.equal(["pear", "apple", "fig"].min(), .Some("apple"))
+        try assert.equal(empty.min(), .None)
+        try assert.equal(empty.max(), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "min_by and max_by use a comparator",
+      fn() {
+        empty: Vector<Int> = []
+        try assert.equal([3, 1, 4, 1, 5].min_by(Int.compare), .Some(1))
+        try assert.equal([3, 1, 4, 1, 5].max_by(Int.compare), .Some(5))
+        try assert.equal(empty.min_by(Int.compare), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "min_by_key and max_by_key project an Ord key",
+      fn() {
+        words := ["bb", "a", "cccc", "ddd"]
+        try assert.equal(words.min_by_key(fn(w: String) Int { w.len() }), .Some("a"))
+        try assert.equal(words.max_by_key(fn(w: String) Int { w.len() }), .Some("cccc"))
+        empty: Vector<String> = []
+        try assert.equal(empty.min_by_key(fn(w: String) Int { w.len() }), .None)
+        .Ok({})
+      },
+    )
 }

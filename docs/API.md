@@ -187,6 +187,7 @@ names.sort_by(String.compare)
 | `Int.lcm` | `fn(a: Int, b: Int) Int` | Least common multiple (`0` when either is `0`) |
 | `Int.pow` | `fn(base: Int, exp: Int) Int` | Integer exponentiation; traps on negative `exp`; `pow(0,0)=1` |
 | `Int.isqrt` | `fn(n: Int) Int` | Floor of the integer square root; traps when `n < 0` |
+| `Int.to_hex` | `fn(n: Int) String` | Render `n` as lowercase hexadecimal, no `0x` prefix, leading `-` for negatives (signed); `"0"` for zero |
 
 ```tw
 lo.max(0).min(width)   // clamp via chained dot-calls
@@ -383,6 +384,14 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Vector<T>` | Return a new sorted vector using comparator (e.g. `xs.sort_by(Int.compare)`) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
 | `Vector.make` | `fn<T>(size: Int, fill: T) Vector<T>` | Create vector of `size` filled with `fill` |
+| `.sum()` | `fn(xs: Vector<Int>) Int` | Sum of elements; `0` for an empty vector |
+| `.product()` | `fn(xs: Vector<Int>) Int` | Product of elements; `1` for an empty vector |
+| `.min()` | `fn<T: Ord>(xs: Vector<T>) Option<T>` | Least element by the `Ord` contract; `.None` when empty |
+| `.max()` | `fn<T: Ord>(xs: Vector<T>) Option<T>` | Greatest element by the `Ord` contract; `.None` when empty |
+| `.min_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Option<T>` | Least element by comparator; `.None` when empty |
+| `.max_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Option<T>` | Greatest element by comparator; `.None` when empty |
+| `.min_by_key(f)` | `fn<T,K: Ord>(xs: Vector<T>, f: fn(T) K) Option<T>` | Element with the least projected key; `.None` when empty |
+| `.max_by_key(f)` | `fn<T,K: Ord>(xs: Vector<T>, f: fn(T) K) Option<T>` | Element with the greatest projected key; `.None` when empty |
 
 **Indexing syntax:** `v[i]` — unsafe, traps on out-of-bounds (see the
 source-mapped trap trace note under [I/O](#io)).

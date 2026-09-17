@@ -133,4 +133,15 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "to_hex renders lowercase hex, signed, no prefix",
+      fn() {
+        try assert.equal(255.to_hex(), "ff")
+        try assert.equal(0.to_hex(), "0")
+        try assert.equal(16.to_hex(), "10")
+        try assert.equal(4096.to_hex(), "1000")
+        try assert.equal((-255).to_hex(), "-ff")
+        .Ok({})
+      },
+    )
 }
