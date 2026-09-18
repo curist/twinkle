@@ -419,3 +419,75 @@ fn choose(flag: Bool) Int? {
         errors.join("\n")
     );
 }
+
+// Regression coverage for the Case-dispatch path (check_expr's inline
+// ExprKind::Case handler vs. synth_case), not just PatternChecker directly.
+// A tuple scrutinee must be accepted through BOTH gates — see tuple-
+// destructuring Task 5 review, which found synth_case's gate (reached by
+// non-tail-position `case`s and case statements inside unannotated
+// functions) still rejecting tuples after only the tail-position gate
+// (check_expr) had been patched.
+
+#[test]
+fn test_tail_position_tuple_case_typechecks() {
+    // Tail position: check_expr's ExprKind::Case handler.
+    let src = r#"
+fn f() Int {
+    case (1, 2) {
+        (a, b) => a + b
+    }
+}
+"#;
+    let errors = check_errors(src);
+    assert!(
+        errors.is_empty(),
+        "expected tail-position tuple case to typecheck, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_non_tail_position_tuple_case_typechecks() {
+    // Non-tail position: check_block's `let _ = self.synth_expr(e)` routes
+    // through synth_case, not check_expr — a separate scrutinee-kind gate.
+    let src = r#"
+fn f() Int {
+    case (1, 2) {
+        (a, b) => a + b
+    }
+    0
+}
+"#;
+    let errors = check_errors(src);
+    assert!(
+        errors.is_empty(),
+        "expected non-tail-position tuple case to typecheck, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_record_scrutinee_still_rejected() {
+    // A non-tuple, non-sum record scrutinee must still be rejected — the
+    // TupleN allowance in the Case gates must not broaden to all records.
+    let src = r#"
+type Point = .{ x: Int, y: Int }
+
+fn f() Int {
+    p := Point.{ x: 1, y: 2 }
+    case p {
+        _ => 0
+    }
+}
+"#;
+    let errors = check_errors(src);
+    assert!(
+        !errors.is_empty(),
+        "expected a record scrutinee to be rejected as not a sum type"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("sum type")),
+        "expected a 'sum type' error, got:\n{}",
+        errors.join("\n")
+    );
+}

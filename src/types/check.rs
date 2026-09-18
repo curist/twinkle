@@ -1,11 +1,10 @@
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
-use super::patterns::PatternChecker;
+use super::patterns::{PatternChecker, is_tuple_scrutinee};
 use super::ty::{
     CELL_TYPE_ID, CHANNEL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, RESULT_TYPE_ID, TASK_TYPE_ID, TUPLE2_TYPE_ID, TUPLE3_TYPE_ID, TUPLE4_TYPE_ID,
-    TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, builtin_method_alias, contains_meta,
-    method_receiver_type_id, zonk_ty,
+    RANGE_TYPE_ID, RESULT_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    builtin_method_alias, contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -1058,11 +1057,7 @@ impl TypeChecker {
                     scrut_ty,
                     MonoType::Int | MonoType::Bool | MonoType::String | MonoType::Byte
                 );
-                let is_tuple_match = matches!(
-                    scrut_ty,
-                    MonoType::Named { type_id, .. }
-                        if matches!(type_id, TUPLE2_TYPE_ID | TUPLE3_TYPE_ID | TUPLE4_TYPE_ID)
-                );
+                let is_tuple_match = is_tuple_scrutinee(&scrut_ty);
                 if !is_primitive_match && !is_tuple_match && !scrut_ty.is_sum(&self.type_env) {
                     self.errors.push(TypeError::CaseScrutineeNotSumType {
                         actual_type: scrut_ty.clone(),
@@ -3626,12 +3621,14 @@ impl TypeChecker {
     ) -> Result<MonoType, ()> {
         let scrut_ty = self.synth_expr(scrutinee)?;
 
-        // Scrutinee must be a sum type or a matchable primitive (Int, Bool, String, Byte)
+        // Scrutinee must be a sum type, a matchable primitive (Int, Bool,
+        // String, Byte), or a compiler-known TupleN record.
         let is_primitive_match = matches!(
             scrut_ty,
             MonoType::Int | MonoType::Bool | MonoType::String | MonoType::Byte
         );
-        if !is_primitive_match && !scrut_ty.is_sum(&self.type_env) {
+        let is_tuple_match = is_tuple_scrutinee(&scrut_ty);
+        if !is_primitive_match && !is_tuple_match && !scrut_ty.is_sum(&self.type_env) {
             self.errors.push(TypeError::CaseScrutineeNotSumType {
                 actual_type: scrut_ty.clone(),
                 span: scrutinee.span,

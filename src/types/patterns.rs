@@ -18,9 +18,21 @@ fn tuple_type_id_for_arity(arity: usize) -> Option<super::ty::TypeId> {
     }
 }
 
-/// Is this MonoType one of the compiler-known TupleN records?
-fn is_tuple_named(type_id: super::ty::TypeId) -> bool {
+/// Is this TypeId one of the compiler-known TupleN records?
+///
+/// Shared by both `check_expr`'s inline Case gate and `synth_case`'s gate in
+/// `check.rs` so a scrutinee-kind check never needs to be duplicated
+/// (duplication is exactly how the `synth_case` gate went unpatched once
+/// before — see the tuple-destructuring Task 5 review).
+pub(crate) fn is_tuple_named(type_id: super::ty::TypeId) -> bool {
     matches!(type_id, TUPLE2_TYPE_ID | TUPLE3_TYPE_ID | TUPLE4_TYPE_ID)
+}
+
+/// Is this MonoType a compiler-known TupleN record? Convenience wrapper
+/// around `is_tuple_named` for the common `&MonoType` call sites (the case-
+/// scrutinee gates in `check.rs`).
+pub(crate) fn is_tuple_scrutinee(ty: &MonoType) -> bool {
+    matches!(ty, MonoType::Named { type_id, .. } if is_tuple_named(*type_id))
 }
 
 /// A pattern is irrefutable if it always matches, regardless of scrutinee value.
