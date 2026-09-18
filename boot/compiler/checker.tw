@@ -3574,8 +3574,10 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
   case pat.kind {
     .Wildcard => .{ ctx, diags },
     .Ident(name) => .{ ctx: ctx.bind_local(name, expected), diags },
-    .Literal(expr) => if expected == .Byte {
-      // Route through check_expr so ByteOutOfRange fires for out-of-range literals
+    .Literal(expr) => if zonk(expected, ctx.subst) == .Byte {
+      // Route through check_expr so ByteOutOfRange fires for out-of-range
+      // literals. Zonk first: a Byte scrutinee reached through a tuple/record
+      // pattern arrives as a metavar unified with Byte, not the bare `.Byte`.
       ctx.check_expr(expr, .Byte, diags)
     } else {
       r := ctx.synth(expr, diags)

@@ -1458,7 +1458,9 @@ fn emit_let_binding(
             instrs
         }
         AnfOp::ARecord { type_id, fields } => {
-            let mut instrs = emit_record_literal(*type_id, fields, &bind_ty, ctx);
+            let record_mono = ctx.local_mono.get(&local).cloned();
+            let mut instrs =
+                emit_record_literal(*type_id, fields, &bind_ty, record_mono.as_ref(), ctx);
             instrs.push(Instr::LocalSet(bind_idx));
             instrs
         }
@@ -3995,6 +3997,7 @@ fn emit_record_literal(
     type_id: TypeId,
     fields: &[(crate::ir::FieldId, Atom)],
     bind_ty: &ValType,
+    record_mono: Option<&MonoType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
     let field_count = record_field_count(type_id, ctx);
@@ -4018,7 +4021,22 @@ fn emit_record_literal(
     let mut instrs = Vec::new();
     for (idx, atom) in ordered.into_iter().flatten().enumerate() {
         let field_ty = record_field_valtype(type_id, idx, None, None, ctx);
-        instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
+        // When the struct field is erased (`anyref`, e.g. a generic TupleN
+        // field) but the record's concrete mono tells us the real element type,
+        // emit the element at its natural repr and box per that repr. Otherwise
+        // a folded Byte element (an `ALitInt` on the stack) would box as an
+        // i64 `BoxedInt`, while the i31 read path (`emit_pattern_bindings` /
+        // `emit_pattern_condition`) unboxes it as an i31 and traps on the cast.
+        if field_ty == ValType::Anyref
+            && let Some(elem_mono) = tuple_field_mono(record_mono, type_id, idx)
+        {
+            let repr =
+                mono_to_valtype_specialized(&elem_mono, ctx.type_env, &ctx.concrete_func_sigs);
+            instrs.extend(emit_atom(atom, Some(&repr), ctx));
+            instrs.extend(emit_coerce_stack(&repr, &ValType::Anyref));
+        } else {
+            instrs.extend(emit_atom(atom, Some(&field_ty), ctx));
+        }
     }
     instrs.push(Instr::StructNew(user_record_type_sym(type_id)));
     instrs.extend(emit_coerce_stack(&ref_user_record(type_id), bind_ty));

@@ -81,7 +81,15 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
     .Tuple(sub_pats) => {
       tid := case type_id_from_mono(scrut_ty, ctx.env) {
         .Some(id) => id,
-        .None => return .{ pattern: .Wildcard, ctx },
+        // Scrutinee type unresolved — unreachable for well-typed programs
+        // (the checker has already reported it). Fall back to the TupleN type
+        // for this arity so sub-pattern bindings are still lowered, mirroring
+        // stage0's arity-based resolution rather than dropping to a wildcard
+        // (which would silently match everything and bind nothing).
+        .None => case ctx.env.lookup_type("Tuple${sub_pats.len()}") {
+          .Some(entry) => entry.id,
+          .None => return .{ pattern: .Wildcard, ctx },
+        },
       }
       field_tys := tuple_field_types(scrut_ty, ctx.env)
       lowered_pats: Vector<CorePattern> = []

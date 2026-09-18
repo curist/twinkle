@@ -13,8 +13,8 @@ cosmetic/parity items remain. Each is independent; tackle in priority order.
 | ~~B1~~ | ~~Nested tuple literal fails synth-mode~~ **DONE** | bug | High | no |
 | A | `(a,b) :=` / `for` / param destructuring | feature | High | yes |
 | ~~B2~~ | ~~Module-global scrutinee erases to anyref~~ **DONE** | bug | Medium | no |
-| B3 | Byte tuple-field cast trap under re-match | bug | Low | no |
-| C | Cosmetic / parity cleanups | chore | Low | no |
+| ~~B3~~ | ~~Byte tuple-field cast trap under re-match~~ **DONE** | bug | Low | no |
+| C | Cosmetic / parity cleanups (C1/C2/C5 done; C3/C4 deferred) | chore | Low | no |
 
 ---
 
@@ -114,47 +114,70 @@ of tuple/nested/Result/Option globals.
 
 ---
 
-## B3 — Byte-typed tuple-field cast trap under nested rebind + re-match (stage0)
+## B3 — Byte-typed tuple-field cast trap under nested rebind + re-match — **DONE**
 
-**Symptom.** A `Byte`-typed tuple field, bound then rebound and re-matched
-against a literal pattern, traps at runtime with a cast failure. None of the
-shipped scenarios use Byte tuple fields, so it did not block the feature.
+**Symptom.** A `Byte`-typed tuple field, bound then re-matched against an
+integer literal pattern, misbehaved: **boot rejected** it at type-check
+("expected Int, found Byte"), while **stage0** accepted it but **trapped** at
+runtime with a cast failure. A plain (non-tuple) `Byte` literal match
+(`b: Byte = 65; case b { 65 => … }`) worked in both — the divergence was
+specific to a Byte reached through a tuple/record pattern. So this was two bugs,
+not the single stage0-codegen issue the plan assumed.
 
-**Root cause (suspected).** A typed-representation / i31-boxing precision issue
-in stage0 codegen: the field mono for a `Byte` element loses precision through
-the rebind, so `StructGet`/coercion (near `src/codegen/emit.rs:2077`
-`emit_pattern_bindings`, `record_struct_sym` field projection at ~2110) emits a
-cast that doesn't match the stored repr. Independent of the record-dispatch
-path itself.
+**Boot root cause + fix (checker).** `check_pattern`'s `.Literal` arm compared
+the raw `expected` to `.Byte` structurally. A Byte scrutinee reached through a
+tuple pattern arrives as a **metavar unified with Byte**, not bare `.Byte`, so
+the coercion path was skipped and the literal synthesized as `Int` → mismatch.
+Fix: zonk `expected` before the compare (`checker.tw`).
 
-**Scope.** stage0 codegen only. Lowest priority — narrow trigger, no shipped
-code path hits it. Confirm whether boot has the analogous issue.
+**Stage0 root cause + fix (codegen).** Tuple/record literals box each element
+against the generic (`anyref`) `TupleN` field type. A constant-folded Byte
+element (`ALitInt(65)`) hit `emit_int_literal(_, Anyref)`, which hardcodes an
+i64 `BoxedInt` box — but the read path (`emit_pattern_bindings` /
+`emit_pattern_condition`) unboxes a Byte field as an **i31**, so the cast
+trapped. Fix: `emit_record_literal` now boxes each element per its real element
+mono (from the record's `Named` type args, via `tuple_field_mono`), so a Byte
+element emits `i32 → RefI31` (`emit.rs`); mirrors the read side.
 
-**Verification.** A stage0 run-test with a `Byte` tuple field, rebound and
-re-matched against a `Byte` literal, produces the correct value instead of
-trapping.
+**Verified.** Boot run-based test (`codegen_integration_suite.tw` "byte
+tuple-field rebound re-match", via `run_exit_code`); stage0 run-test
+(`tuple_pattern_run_test.rs`); self-host green; 143/144 run fixtures still build
+under stage0 (the 1 failure is a pre-existing `cond`-as-identifier parse issue,
+unrelated).
 
 ---
 
-## C — Cosmetic / parity cleanups (batch when convenient)
+## C — Cosmetic / parity cleanups
 
-- **EBNF trailing comma.** `docs/grammar.ebnf` `TuplePattern` omits the optional
-  trailing comma that `grammar.js` and both parsers accept; the sibling
-  `TupleLiteral` rule documents it with `[ "," ]`. Align for accuracy.
-- **Boot `lower_pattern` arity fallback.** Boot's `.Tuple` arm
-  (`lower_core/patterns.tw`) lowers to `.Wildcard` on a `.None` tid (silently
-  matching everything with no bindings); stage0 falls back to `TUPLE{2,3,4}` by
-  arity and errors. Unreachable for well-typed programs, but give boot the same
-  explicit error for symmetry/future-proofing.
-- **Dead builder work.** Both bindings record branches build `StructGet` instrs
-  for wildcard/ident fields that the recursion discards. Harmless; skip when the
-  field binds nothing.
-- **`slot_assign.tw` classifier dup.** Re-derives `is_record_mono` /
-  `record_field_mono` instead of reusing `layout_helpers`' pair; a shared
-  `pub(crate)`/module helper would remove the duplication (module-dependency
-  direction currently justifies it).
-- **CI note.** stage0 `tests/tuple_pattern_run_test.rs` requires `wasmtime` on
-  PATH (fails loudly if absent) — ensure CI provides it or gate the test.
+**Done:**
+
+- **C1 — EBNF trailing comma. DONE.** `docs/grammar.ebnf` `TuplePattern` now
+  carries the optional `[ "," ]` that `grammar.js` and both parsers accept
+  (matching the sibling `TupleLiteral` rule). Verified both compilers accept
+  `(a, b,)` patterns.
+- **C2 — Boot `lower_pattern` arity fallback. DONE.** Boot's `.Tuple` arm
+  (`lower_core/patterns.tw`) previously lowered to `.Wildcard` on a `.None` tid
+  (silently matching everything, binding nothing). It now falls back to
+  resolving `Tuple{arity}` by name so sub-pattern bindings are still lowered,
+  mirroring stage0's arity-based resolution. Unreachable for well-typed
+  programs (the checker reports the type error first), but no longer silently
+  drops bindings.
+- **C5 — Removed the wasmtime test dependency. DONE.** `tuple_pattern_run_test.rs`
+  was the repo's only `wasmtime` user (shelled out to the CLI to execute
+  stage0 output). Rewired to compile to a binary Wasm module and run it through
+  the project's own JS<->Wasm-GC runtime (`tools/js_runtime/run_wasm_file.mjs`
+  under `deno`, the same `runWasmBytesAsync` path the boot suite uses). No
+  external Wasm engine required; `deno` is already a test dependency.
+
+**Deferred (consciously):**
+
+- **C3 — Dead builder work.** The record bindings branch builds `StructGet`
+  instrs for wildcard/literal fields that the recursion discards. Compile-time
+  only (no emitted-Wasm effect), negligible; not worth perturbing hot codegen.
+- **C4 — `slot_assign.tw` classifier dup.** Re-derives `is_record_mono` /
+  `record_field_mono` instead of reusing `layout_helpers`' pair. The plan's own
+  note is that the module-dependency direction currently justifies the
+  duplication, so leaving it is the correct call.
 
 ---
 

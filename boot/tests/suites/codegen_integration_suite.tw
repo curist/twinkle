@@ -746,6 +746,19 @@ fn test_tuple_pattern_module_global_nested_scrutinee() Result<Void, String> {
   )
 }
 
+fn test_tuple_pattern_byte_field_rebound_rematch() Result<Void, String> {
+  // A Byte-typed tuple field, bound then rebound and re-matched against a Byte
+  // literal pattern. The scrutinee reaches the literal arm as a metavar unified
+  // with Byte (not bare `.Byte`), so the checker must zonk before deciding to
+  // coerce the integer literal pattern to Byte; otherwise the arm is rejected
+  // (boot) or silently miscompiled (stage0). Expected: the `65 =>` arm fires.
+  assert_runs_to(
+    "use @std.proc\nfn f(t: (Byte, Int)) Int {\n  case t {\n    (b, n) => {\n      b2 := b\n      case b2 {\n        65 => 100,\n        _ => n,\n      }\n    }\n  }\n}\nfirst: Byte = 65\nt: (Byte, Int) = (first, 7)\nproc.exit(f(t))\n",
+    100,
+    "byte tuple-field rebound re-match",
+  )
+}
+
 fn test_match_module_global_sum_scrutinee() Result<Void, String> {
   // The same global-mono fix also feeds sum-layout dispatch: a `case` over a
   // module-global Result value must recover the variant field's real mono
@@ -1178,6 +1191,10 @@ pub fn suite() runner.Suite {
     .test(
       "tuple pattern: module-global nested scrutinee",
       test_tuple_pattern_module_global_nested_scrutinee,
+    )
+    .test(
+      "tuple pattern: byte field rebound re-match",
+      test_tuple_pattern_byte_field_rebound_rematch,
     )
     .test("match: module-global sum scrutinee", test_match_module_global_sum_scrutinee)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
