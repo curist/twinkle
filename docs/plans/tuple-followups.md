@@ -10,7 +10,7 @@ cosmetic/parity items remain. Each is independent; tackle in priority order.
 
 | # | Item | Kind | Priority | Own design needed? |
 |---|------|------|----------|--------------------|
-| B1 | Nested tuple literal fails check-mode | bug | High | no |
+| ~~B1~~ | ~~Nested tuple literal fails synth-mode~~ **DONE** | bug | High | no |
 | A | `(a,b) :=` / `for` / param destructuring | feature | High | yes |
 | B2 | Module-global sum scrutinee erases to anyref | bug | Medium | no |
 | B3 | Byte tuple-field cast trap under re-match | bug | Low | no |
@@ -18,30 +18,40 @@ cosmetic/parity items remain. Each is independent; tackle in priority order.
 
 ---
 
-## B1 — Nested tuple *literal* fails to type-check in check-mode (boot)
+## B1 — Nested tuple *literal* fails in synth mode (boot) — **DONE**
 
-**Symptom.** A nested tuple literal such as `((1, 2), 3)` does not type-check.
-Flat literals (`(1, 2)`) and nested tuple *patterns* (`((a, b), c)`) both work;
-only a nested literal in a checked position fails. This is unrelated to
-destructuring — it is a gap in the original tuple-literal feature — but it is
-the most user-facing of the three (anyone writing a nested tuple hits it), so
-it is first.
+**Symptom.** A nested tuple literal such as `((1, 2), 3)` fails to type-check
+in **synth mode** (`t := ((1, 2), 3)`, no annotation). Note: the original
+"check-mode" framing was wrong — an *annotated* binding
+(`t: ((Int, Int), Int) = ((1, 2), 3)`) always worked; only the no-expected-type
+synth path failed.
 
-**Root cause (suspected).** Tuple literals desugar to `TupleN` record literals.
-The inner tuple is checked against an expected type via `check_record_lit`
-(`boot/compiler/checker.tw:2772`) / `synth_tuple` (`checker.tw:2931`), which
-needs a resolved `Named` type in check-mode; a bare nested literal doesn't
-supply one for the inner element, so it fails. Confirm whether the fix belongs
-in `synth_tuple` (synthesize the inner tuple, then unify) or in propagating the
-expected element type down into the nested `check_record_lit` call.
+**Root cause (confirmed).** `synth_tuple` → `synth_named_record` builds
+`expected = Named(TupleN, [meta, meta])` and checks each element via
+`check_expr(elem, field_ty)` where `field_ty` is an unresolved metavar. The
+`.Tuple` check-mode arm (`checker.tw:2983`) unconditionally called
+`check_record_lit` with that metavar expected; `check_record_lit` zonks it,
+finds a non-`Named` type, and errors `NotARecord` ("expected a record type,
+got `?N`"). The inner literal was never given the chance to synthesize itself.
 
-**Scope.** Boot checker only (plus stage0 parity — stage0 desugars tuple
-literals at parse time, so verify whether it has the same gap). No codegen
-change expected; this is purely a type-checking/synthesis fix.
+**Fix.** Guard the `.Tuple` check-mode arm on the zonked expected being a
+resolved `.Named` record (mirroring the `.Array`/`.Collect` arms); a bare
+metavar falls through to the generic synth+unify fallback, so the inner literal
+synthesizes `(Int, Int)` and unifies with the field metavar.
 
-**Verification.** `case`/binding sites over nested literals type-check;
-`((1,2),3)` synthesizes `((Int,Int),Int)`; the Task 2/3 tests that currently
-work around this with annotated-parameter scrutinees can drop the workaround.
+**Stage0 parity.** No gap — stage0 desugars tuple literals to nested `TupleN`
+constructor calls at parse time, which produce named types directly, so
+synthesis already works. Verified via `twk check`/`build`.
+
+**Verified.** Boot checker test added
+(`checker_suite.tw` "nested tuple literal synthesizes in synth mode");
+self-host fixed point green; end-to-end `((1,2),3)` and `(1,(2,3))` run.
+
+**Note — surfaced B2.** Destructuring a *top-level (module-global)* tuple
+(`t := (1,2)` then `case t { (a,b) => … }`) traps at codegen
+(`local.set expected anyref, found struct.get i64`). This is B2 (global type
+erasure), pre-existing and independent of B1, and it reproduces with tuple/record
+globals too — not only sum globals. In-function scrutinees work.
 
 ---
 
@@ -73,6 +83,10 @@ widening. Do B1 first — nested literals are likely to show up in `:=` tests.
 (e.g. a top-level `Result<Int, String>` or `Option<T>` global) mis-lowers.
 Reproduces with a plain sum global, independent of tuples — the tuple work
 only surfaced it (tests sidestep it by using function-parameter scrutinees).
+Also reproduces with a **tuple/record global** (`t := (1,2)` then
+`case t { (a,b) => … }`), which traps at codegen with
+`local.set expected anyref, found struct.get i64` — so this is not sum-specific;
+any typed global scrutinee whose fields have unboxed valtypes hits it.
 
 **Root cause.** `boot/compiler/backend/slot_assign.tw:646` maps
 `atom_mono` for `.AGlobalLocal(_) => .Anyref_` — a module-global read is typed

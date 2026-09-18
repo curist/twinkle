@@ -3172,4 +3172,14 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "nested tuple literal synthesizes in synth mode (no annotation)",
+      fn() {
+        // `:=` gives no expected type, so the inner literal must synthesize
+        // rather than being checked against an unresolved metavar.
+        src := "fn f() Int { t := ((1, 2), 3)\n case t { ((a, b), c) => a + b + c } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
 }

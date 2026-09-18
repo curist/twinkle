@@ -2980,14 +2980,19 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
       return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
     },
-    .Tuple(elems) => {
-      // Push each expected TupleN field type into the corresponding element
-      // (e.g. so `t: (Byte, Byte) = (1, 2)` coerces the int literals).
-      tuple_entries := collect i in range(elems.len()) {
-        RecordEntry.{ name: "_${i}", value: .Some(elems[i]), span: elems[i].span }
-      }
-      r := check_record_lit(tuple_entries, expected, expr.span, ctx, diags)
-      return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
+    .Tuple(elems) => case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
+      // Only push element types down when the expected type is a resolved tuple
+      // record (e.g. so `t: (Byte, Byte) = (1, 2)` coerces the int literals).
+      // A bare metavar (nested tuple literal in synth mode) falls through to the
+      // synth+unify fallback so the inner literal synthesizes its own type.
+      .Named(_, _) => {
+        tuple_entries := collect i in range(elems.len()) {
+          RecordEntry.{ name: "_${i}", value: .Some(elems[i]), span: elems[i].span }
+        }
+        r := check_record_lit(tuple_entries, expected, expr.span, ctx, diags)
+        return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
+      },
+      _ => {},
     },
     .Variant(name, args) => {
       r := check_variant_lit(name, args, expected, expr.span, ctx, diags)
