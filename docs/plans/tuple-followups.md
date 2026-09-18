@@ -12,7 +12,7 @@ cosmetic/parity items remain. Each is independent; tackle in priority order.
 |---|------|------|----------|--------------------|
 | ~~B1~~ | ~~Nested tuple literal fails synth-mode~~ **DONE** | bug | High | no |
 | A | `(a,b) :=` / `for` / param destructuring | feature | High | yes |
-| B2 | Module-global sum scrutinee erases to anyref | bug | Medium | no |
+| ~~B2~~ | ~~Module-global scrutinee erases to anyref~~ **DONE** | bug | Medium | no |
 | B3 | Byte tuple-field cast trap under re-match | bug | Low | no |
 | C | Cosmetic / parity cleanups | chore | Low | no |
 
@@ -77,32 +77,40 @@ widening. Do B1 first — nested literals are likely to show up in `:=` tests.
 
 ---
 
-## B2 — `case` over a module-level global with a sum type erases to anyref (boot)
+## B2 — `case` over a module-level global scrutinee erases to anyref (boot) — **DONE**
 
-**Symptom.** Matching on a module-level global whose type is a sum/variant
-(e.g. a top-level `Result<Int, String>` or `Option<T>` global) mis-lowers.
-Reproduces with a plain sum global, independent of tuples — the tuple work
-only surfaced it (tests sidestep it by using function-parameter scrutinees).
-Also reproduces with a **tuple/record global** (`t := (1,2)` then
-`case t { (a,b) => … }`), which traps at codegen with
-`local.set expected anyref, found struct.get i64` — so this is not sum-specific;
-any typed global scrutinee whose fields have unboxed valtypes hits it.
+**Symptom.** Matching directly on a module-level global mis-lowers. Reproduced
+with a **tuple/record global** (`t := (1,2)` then `case t { (a,b) => … }`),
+which trapped at Wasm validation (`local.set expected anyref, found struct.get
+i64`; the boot backend verifier flags it as "binary lhs has incompatible repr
+OpaqueAnyref for Int op"). Also reproduced with a **sum global**
+(`r: Result<Int,String> = .Ok(42)` then `case r { … }`). Not sum-specific — any
+typed global scrutinee whose fields carry unboxed valtypes hits it. In-function
+scrutinees were unaffected.
 
-**Root cause.** `boot/compiler/backend/slot_assign.tw:646` maps
-`atom_mono` for `.AGlobalLocal(_) => .Anyref_` — a module-global read is typed
-as erased anyref rather than its real mono type, so a `case` scrutinee sourced
-from a global loses the type needed for sum-layout dispatch. (The
-`.AGlobalLocal` construction itself is at `slot_assign.tw:378-386`.)
+**Root cause (confirmed).** `atom_mono` (`slot_assign.tw`) mapped
+`.AGlobalLocal(_) => .Anyref_`, so a `case` scrutinee sourced from a global lost
+its real mono. `collect_binding_monos` then saw a non-record/non-sum anyref,
+bound no field monos, and the pattern-bound field locals defaulted to anyref
+slots — while emission projected them with `struct.get` of the real (i64) field
+type.
 
-**Scope.** Thread the global's real mono type through instead of erasing to
-anyref. Check the module-global type oracle (see
-`[[project_module_global_type_tracking]]`) for the resolved type of a global
-id, and use it in `atom_mono` for `.AGlobalLocal`. Verify no regression in
-existing global reads (functions/closures stored in globals).
+**Fix.** Thread the module's `AnfModule.global_monos` oracle (see
+`[[project_module_global_type_tracking]]`) from `prepare_backend` down through
+`assign_slots_for_module` → `assign_slots` → `collect_pattern_monos*` into
+`atom_mono`, and resolve `.AGlobalLocal(gid)` to `global_monos[gid.id]` (falling
+back to anyref when absent, e.g. function/closure globals). No regression: only
+match-scrutinee mono resolution consults `atom_mono`, and non-record/non-sum
+globals bind nothing as before.
 
-**Verification.** `case` over a top-level `Result`/`Option`/enum global
-dispatches correctly at runtime; add a boot integration test that today needs
-a function-parameter workaround.
+**Stage0 parity.** No analogous bug — stage0 wraps top-level statements in a
+function (so `t` is a local, not a global) *and* boxes tuple int fields
+(`BoxedInt`), so its pattern-field slots are uniformly anyref. Verified via
+stage0 WAT.
+
+**Verified.** Boot run-based tests over tuple, nested-tuple, and Result globals
+(`codegen_integration_suite.tw`); self-host fixed point green; end-to-end runs
+of tuple/nested/Result/Option globals.
 
 ---
 

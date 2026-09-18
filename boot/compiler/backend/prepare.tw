@@ -89,7 +89,7 @@ pub fn prepare_backend_preroute(
 
   // Assign slots after boundary insertion so wrap/unwrap temporaries are
   // included in the slot maps.
-  funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
+  funcs := assign_slots_for_module(anf2.functions, closure_captures, env, anf2.global_monos)
   t2 := date.now()
 
   // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment

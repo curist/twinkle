@@ -167,7 +167,7 @@ fn test_simple_params_and_local() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert.equal(pf.captures.len(), 0)
   try assert.equal(pf.params.len(), 2)
   try assert.equal(pf.locals.len(), 1)
@@ -204,7 +204,7 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
     200,
     [CaptureParam.{ local_id: mk_local(5), param_local: mk_local(50), ty: MonoType.String }],
   )
-  pf := assign_slots(func, captures, resolver.empty_env())
+  pf := assign_slots(func, captures, resolver.empty_env(), Dict.new())
   try assert.equal(pf.captures.len(), 1)
   try assert.equal(pf.params.len(), 1)
   try assert.equal(pf.locals.len(), 0)
@@ -229,7 +229,7 @@ fn test_multiple_captures_ordered() Result<Void, String> {
       CaptureParam.{ local_id: mk_local(7), param_local: mk_local(27), ty: MonoType.Bool },
     ],
   )
-  pf := assign_slots(func, captures, resolver.empty_env())
+  pf := assign_slots(func, captures, resolver.empty_env(), Dict.new())
   try assert.equal(pf.captures.len(), 3)
   try assert_slot_id(pf, 21, 0)
   try assert_slot_id(pf, 23, 1)
@@ -252,7 +252,7 @@ fn test_dead_placeholder_for_never_local() Result<Void, String> {
     .Let(mk_local(1), .ACall(.AGlobalFunc(mk_func(999)), []), span.unknown(), .Return(.None)),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert_role(pf, 1, .DeadPlaceholder)
   try assert_mono(pf, 1, MonoType.Never)
   .Ok({})
@@ -282,7 +282,7 @@ fn test_assign_target_is_local() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert_role(pf, 0, .Local)
   try assert_mono(pf, 0, MonoType.Int)
   try assert_role(pf, 1, .Local)
@@ -321,7 +321,7 @@ fn test_pattern_local_in_match() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
 
   // L0: Param, L1: Local (let result), L2: PatternLocal with mono=Int
   try assert_role(pf, 0, .Param)
@@ -354,7 +354,7 @@ fn test_no_slots_for_non_binding_patterns() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
 
   // Only param L0 and let-result L1 — no phantom pattern locals
   try assert.equal(pf.captures.len(), 0)
@@ -384,7 +384,7 @@ fn test_source_locals_are_unique() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   seen: Dict<Int, Int> = Dict.new()
 
   for k in pf.slots.keys() {
@@ -429,7 +429,7 @@ fn test_collects_locals_inside_defer_body() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert_role(pf, 1, .Local)
   try assert_role(pf, 2, .Local)
   try assert_role(pf, 3, .Local)
@@ -482,7 +482,7 @@ fn test_nested_pattern_scrutinee_uses_pattern_mono() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert_role(pf, 2, .PatternLocal)
   try assert_role(pf, 3, .PatternLocal)
   try assert_mono(pf, 2, MonoType.Optional(MonoType.Int))
@@ -548,7 +548,7 @@ fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
     ),
     mono,
   )
-  pf := assign_slots(func, no_captures(), resolver.empty_env())
+  pf := assign_slots(func, no_captures(), resolver.empty_env(), Dict.new())
   try assert_role(pf, 2, .Local)
   try assert_role(pf, 3, .Local)
   try assert_role(pf, 5, .Local)

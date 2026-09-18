@@ -36,9 +36,10 @@ pub fn assign_slots_for_module(
   functions: Vector<AnfFunctionDef>,
   precomputed_captures: Dict<Int, Vector<CaptureParam>>,
   env: ResolvedEnv,
+  global_monos: Dict<Int, MonoType>,
 ) Vector<PreparedFunc> {
   collect f in functions {
-    assign_slots(f, precomputed_captures, env)
+    assign_slots(f, precomputed_captures, env, global_monos)
   }
 }
 
@@ -47,6 +48,7 @@ pub fn assign_slots(
   func: AnfFunctionDef,
   precomputed_captures: Dict<Int, Vector<CaptureParam>>,
   env: ResolvedEnv,
+  global_monos: Dict<Int, MonoType>,
 ) PreparedFunc {
   slots: Dict<Int, SlotInfo> = Dict.new()
   local_to_slot: Dict<Int, SlotId> = Dict.new()
@@ -99,7 +101,7 @@ pub fn assign_slots(
   // ── 3. Body locals ──────────────────────────────────────────────────
   // Pre-scan to classify role and resolve mono. pattern_monos contains the
   // scrutinee-derived mono for pattern-bound locals in match arms.
-  pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
+  pattern_monos := collect_pattern_monos(func.body, func, env, global_monos, Dict.new())
   pattern_locals := collect_pattern_local_set(func.body, Dict.new())
   all_lids := collect_all_let_locals(func.body)
 
@@ -541,12 +543,13 @@ fn collect_pattern_monos(
   expr: AnfExpr,
   func: AnfFunctionDef,
   env: ResolvedEnv,
+  global_monos: Dict<Int, MonoType>,
   out: Dict<Int, MonoType>,
 ) Dict<Int, MonoType> {
   case expr {
     .Let(_, op, _, body) => {
-      out = collect_pattern_monos_op(op, func, env, out)
-      collect_pattern_monos(body, func, env, out)
+      out = collect_pattern_monos_op(op, func, env, global_monos, out)
+      collect_pattern_monos(body, func, env, global_monos, out)
     },
     _ => out,
   }
@@ -556,25 +559,26 @@ fn collect_pattern_monos_op(
   op: AnfOp,
   func: AnfFunctionDef,
   env: ResolvedEnv,
+  global_monos: Dict<Int, MonoType>,
   out: Dict<Int, MonoType>,
 ) Dict<Int, MonoType> {
   case op {
     .AIf(_, then_e, else_e) => {
-      out = collect_pattern_monos(then_e, func, env, out)
-      collect_pattern_monos(else_e, func, env, out)
+      out = collect_pattern_monos(then_e, func, env, global_monos, out)
+      collect_pattern_monos(else_e, func, env, global_monos, out)
     },
     .AMatch(scrutinee, arms) => {
-      scrut_mono := atom_mono(func, scrutinee, out)
+      scrut_mono := atom_mono(func, scrutinee, out, global_monos)
 
       for arm in arms {
         out = collect_binding_monos(arm.pattern, scrut_mono, env, out)
-        out = collect_pattern_monos(arm.body, func, env, out)
+        out = collect_pattern_monos(arm.body, func, env, global_monos, out)
       }
 
       out
     },
-    .ALoop(body) => collect_pattern_monos(body, func, env, out),
-    .ADefer(body) => collect_pattern_monos(body, func, env, out),
+    .ALoop(body) => collect_pattern_monos(body, func, env, global_monos, out),
+    .ADefer(body) => collect_pattern_monos(body, func, env, global_monos, out),
     _ => out,
   }
 }
@@ -637,13 +641,26 @@ fn record_field_mono(mono: MonoType, field_idx: Int) MonoType {
   }
 }
 
-fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType>) MonoType {
+fn atom_mono(
+  func: AnfFunctionDef,
+  atom: Atom,
+  pattern_monos: Dict<Int, MonoType>,
+  global_monos: Dict<Int, MonoType>,
+) MonoType {
   case atom {
     .ALocal(lid) => case pattern_monos[lid.id] {
       .Some(mono) => mono,
       .None => resolve_local_mono(func, lid),
     },
-    .AGlobalLocal(_) => .Anyref_,
+    // A module-global read carries the global's real mono type (from the
+    // global-set store oracle), so `case`-ing over a global scrutinee resolves
+    // its record/sum layout instead of erasing to anyref (which would leave
+    // pattern-bound field slots mistyped). Fall back to anyref when the global
+    // has no recorded mono (e.g. a function/closure global).
+    .AGlobalLocal(gid) => case global_monos[gid.id] {
+      .Some(mono) => mono,
+      .None => .Anyref_,
+    },
     .AGlobalFunc(_) => .Anyref_,
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,

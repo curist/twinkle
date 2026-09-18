@@ -687,13 +687,10 @@ fn test_tuple_pattern_flat_irrefutable_bind() Result<Void, String> {
 }
 
 fn test_tuple_pattern_nested_variant_holding_tuple() Result<Void, String> {
-  // .Some((key, val)) — a tuple pattern nested inside a sum pattern. The
-  // scrutinee must be a function parameter (not a module-level global):
-  // matching directly over a global sum/record value hits an unrelated,
-  // pre-existing gap where `atom_mono` resolves module globals to a bare
-  // `Anyref_` (see backend/slot_assign.tw's `.AGlobalLocal(_) => .Anyref_`),
-  // independent of tuples — reproducible with plain `Result<Int, String>`
-  // globals too. Out of scope for tuple destructuring.
+  // .Some((key, val)) — a tuple pattern nested inside a sum pattern, here via a
+  // function-parameter scrutinee. (Module-global scrutinees also work now that
+  // `atom_mono` resolves a global's real mono from the global-mono oracle; see
+  // the module-global scrutinee tests below.)
   assert_runs_to(
     "use @std.proc\nfn f(opt: (Int, Int)?) Int {\n  case opt {\n    .Some((key, val)) => key + val,\n    .None => -1,\n  }\n}\nproc.exit(f(.Some((1, 2))))\n",
     3,
@@ -722,6 +719,41 @@ fn test_tuple_pattern_nested_sub_tuple() Result<Void, String> {
     "use @std.proc\nfn g(pair: ((Int, Int), Int)) Int {\n  case pair {\n    ((a, b), c) => a + b + c,\n  }\n}\ninner: (Int, Int) = (1, 2)\nouter: ((Int, Int), Int) = (inner, 3)\nproc.exit(g(outer))\n",
     6,
     "tuple nested sub-tuple",
+  )
+}
+
+fn test_tuple_pattern_module_global_scrutinee() Result<Void, String> {
+  // Matching directly over a module-level *global* tuple value. Previously
+  // trapped at Wasm validation: `atom_mono` resolved module globals to a bare
+  // `Anyref_`, so the record scrutinee's field-binding slots were typed anyref
+  // while emission projected them with `struct.get` of the real (i64) field
+  // type. The global's mono type now flows through the global-mono oracle so
+  // the field slots are typed correctly.
+  assert_runs_to(
+    "use @std.proc\nt := (4, 5)\ncase t {\n  (a, b) => proc.exit(a + b),\n}\n",
+    9,
+    "tuple module-global scrutinee",
+  )
+}
+
+fn test_tuple_pattern_module_global_nested_scrutinee() Result<Void, String> {
+  // Same, but a nested tuple global — exercises the recursive field-mono
+  // resolution off a global-sourced scrutinee.
+  assert_runs_to(
+    "use @std.proc\nt := ((1, 2), 3)\ncase t {\n  ((a, b), c) => proc.exit(a + b + c),\n}\n",
+    6,
+    "tuple module-global nested scrutinee",
+  )
+}
+
+fn test_match_module_global_sum_scrutinee() Result<Void, String> {
+  // The same global-mono fix also feeds sum-layout dispatch: a `case` over a
+  // module-global Result value must recover the variant field's real mono
+  // (i64 here) rather than erasing the global to anyref.
+  assert_runs_to(
+    "use @std.proc\nr: Result<Int, String> = .Ok(42)\ncase r {\n  .Ok(n) => proc.exit(n),\n  .Err(_) => proc.exit(1),\n}\n",
+    42,
+    "sum module-global scrutinee",
   )
 }
 
@@ -1142,6 +1174,12 @@ pub fn suite() runner.Suite {
       test_tuple_pattern_refutable_fallthrough,
     )
     .test("tuple pattern: nested sub-tuple", test_tuple_pattern_nested_sub_tuple)
+    .test("tuple pattern: module-global scrutinee", test_tuple_pattern_module_global_scrutinee)
+    .test(
+      "tuple pattern: module-global nested scrutinee",
+      test_tuple_pattern_module_global_nested_scrutinee,
+    )
+    .test("match: module-global sum scrutinee", test_match_module_global_sum_scrutinee)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",
