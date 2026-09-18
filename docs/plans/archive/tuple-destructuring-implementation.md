@@ -1,5 +1,15 @@
 # Tuple Destructuring in `case` Arms — Implementation Plan
 
+> **Status: Shipped (2026-09-18).** Tuple patterns in `case` arms — arity
+> 2–4, full nesting — landed in both the boot compiler and the Rust stage0
+> bootstrap compiler; `make stage2` reaches its fixed point unchanged. Spec
+> (`docs/spec.md` §13.7), EBNF, and the tree-sitter grammar (`grammar.js` +
+> regenerated `src/`, pending a human-run `tree-sitter build --wasm` +
+> `tree-sitter test`) were updated. **Deferred fast-follow, not yet
+> started:** `(a, b) :=` let-binding destructuring, `for (a, b) in …`
+> patterns, and function-parameter tuple patterns — none of these are
+> available yet and would need their own plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add tuple **patterns** to `case` arms — `case pt { (x, y) => … }`, arity 2–4, with full nesting — in both the boot compiler and the Rust stage0 bootstrap compiler.
