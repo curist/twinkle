@@ -3586,6 +3586,16 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
       diags = .concat(validate_qualifier(path, expected, pat.span, ctx))
       check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags)
     },
+    .Tuple(_) => .{
+      ctx,
+      diags: diags.append(
+        .Error(
+          .ParseError(
+            .{ span: pat.span, message: "tuple pattern typing not yet implemented", help_lines: [] },
+          ),
+        ),
+      ),
+    },
     .ErrorPattern => .{ ctx, diags },
   }
 }
@@ -3691,6 +3701,7 @@ fn pattern_is_irrefutable(pat: Pattern) Bool {
   case pat.kind {
     .Wildcard => true,
     .Ident(_) => true,
+    .Tuple(_) => false,
     _ => false,
   }
 }
@@ -3744,6 +3755,7 @@ fn coverage_from_pattern(pat: Pattern, scrut_ty: MonoType, ctx: InferCtx) ArmCov
         .None
       }
     },
+    .Tuple(_) => .None,
     .ErrorPattern => .None,
   }
 }
@@ -3858,6 +3870,7 @@ fn check_exhaustiveness(
             },
             _ => continue,
           },
+          .Tuple(_) => continue,
           _ => continue,
         }
       }

@@ -1488,6 +1488,37 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "pattern: tuple destructuring",
+      fn() {
+        src := "fn f() {\n  case p {\n    (a, b) => a,\n    _ => 0,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(_, arms) => case arms[0].pattern.kind {
+            .Tuple(subs) => assert.equal(subs.len(), 2),
+            _ => assert.fail("expected Tuple pattern"),
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "pattern: tuple with more than 4 elements produces diagnostic",
+      fn() {
+        src := "fn f() {\n  case p {\n    (a, b, c, d, e) => 0,\n    _ => 1,\n  }\n}"
+        parsed := parser.parse(src, 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "pattern: bare parenthesized pattern (no comma) produces diagnostic",
+      fn() {
+        src := "fn f() {\n  case p {\n    (a) => 0,\n    _ => 1,\n  }\n}"
+        parsed := parser.parse(src, 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
       "expr: collect comprehension",
       fn() {
         src := "fn f() { collect x in items { x * 2 } }"

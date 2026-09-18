@@ -557,6 +557,13 @@ fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Bu
 
       b
     },
+    .Tuple(subs) => {
+      for sub in subs {
+        b = ctx.walk_pattern_refs(b, sub, .None)
+      }
+
+      b
+    },
     _ => b,
   }
 }
@@ -605,6 +612,7 @@ fn bind_pattern(ctx: Ctx, b: Builder, env: Env, pat: Pattern) Walk {
     .Ident(name) => ctx.declare(b, env, name, pat.span, .Local),
     .Variant(_, subs) => ctx.bind_patterns(b, env, subs),
     .QualifiedVariant(_, _, subs) => ctx.bind_patterns(b, env, subs),
+    .Tuple(subs) => ctx.bind_patterns(b, env, subs),
     .Wildcard => .{ b, env },
     .Literal(_) => .{ b, env },
     .ErrorPattern => .{ b, env },

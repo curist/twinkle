@@ -1250,6 +1250,7 @@ fn covered_variant_names(arms: Vector<CaseArm>) Dict<String, Bool> {
     case arm.pattern.kind {
       .Variant(name, _) => covered[name] = true,
       .QualifiedVariant(_, name, _) => covered[name] = true,
+      .Tuple(_) => {},
       _ => {},
     }
   }

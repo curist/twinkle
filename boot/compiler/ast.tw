@@ -203,6 +203,7 @@ pub type PatternKind = {
   Literal(Expr),
   Variant(String, Vector<Pattern>),
   QualifiedVariant(Vector<String>, String, Vector<Pattern>),
+  Tuple(Vector<Pattern>),
   ErrorPattern,
 }
 

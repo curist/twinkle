@@ -749,6 +749,7 @@ fn hover_pattern(ctx: HoverContext, pat: Pattern, expected: MonoType) HoverResul
     .Ident(_) => .Some(.{ content: ty_to_string_env(ctx.typed.env, expected), span: pat.span }),
     .Variant(name, subs) => ctx.hover_variant_pattern_parts(pat, name, subs, expected),
     .QualifiedVariant(_, name, subs) => ctx.hover_variant_pattern_parts(pat, name, subs, expected),
+    .Tuple(subs) => ctx.hover_subpatterns(subs, []),
     _ => .None,
   }
 }

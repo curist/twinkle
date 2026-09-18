@@ -1642,6 +1642,36 @@ fn parse_pattern(c: Cursor) PatternParse {
   start_pos := c.pos
   k := c.kind()
 
+  if k == .LParen {
+    parsed := parse_pattern_list(
+      c.advance(),
+      TokenKind.RParen,
+      "expected ',' or ')' in tuple pattern",
+    )
+    diagnostics_out = .concat(parsed.diagnostics)
+    c = parsed.cursor
+
+    if c.kind() == .RParen {
+      c = .advance()
+    }
+
+    n := parsed.value.len()
+
+    if n < 2 or n > 4 {
+      diagnostics_out = .append(
+        diag.error(
+          c.span_from(start_pos),
+          "tuple patterns support 2–4 elements; use a record for more",
+        ),
+      )
+      patt := Pattern.{ kind: .ErrorPattern, span: c.span_from(start_pos) }
+      return .{ value: patt, cursor: c, diagnostics: diagnostics_out }
+    }
+
+    patt := Pattern.{ kind: .Tuple(parsed.value), span: c.span_from(start_pos) }
+    return .{ value: patt, cursor: c, diagnostics: diagnostics_out }
+  }
+
   if k == .Dot {
     dot_span := c.span()
     c = .advance()

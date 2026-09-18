@@ -2074,6 +2074,12 @@ fn format_pattern(pat: Pattern, tm: TriviaMap) Doc {
         doc.concat([doc.text("${prefix}.${name}"), doc.tight_bracketed("(", ")", field_docs)])
       }
     },
+    .Tuple(subs) => {
+      sub_docs := collect s in subs {
+        format_pattern(s, tm)
+      }
+      doc.tight_bracketed("(", ")", sub_docs)
+    },
     .ErrorPattern => doc.text("/* error */"),
   }
 }

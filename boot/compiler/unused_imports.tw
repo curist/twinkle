@@ -516,6 +516,11 @@ fn collect_used_names_pattern(pat: Pattern, used: Cell<Dict<String, Bool>>) {
         collect_used_names_pattern(p, used)
       }
     },
+    .Tuple(sub_pats) => {
+      for p in sub_pats {
+        collect_used_names_pattern(p, used)
+      }
+    },
     .ErrorPattern => {},
   }
 }

@@ -78,6 +78,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
 
       .{ pattern: .Variant(tid, .{ id: vid_idx }, lowered_pats), ctx: cur_ctx }
     },
+    .Tuple(_) => .{ pattern: .Wildcard, ctx },
     .ErrorPattern => .{ pattern: .Wildcard, ctx },
   }
 }

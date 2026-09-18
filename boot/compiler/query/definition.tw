@@ -1016,6 +1016,16 @@ fn find_pattern_variant_in_pattern(pat: Pattern, offset: Int, scrutinee: Expr?) 
 
       .None
     },
+    .Tuple(subs) => {
+      for p in subs {
+        case find_pattern_variant_in_pattern(p, offset, scrutinee) {
+          .Some(r) => return .Some(r),
+          .None => {},
+        }
+      }
+
+      .None
+    },
     _ => .None,
   }
 }
@@ -1107,6 +1117,16 @@ fn find_expr_ref_in_pattern(pat: Pattern, offset: Int) Ref? {
       .None
     },
     .QualifiedVariant(_, _, subs) => {
+      for p in subs {
+        case find_expr_ref_in_pattern(p, offset) {
+          .Some(r) => return .Some(r),
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    .Tuple(subs) => {
       for p in subs {
         case find_expr_ref_in_pattern(p, offset) {
           .Some(r) => return .Some(r),
