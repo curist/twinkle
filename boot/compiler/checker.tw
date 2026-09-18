@@ -19,7 +19,7 @@ use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .lint.{LintFinding}
 use .mono_type.{MonoType, TypeId}
 use .resolver.{
-  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, ResolvedVariant,
+  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, ResolvedVariant, is_tuple_type_name,
   plain_resolved_type_params, resolved_type_param_names,
 }
 use .type_util.{subst_type_params}
@@ -3420,6 +3420,10 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
 
       case def {
         .Sum(_, _, _) => true,
+        // Tuple records (`Tuple2`/`Tuple3`/`Tuple4`) are the desugaring target
+        // of `(a, b)` literals — allow them as scrutinees so `.Tuple` patterns
+        // can match, but reject general (non-tuple) records.
+        .Record(name, _, _) => is_tuple_type_name(name),
         _ => false,
       }
     },
@@ -3586,15 +3590,39 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
       diags = .concat(validate_qualifier(path, expected, pat.span, ctx))
       check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags)
     },
-    .Tuple(_) => .{
-      ctx,
-      diags: diags.append(
-        .Error(
-          .ParseError(
-            .{ span: pat.span, message: "tuple pattern typing not yet implemented", help_lines: [] },
+    .Tuple(subs) => {
+      arity := subs.len()
+      tuple_tid := case resolve_named_type_id(ctx.env, "Tuple${arity}") {
+        .Some(tid) => tid,
+        .None => return .{
+          ctx,
+          diags: diags.append(
+            .Error(.ParseError(.{ span: pat.span, message: "unknown tuple arity", help_lines: [] })),
           ),
-        ),
-      ),
+        },
+      }
+
+      cur_ctx := ctx
+      elem_metas: Vector<MonoType> = []
+
+      for _ in 0..arity {
+        m := cur_ctx.fresh_meta()
+        cur_ctx = m.ctx
+        elem_metas = .append(m.ty)
+      }
+
+      tuple_ty := MonoType.Named(tuple_tid, elem_metas)
+      u := cur_ctx.unify(tuple_ty, expected, pat.span, diags)
+      cur_ctx = u.ctx
+      cur_diags := u.diags
+
+      for i in 0..arity {
+        pr := check_pattern(subs[i], elem_metas[i], cur_ctx, cur_diags)
+        cur_ctx = pr.ctx
+        cur_diags = pr.diags
+      }
+
+      .{ ctx: cur_ctx, diags: cur_diags }
     },
     .ErrorPattern => .{ ctx, diags },
   }
@@ -3701,7 +3729,7 @@ fn pattern_is_irrefutable(pat: Pattern) Bool {
   case pat.kind {
     .Wildcard => true,
     .Ident(_) => true,
-    .Tuple(_) => false,
+    .Tuple(subs) => subs.all(pattern_is_irrefutable),
     _ => false,
   }
 }
@@ -3755,7 +3783,11 @@ fn coverage_from_pattern(pat: Pattern, scrut_ty: MonoType, ctx: InferCtx) ArmCov
         .None
       }
     },
-    .Tuple(_) => .None,
+    .Tuple(subs) => if subs.all(pattern_is_irrefutable) {
+      .Some(.CatchAll(pat.span))
+    } else {
+      .None
+    },
     .ErrorPattern => .None,
   }
 }
@@ -3836,19 +3868,38 @@ fn check_exhaustiveness(
   ctx: InferCtx,
   diags: Vector<DiagKind>,
 ) Vector<DiagKind> {
-  // Check if any arm is a wildcard or ident (covers all)
+  // Check if any arm is irrefutable (wildcard, ident, or an all-irrefutable tuple)
   for arm in arms {
-    case arm.pattern.kind {
-      .Wildcard => return diags,
-      .Ident(_) => return diags,
-      _ => {},
+    if pattern_is_irrefutable(arm.pattern) {
+      return diags
     }
   }
 
   variant_specs := get_variant_specs(scrut_ty, ctx)
 
   case variant_specs {
-    .None => diags,
+    .None => {
+      // No variant coverage to check (not a sum/Option/Result/Bool scrutinee).
+      // Conservatively flag tuple scrutinees: every arm reaching this point is
+      // refutable (the loop above already returned for any irrefutable arm),
+      // so a tuple match with no catch-all is non-exhaustive.
+      is_tuple_scrutinee := case scrutinee_type_name(scrut_ty, ctx) {
+        .Some(name) => is_tuple_type_name(name),
+        .None => false,
+      }
+
+      if is_tuple_scrutinee {
+        diags.append(
+          .Error(
+            .ParseError(
+              .{ span: s, message: "non-exhaustive tuple match; add a `_` arm", help_lines: [] },
+            ),
+          ),
+        )
+      } else {
+        diags
+      }
+    },
     .Some(specs) => {
       // Collect covered variant names from arm patterns
       covered := collect arm in arms {

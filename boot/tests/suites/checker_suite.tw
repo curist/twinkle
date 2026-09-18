@@ -3138,4 +3138,38 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple case pattern type-checks clean",
+      fn() {
+        src := "fn f() Int { case (1, 2) { (a, b) => a + b } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "tuple case pattern arity mismatch reports diagnostic",
+      fn() {
+        src := "fn f() Int { case (1, 2) { (a, b, c) => 0, _ => 0 } }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "tuple case pattern element binding types flow",
+      fn() {
+        src := "fn f() String { case (1, \"s\") { (a, b) => b } }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at_nth(r, src, "b", 1), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "nested tuple case pattern type-checks and flows element types",
+      fn() {
+        src := "fn f(pair: ((Int, Int), Int)) Int { case pair { ((a, b), c) => a + b + c } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
 }

@@ -271,4 +271,30 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple pattern with all-irrefutable elements is exhaustive",
+      fn() {
+        src := "fn f(pair: (Int, Int)) Int { case pair { (a, b) => 0 } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "tuple pattern with refutable elements and no catch-all is non-exhaustive",
+      fn() {
+        src := "fn f(pair: (Int, Int)) Int { case pair { (0, y) => y } }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "non-exhaustive")
+        .Ok({})
+      },
+    )
+    .test(
+      "tuple catch-all arm makes a following wildcard arm unreachable",
+      fn() {
+        src := "fn f(pair: (Int, Int)) Int { case pair { (a, b) => 0, _ => 1 } }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
 }
