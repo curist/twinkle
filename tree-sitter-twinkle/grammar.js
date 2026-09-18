@@ -499,6 +499,20 @@ module.exports = grammar({
       $.wildcard_pattern,
       $.literal_pattern,
       $.identifier_pattern,
+      $.tuple_pattern,
+    ),
+
+    // A tuple pattern needs at least one top-level comma; `(p)` stays a
+    // parenthesized (non-tuple) pattern. Arity 2-4 is enforced by the
+    // compiler, not the grammar. Mirrors tuple_literal above.
+    tuple_pattern: $ => seq(
+      '(',
+      $._pattern,
+      ',',
+      $._pattern,
+      repeat(seq(',', $._pattern)),
+      optional(','),
+      ')',
     ),
 
     enum_pattern: $ => choice(

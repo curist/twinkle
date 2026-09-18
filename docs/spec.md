@@ -1123,9 +1123,14 @@ meaningful names (coordinates, colors, parser state) want a record.
 * **Type:** `(A, B)` … `(A, B, C, D)`. The `?`/`!E` postfixes wrap the whole
   tuple: `(A, B)?` is `Option<(A, B)>` and `(A, B)!E` is `Result<(A, B), E>`.
 * **Access:** `t._0` … `t._3`, positional and 0-indexed (matching vectors and
-  strings). There is no destructuring binding in this release.
+  strings).
 * **Arity is 2–4.** There are no 1-tuples and no unit tuple; past four elements,
   use a record.
+* **Destructuring:** `case` arms can match tuple patterns — `(x, y)`,
+  `(x, y, z)`, `(w, x, y, z)` — with the same arity of 2–4 and full nesting
+  (a tuple pattern's sub-patterns can themselves be tuple, enum, literal, or
+  binding patterns). `(a, b) :=` binding, `for` patterns, and function
+  parameter patterns do not support tuple destructuring yet.
 
 Tuples desugar to compiler-known nominal records `Tuple2`/`Tuple3`/`Tuple4`
 (fields `_0.._3`); the names are reserved and never written directly. Being
@@ -1138,6 +1143,19 @@ divmod := fn(a: Int, b: Int) (Int, Int) { (a / b, a % b) }
 qr := divmod(17, 5)
 qr._0   // 3
 qr._1   // 2
+```
+
+Tuple patterns in `case` arms bind their elements directly, without `._N`
+access:
+
+```tw
+describe := fn(p: (Int, Int)) String {
+  case p {
+    (0, 0) => "origin",
+    (x, 0) => "on the x-axis at " + x.to_string(),
+    (x, y) => "(" + x.to_string() + ", " + y.to_string() + ")",
+  }
+}
 ```
 
 ---

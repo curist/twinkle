@@ -362,12 +362,20 @@ Pattern =
       EnumPattern
     | WildcardPattern
     | LiteralPattern
-    | IdentifierPattern ;
+    | IdentifierPattern
+    | TuplePattern ;
 (* Implementation note:
    - When a pattern starts with `Identifier`, the parser must look ahead:
        - If the next token is `"."`, it must parse a QualifiedEnumPattern.
        - Otherwise, it parses an IdentifierPattern (binding).
    - This requires 1-token lookahead but keeps the surface syntax simple. *)
+
+TuplePattern =
+    "(" Pattern "," Pattern { "," Pattern } ")" ;
+(* Implementation note:
+   - Arity is 2-4, matching tuple literals/types (see spec.md Tuples).
+   - A single parenthesized pattern `(p)` requires a top-level comma to be a
+     TuplePattern; without one it stays a plain (non-tuple) Pattern. *)
 
 EnumPattern =
       ShorthandEnumPattern
