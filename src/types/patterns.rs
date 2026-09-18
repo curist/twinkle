@@ -1,10 +1,37 @@
 use super::check::{apply_subst, build_type_subst};
 use super::env::{LocalEnv, TypeEnv};
 use super::error::TypeError;
-use super::ty::{MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID};
+use super::ty::{
+    MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID, TUPLE2_TYPE_ID, TUPLE3_TYPE_ID, TUPLE4_TYPE_ID,
+};
 use crate::syntax::ast::{CaseArm, Literal, Pattern};
 use crate::syntax::span::Span;
 use std::collections::HashSet;
+
+/// Resolve the compiler-known TupleN TypeId for a given arity (2..=4).
+fn tuple_type_id_for_arity(arity: usize) -> Option<super::ty::TypeId> {
+    match arity {
+        2 => Some(TUPLE2_TYPE_ID),
+        3 => Some(TUPLE3_TYPE_ID),
+        4 => Some(TUPLE4_TYPE_ID),
+        _ => None,
+    }
+}
+
+/// Is this MonoType one of the compiler-known TupleN records?
+fn is_tuple_named(type_id: super::ty::TypeId) -> bool {
+    matches!(type_id, TUPLE2_TYPE_ID | TUPLE3_TYPE_ID | TUPLE4_TYPE_ID)
+}
+
+/// A pattern is irrefutable if it always matches, regardless of scrutinee value.
+/// Tuple patterns are irrefutable iff every element pattern is irrefutable.
+pub fn pattern_is_irrefutable(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Ident(_, _) => true,
+        Pattern::Tuple(subs, _) => subs.iter().all(pattern_is_irrefutable),
+        Pattern::Literal(_, _) | Pattern::Variant { .. } => false,
+    }
+}
 
 /// Pattern checking utilities for case expressions
 pub struct PatternChecker<'a> {
@@ -188,15 +215,54 @@ impl<'a> PatternChecker<'a> {
                 }
             }
 
-            // STUB: real tuple-pattern typing lands in a follow-up task
-            // (destructure against the TupleN record's positional fields).
-            Pattern::Tuple(_, span) => {
-                self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "tuple patterns",
-                    span: *span,
-                    note: "tuple destructuring in case arms is not yet implemented".to_string(),
-                });
-                Err(())
+            Pattern::Tuple(subs, span) => {
+                // Resolve the TupleN TypeId by arity. The parser only ever
+                // produces arity 2..=4 (same limit as tuple literals), but
+                // guard defensively in case that invariant ever slips.
+                let Some(pattern_type_id) = tuple_type_id_for_arity(subs.len()) else {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "tuple patterns",
+                        span: *span,
+                        note: format!(
+                            "tuple patterns support 2 to 4 elements, got {}",
+                            subs.len()
+                        ),
+                    });
+                    return Err(());
+                };
+
+                match expected {
+                    // Same arity as the scrutinee's tuple type: recurse per element.
+                    MonoType::Named { type_id, args }
+                        if *type_id == pattern_type_id && args.len() == subs.len() =>
+                    {
+                        for (sub, arg_ty) in subs.iter().zip(args.iter()) {
+                            self.check_pattern(sub, arg_ty)?;
+                        }
+                        Ok(())
+                    }
+                    // Scrutinee is a tuple, but of a different arity.
+                    MonoType::Named { type_id, args } if is_tuple_named(*type_id) => {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: args.len(),
+                            actual: subs.len(),
+                            span: *span,
+                        });
+                        Err(())
+                    }
+                    // Scrutinee isn't a tuple type at all.
+                    _ => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: expected.clone(),
+                            actual: MonoType::Void, // Dummy — no concrete type inferred yet
+                            span: *span,
+                            note: Some(
+                                "tuple pattern requires a tuple-typed scrutinee".to_string(),
+                            ),
+                        });
+                        Err(())
+                    }
+                }
             }
         }
     }
@@ -261,6 +327,26 @@ impl<'a> PatternChecker<'a> {
                 return Err(());
             }
             return Ok(());
+        }
+
+        // Tuple scrutinee: conservative rule (v1). TupleN is a record, not a
+        // sum type, so it has no variant set to track coverage against.
+        // Instead: any arm whose pattern is fully irrefutable (a bare `_`/
+        // identifier, or a tuple pattern whose every element is irrefutable)
+        // covers all cases. A case with only refutable tuple arms and no
+        // wildcard is reported non-exhaustive.
+        if let MonoType::Named { type_id, .. } = scrut_ty
+            && is_tuple_named(*type_id)
+        {
+            let is_exhaustive = arms.iter().any(|arm| pattern_is_irrefutable(&arm.pattern));
+            if is_exhaustive {
+                return Ok(());
+            }
+            errors.push(TypeError::NonExhaustiveMatch {
+                missing: vec!["_ (wildcard required for tuple match)".to_string()],
+                span,
+            });
+            return Err(());
         }
 
         // Get the type_id for the sum type
@@ -468,6 +554,196 @@ mod tests {
                 fields: vec![],
                 span: Span::new(FileId(0), 0, 4),
             },
+            body: crate::syntax::ast::Expr::new(
+                crate::syntax::ast::ExprId(0),
+                crate::syntax::ast::ExprKind::Literal(Literal::Int(0)),
+                Span::new(FileId(0), 0, 1),
+            ),
+            span: Span::new(FileId(0), 0, 1),
+        }];
+
+        let mut errors = Vec::new();
+        let result = PatternChecker::check_exhaustiveness(
+            &type_env,
+            &mut errors,
+            &scrut_ty,
+            &arms,
+            Span::new(FileId(0), 0, 1),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], TypeError::NonExhaustiveMatch { .. }));
+    }
+
+    #[test]
+    fn test_pattern_tuple_binds_elements() {
+        let type_env = TypeEnv::new();
+        let mut local_env = LocalEnv::new();
+        let mut errors = Vec::new();
+
+        let mut checker = PatternChecker::new(&type_env, &mut local_env, &mut errors);
+
+        let pattern = Pattern::Tuple(
+            vec![
+                Pattern::Ident("a".to_string(), Span::new(FileId(0), 0, 1)),
+                Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+            ],
+            Span::new(FileId(0), 0, 2),
+        );
+        let expected = MonoType::Named {
+            type_id: TUPLE2_TYPE_ID,
+            args: vec![MonoType::Int, MonoType::Int],
+        };
+        let result = checker.check_pattern(&pattern, &expected);
+
+        assert!(result.is_ok());
+        assert!(errors.is_empty());
+        assert_eq!(local_env.lookup("a"), Some(&MonoType::Int));
+        assert_eq!(local_env.lookup("b"), Some(&MonoType::Int));
+    }
+
+    #[test]
+    fn test_pattern_tuple_element_type_flows_to_binding() {
+        let type_env = TypeEnv::new();
+        let mut local_env = LocalEnv::new();
+        let mut errors = Vec::new();
+
+        let mut checker = PatternChecker::new(&type_env, &mut local_env, &mut errors);
+
+        let pattern = Pattern::Tuple(
+            vec![
+                Pattern::Ident("a".to_string(), Span::new(FileId(0), 0, 1)),
+                Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+            ],
+            Span::new(FileId(0), 0, 2),
+        );
+        let expected = MonoType::Named {
+            type_id: TUPLE2_TYPE_ID,
+            args: vec![MonoType::Int, MonoType::String],
+        };
+        let result = checker.check_pattern(&pattern, &expected);
+
+        assert!(result.is_ok());
+        assert!(errors.is_empty());
+        // Each element must get its own distinct type, not a shared one.
+        assert_eq!(local_env.lookup("a"), Some(&MonoType::Int));
+        assert_eq!(local_env.lookup("b"), Some(&MonoType::String));
+    }
+
+    #[test]
+    fn test_pattern_tuple_arity_mismatch() {
+        let type_env = TypeEnv::new();
+        let mut local_env = LocalEnv::new();
+        let mut errors = Vec::new();
+
+        let mut checker = PatternChecker::new(&type_env, &mut local_env, &mut errors);
+
+        // Pattern has 3 elements, but the scrutinee is a Tuple2.
+        let pattern = Pattern::Tuple(
+            vec![
+                Pattern::Ident("a".to_string(), Span::new(FileId(0), 0, 1)),
+                Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+                Pattern::Ident("c".to_string(), Span::new(FileId(0), 2, 3)),
+            ],
+            Span::new(FileId(0), 0, 3),
+        );
+        let expected = MonoType::Named {
+            type_id: TUPLE2_TYPE_ID,
+            args: vec![MonoType::Int, MonoType::Int],
+        };
+        let result = checker.check_pattern(&pattern, &expected);
+
+        assert!(result.is_err());
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            TypeError::WrongArity {
+                expected: 2,
+                actual: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_pattern_tuple_against_non_tuple_type_mismatches() {
+        let type_env = TypeEnv::new();
+        let mut local_env = LocalEnv::new();
+        let mut errors = Vec::new();
+
+        let mut checker = PatternChecker::new(&type_env, &mut local_env, &mut errors);
+
+        let pattern = Pattern::Tuple(
+            vec![
+                Pattern::Ident("a".to_string(), Span::new(FileId(0), 0, 1)),
+                Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+            ],
+            Span::new(FileId(0), 0, 2),
+        );
+        let result = checker.check_pattern(&pattern, &MonoType::Int);
+
+        assert!(result.is_err());
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], TypeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_exhaustiveness_tuple_irrefutable_arm_is_exhaustive() {
+        let type_env = TypeEnv::new();
+        let scrut_ty = MonoType::Named {
+            type_id: TUPLE2_TYPE_ID,
+            args: vec![MonoType::Int, MonoType::Int],
+        };
+
+        // (a, b) — fully irrefutable tuple arm covers every case.
+        let arms = vec![CaseArm {
+            pattern: Pattern::Tuple(
+                vec![
+                    Pattern::Ident("a".to_string(), Span::new(FileId(0), 0, 1)),
+                    Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+                ],
+                Span::new(FileId(0), 0, 2),
+            ),
+            body: crate::syntax::ast::Expr::new(
+                crate::syntax::ast::ExprId(0),
+                crate::syntax::ast::ExprKind::Literal(Literal::Int(0)),
+                Span::new(FileId(0), 0, 1),
+            ),
+            span: Span::new(FileId(0), 0, 1),
+        }];
+
+        let mut errors = Vec::new();
+        let result = PatternChecker::check_exhaustiveness(
+            &type_env,
+            &mut errors,
+            &scrut_ty,
+            &arms,
+            Span::new(FileId(0), 0, 1),
+        );
+
+        assert!(result.is_ok());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_exhaustiveness_tuple_refutable_only_is_non_exhaustive() {
+        let type_env = TypeEnv::new();
+        let scrut_ty = MonoType::Named {
+            type_id: TUPLE2_TYPE_ID,
+            args: vec![MonoType::Int, MonoType::Int],
+        };
+
+        // (1, b) — the literal element makes this arm refutable, and there's
+        // no wildcard/irrefutable arm to cover the rest.
+        let arms = vec![CaseArm {
+            pattern: Pattern::Tuple(
+                vec![
+                    Pattern::Literal(Literal::Int(1), Span::new(FileId(0), 0, 1)),
+                    Pattern::Ident("b".to_string(), Span::new(FileId(0), 1, 2)),
+                ],
+                Span::new(FileId(0), 0, 2),
+            ),
             body: crate::syntax::ast::Expr::new(
                 crate::syntax::ast::ExprId(0),
                 crate::syntax::ast::ExprKind::Literal(Literal::Int(0)),
