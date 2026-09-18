@@ -187,6 +187,17 @@ impl<'a> PatternChecker<'a> {
                     }
                 }
             }
+
+            // STUB: real tuple-pattern typing lands in a follow-up task
+            // (destructure against the TupleN record's positional fields).
+            Pattern::Tuple(_, span) => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "tuple patterns",
+                    span: *span,
+                    note: "tuple destructuring in case arms is not yet implemented".to_string(),
+                });
+                Err(())
+            }
         }
     }
 
@@ -291,6 +302,10 @@ impl<'a> PatternChecker<'a> {
                 Pattern::Literal(_, _) => {
                     // Literal patterns don't cover variants
                     // This is actually an error case but will be caught by pattern checking
+                }
+                Pattern::Tuple(_, _) => {
+                    // Tuple patterns don't cover variants; check_pattern already
+                    // rejects them against a sum-type scrutinee.
                 }
             }
         }

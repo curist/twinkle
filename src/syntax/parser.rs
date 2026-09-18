@@ -2099,6 +2099,38 @@ impl Parser {
                     token.span,
                 ))
             }
+            Some(TokenKind::LParen) => {
+                // Tuple pattern: (a, b), (a, b, c), (a, b, c, d) — arity 2-4.
+                // Unlike grouped expressions, a single pattern with no comma
+                // is not "grouping" — patterns have no such concept — so it's
+                // a parse error, same as arity 1 or 5+.
+                let open = self.expect(TokenKind::LParen)?;
+                let mut elems = vec![self.parse_pattern()?];
+                let mut saw_comma = false;
+
+                while self.consume_if(TokenKind::Comma) {
+                    saw_comma = true;
+                    if self.peek_is(TokenKind::RParen) {
+                        break; // tolerate a trailing comma
+                    }
+                    elems.push(self.parse_pattern()?);
+                }
+
+                let close = self.expect(TokenKind::RParen)?;
+                let span = open.span.merge(&close.span);
+
+                if !saw_comma || elems.len() < 2 || elems.len() > 4 {
+                    return Err(ParseError::new(
+                        ParseErrorKind::UnexpectedToken {
+                            expected: vec!["tuple pattern with 2-4 elements".to_string()],
+                            found: format!("{}-element tuple pattern", elems.len()),
+                        },
+                        span,
+                    ));
+                }
+
+                Ok(Pattern::Tuple(elems, span))
+            }
             _ => {
                 let span = self
                     .peek()
@@ -2107,7 +2139,8 @@ impl Parser {
                 Err(ParseError::new(
                     ParseErrorKind::UnexpectedToken {
                         expected: vec![
-                            "pattern (identifier, wildcard, literal, or .Variant)".to_string(),
+                            "pattern (identifier, wildcard, literal, .Variant, or tuple)"
+                                .to_string(),
                         ],
                         found: self
                             .peek()
@@ -2613,6 +2646,7 @@ impl Pattern {
             Pattern::Ident(_, s) => *s,
             Pattern::Literal(_, s) => *s,
             Pattern::Variant { span, .. } => *span,
+            Pattern::Tuple(_, span) => *span,
         }
     }
 }

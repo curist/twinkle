@@ -399,6 +399,40 @@ mod tests {
     }
 
     #[test]
+    fn tuple_pattern_parses_to_pattern_tuple() {
+        let (ast, _) = parse_source("x := case p { (a, b) => a, _ => 0 }\n", "test.tw")
+            .expect("parse should succeed");
+        let Some(ast::Item::Stmt(ast::Stmt::Let { value, .. })) = ast.items.first() else {
+            panic!("expected a let statement");
+        };
+        let ast::ExprKind::Case { arms, .. } = &value.kind else {
+            panic!("expected a case expression, got {:?}", value.kind);
+        };
+        match &arms[0].pattern {
+            ast::Pattern::Tuple(subs, _) => assert_eq!(subs.len(), 2),
+            other => panic!("expected Pattern::Tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tuple_pattern_arity_one_is_parse_error() {
+        let result = parse_source("x := case p { (a) => a, _ => 0 }\n", "test.tw");
+        assert!(
+            result.is_err(),
+            "single-element tuple pattern (no comma) should be a parse error"
+        );
+    }
+
+    #[test]
+    fn tuple_pattern_arity_five_is_parse_error() {
+        let result = parse_source("x := case p { (a, b, c, d, e) => a, _ => 0 }\n", "test.tw");
+        assert!(
+            result.is_err(),
+            "5-element tuple pattern should be a parse error"
+        );
+    }
+
+    #[test]
     fn doc_comments_attach_to_next_function_decl() {
         let source = r#"/// Adds one.
 /// Useful for tests.

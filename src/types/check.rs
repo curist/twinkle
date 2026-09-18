@@ -2745,7 +2745,7 @@ impl TypeChecker {
                 // Just evaluate the value for side effects
                 let _ = self.synth_expr(value);
             }
-            Pattern::Variant { .. } | Pattern::Literal(..) => {
+            Pattern::Variant { .. } | Pattern::Literal(..) | Pattern::Tuple(..) => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "pattern matching in let bindings",
                     span: value.span,
@@ -4589,6 +4589,11 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut HashSet<String>) {
         Pattern::Variant { fields, .. } => {
             for f in fields {
                 collect_pattern_names(f, names);
+            }
+        }
+        Pattern::Tuple(elems, _) => {
+            for e in elems {
+                collect_pattern_names(e, names);
             }
         }
         Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}

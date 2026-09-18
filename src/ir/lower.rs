@@ -3432,6 +3432,12 @@ impl Lowerer {
                     fields: lowered_fields,
                 })
             }
+
+            // STUB: real tuple-pattern lowering (to CorePattern::Variant over the
+            // TupleN record layout) lands in a follow-up task. The type checker
+            // already rejects tuple patterns before lowering is reached, so this
+            // is unreachable in practice; keep it a safe wildcard for now.
+            Pattern::Tuple(..) => Some(CorePattern::Wildcard),
         }
     }
 

@@ -480,6 +480,16 @@ fn print_pattern(pattern: &Pattern, out: &mut String) {
                 write!(out, ")").unwrap();
             }
         }
+        Pattern::Tuple(elems, _) => {
+            write!(out, "(").unwrap();
+            for (i, elem) in elems.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ", ").unwrap();
+                }
+                print_pattern(elem, out);
+            }
+            write!(out, ")").unwrap();
+        }
     }
 }
 

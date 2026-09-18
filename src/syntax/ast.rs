@@ -416,6 +416,9 @@ pub enum Pattern {
         fields: Vec<Pattern>,
         span: Span,
     },
+
+    /// Tuple pattern: (a, b), (a, b, c), (a, b, c, d) — arity 2–4.
+    Tuple(Vec<Pattern>, Span),
 }
 
 //
