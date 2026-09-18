@@ -1986,6 +1986,37 @@ fn emit_pattern_condition(
                 return instrs;
             }
 
+            // Record-shaped (TupleN) `.Variant` pattern: no tag to check —
+            // project fields directly through the record struct instead of
+            // the erased-`$Variant` tag-check dispatch below. Must precede
+            // that dispatch: TupleN's TypeId never carries a `Sum` def, so
+            // the tag-check StructGet(T_VARIANT, ...) below would read
+            // garbage from an actual record struct.
+            if is_record_type_id(*type_id, ctx) {
+                let record_sym = record_struct_sym(*type_id, None, None);
+                let mut inner_checks = Vec::new();
+                for (idx, field_pat) in fields.iter().enumerate() {
+                    if pattern_is_trivially_true(field_pat) {
+                        continue;
+                    }
+                    let field_mono = tuple_field_mono(expected_mono, *type_id, idx);
+                    let mut field_instrs = value_anyref_instrs.to_vec();
+                    field_instrs
+                        .extend(emit_unbox_on_stack(&ref_record_null(*type_id, None, None)));
+                    field_instrs.push(Instr::StructGet(record_sym.clone(), idx as u32));
+                    inner_checks.push(emit_pattern_condition(
+                        field_pat,
+                        &field_instrs,
+                        field_mono.as_ref(),
+                        None,
+                        None,
+                        None,
+                        ctx,
+                    ));
+                }
+                return combine_i32_ands(inner_checks);
+            }
+
             // Outer checks: type_id and variant_idx (safe to evaluate eagerly)
             let mut outer_checks = Vec::new();
 
@@ -2072,6 +2103,31 @@ fn emit_pattern_bindings(
             variant,
             fields,
         } => {
+            // Record-shaped (TupleN) `.Variant` pattern: project fields
+            // directly through the record struct — see the matching branch
+            // (and its rationale) in `emit_pattern_condition`.
+            if is_record_type_id(*type_id, ctx) {
+                let record_sym = record_struct_sym(*type_id, None, None);
+                let mut instrs = Vec::new();
+                for (idx, field_pat) in fields.iter().enumerate() {
+                    let field_mono = tuple_field_mono(expected_mono, *type_id, idx);
+                    let mut field_instrs = value_anyref_instrs.to_vec();
+                    field_instrs
+                        .extend(emit_unbox_on_stack(&ref_record_null(*type_id, None, None)));
+                    field_instrs.push(Instr::StructGet(record_sym.clone(), idx as u32));
+                    instrs.extend(emit_pattern_bindings(
+                        field_pat,
+                        &field_instrs,
+                        field_mono.as_ref(),
+                        None,
+                        None,
+                        None,
+                        ctx,
+                    ));
+                }
+                return instrs;
+            }
+
             let mut instrs = Vec::new();
             let typed_iter_option_fields = typed_iter_option_pattern_info(
                 *type_id,
@@ -2388,6 +2444,35 @@ fn pattern_variant_field_mono(
 ) -> Option<&MonoType> {
     variant_field_mono_for_typed_sum(expected_mono, variant, field_idx)
         .or_else(|| variant_field_mono(expected_mono, field_idx))
+}
+
+/// Is `type_id` a *record* def (e.g. TupleN) rather than a sum? `.Variant`
+/// Core patterns are reused for tuple patterns (TupleN's TypeId, VariantId 0)
+/// since records have no tag to switch on — this routes those through field
+/// projection instead of the sum tag-check dispatch in
+/// `emit_pattern_condition`/`emit_pattern_bindings`.
+fn is_record_type_id(type_id: TypeId, ctx: &EmitCtx<'_>) -> bool {
+    matches!(
+        ctx.type_env.get_def(type_id),
+        Some(LangTypeDef::Record { .. })
+    )
+}
+
+/// The i-th tuple element's type: the i-th `Named` type-arg of the scrutinee
+/// mono, positionally (TupleN's fields `_0.._n` map 1:1 to them — no field-
+/// list/generic-substitution lookup needed, unlike a general record).
+fn tuple_field_mono(
+    expected_mono: Option<&MonoType>,
+    type_id: TypeId,
+    idx: usize,
+) -> Option<MonoType> {
+    match expected_mono {
+        Some(MonoType::Named {
+            type_id: mono_tid,
+            args,
+        }) if *mono_tid == type_id => args.get(idx).cloned(),
+        _ => None,
+    }
 }
 
 fn pattern_is_trivially_true(pattern: &CorePattern) -> bool {

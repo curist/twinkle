@@ -9,7 +9,8 @@ use crate::syntax::span::Span;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{
     ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, ORDER_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, TypeDef, TypeId, method_receiver_type_id,
+    RESULT_TYPE_ID, TUPLE2_TYPE_ID, TUPLE3_TYPE_ID, TUPLE4_TYPE_ID, TypeDef, TypeId,
+    method_receiver_type_id,
 };
 use crate::types::type_map::TypeMap;
 
@@ -3433,11 +3434,50 @@ impl Lowerer {
                 })
             }
 
-            // STUB: real tuple-pattern lowering (to CorePattern::Variant over the
-            // TupleN record layout) lands in a follow-up task. The type checker
-            // already rejects tuple patterns before lowering is reached, so this
-            // is unreachable in practice; keep it a safe wildcard for now.
-            Pattern::Tuple(..) => Some(CorePattern::Wildcard),
+            // Tuple patterns lower to the existing single-constructor `.Variant`
+            // Core pattern (TupleN's TypeId, VariantId 0) — no new Core IR node.
+            // TupleN is a *record* (no tag), so codegen routes this shape through
+            // record field projection instead of sum tag-check dispatch (see
+            // `emit_pattern_condition`/`emit_pattern_bindings` in emit.rs); we do
+            // NOT look up a variant index here, since records have none.
+            Pattern::Tuple(sub_pats, span) => {
+                // Prefer the scrutinee's own TypeId (correct even when the
+                // tuple's element types are generic/polymorphic); fall back to
+                // resolving by arity when the scrutinee type is unavailable.
+                let tuple_tid = match scrutinee_ty {
+                    Some(MonoType::Named { type_id, .. }) => *type_id,
+                    _ => match sub_pats.len() {
+                        2 => TUPLE2_TYPE_ID,
+                        3 => TUPLE3_TYPE_ID,
+                        4 => TUPLE4_TYPE_ID,
+                        _ => {
+                            self.errors.push(LowerError::UnsupportedFeature {
+                                feature: "tuple patterns",
+                                span: *span,
+                            });
+                            return None;
+                        }
+                    },
+                };
+
+                // Tuple element types are exactly the scrutinee's `Named` type
+                // args, positionally (TupleN's fields `_0.._n` map 1:1 to them).
+                let field_tys: &[MonoType] = match scrutinee_ty {
+                    Some(MonoType::Named { args, .. }) => args,
+                    _ => &[],
+                };
+
+                let mut lowered_fields = Vec::new();
+                for (i, sub) in sub_pats.iter().enumerate() {
+                    lowered_fields.push(self.lower_pattern(sub, field_tys.get(i))?);
+                }
+
+                Some(CorePattern::Variant {
+                    type_id: tuple_tid,
+                    variant: VariantId(0),
+                    fields: lowered_fields,
+                })
+            }
         }
     }
 
