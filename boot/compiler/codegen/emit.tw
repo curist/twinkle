@@ -45,7 +45,8 @@ use compiler.codegen.emit.helpers.{
   variant_field_mono,
 }
 use compiler.codegen.emit.layout_helpers.{
-  cached_layout_of, cell_inner_mono, cell_struct_sym, get_sum_layout_ctx,
+  cached_layout_of, cell_inner_mono, cell_struct_sym, get_sum_layout_ctx, is_record_scrutinee,
+  record_layout_of_ctx, tuple_field_mono,
 }
 use compiler.codegen.emit.match as match_emit
 use compiler.codegen.emit.module_globals.{emit_module_globals}
@@ -3908,7 +3909,24 @@ fn emit_pattern_condition(
         .None => error("emit_pattern_condition: string not in pool"),
       }
     },
-    .Variant(tid, vid, fields) => if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
+    .Variant(tid, vid, fields) => if is_record_scrutinee(scrutinee_mono, ctx.env) {
+      rec := record_layout_of_ctx(scrutinee_mono, ctx)
+      inner_checks: Vector<Vector<Instr>> = []
+
+      for fp, i in fields {
+        if !pattern_is_trivial(fp) {
+          field_instrs := scrutinee_instrs.append(.StructGet(rec.sym, i))
+          field_mono := tuple_field_mono(scrutinee_mono, i, ctx.env)
+          inner_checks = .append(emit_pattern_condition(fp, field_instrs, field_mono, ctx, []))
+        }
+      }
+
+      if inner_checks.len() == 0 {
+        buf.append(.I32Const(1))
+      } else {
+        buf.concat(combine_and_checks(inner_checks))
+      }
+    } else if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
       buf.append(.I32Const(0))
     } else {
       emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx, buf)
@@ -4038,7 +4056,18 @@ fn emit_pattern_bindings(
       out := scrutinee_instrs
       out.append(.LocalSet(entry.index))
     },
-    .Variant(tid, vid, fields) => if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
+    .Variant(tid, vid, fields) => if is_record_scrutinee(scrutinee_mono, ctx.env) {
+      rec := record_layout_of_ctx(scrutinee_mono, ctx)
+      out: Vector<Instr> = []
+
+      for fp, i in fields {
+        field_instrs := scrutinee_instrs.append(.StructGet(rec.sym, i))
+        field_mono := tuple_field_mono(scrutinee_mono, i, ctx.env)
+        out = .concat(emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+      }
+
+      out
+    } else if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
       []
     } else if variant_emit.is_nullable_extern_option(scrutinee_mono) {
       // Option<ExternRef>: payload is the scrutinee itself (non-null for Some)

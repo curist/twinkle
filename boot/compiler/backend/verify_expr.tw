@@ -20,7 +20,7 @@ use compiler.codegen.wasm_layout.{layout_of_backend, val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
 use compiler.elem_family.{all_families}
-use compiler.mono_type.{MonoType, mono_eq}
+use compiler.mono_type.{MonoType, TypeId, mono_eq}
 use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
 
 /// Invariant context threaded through the per-function expression walk.
@@ -125,7 +125,7 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp, depth: Int) 
     .AMatch(scrutinee, arms) => {
       try ctx.verify_atom_use(scrutinee, "match scrutinee")
 
-      if match_uses_variant_patterns(arms) {
+      if match_uses_variant_patterns(arms, ctx.env) {
         try ctx.require_local_repr_if_local(scrutinee, [.TypedSum(.Void)], "match scrutinee")
       }
 
@@ -1060,9 +1060,9 @@ fn verify_pattern_bindings(ctx: VerifyCtx, pattern: PreparedPattern) Result<Void
   }
 }
 
-fn match_uses_variant_patterns(arms: Vector<PreparedMatchArm>) Bool {
+fn match_uses_variant_patterns(arms: Vector<PreparedMatchArm>, env: ResolvedEnv) Bool {
   for arm in arms {
-    if pattern_uses_variant(arm.pattern) {
+    if pattern_uses_variant(arm.pattern, env) {
       return true
     }
   }
@@ -1070,9 +1070,20 @@ fn match_uses_variant_patterns(arms: Vector<PreparedMatchArm>) Bool {
   false
 }
 
-fn pattern_uses_variant(pattern: PreparedPattern) Bool {
+// A `.Variant` pattern only implies a sum-tagged scrutinee (and therefore a
+// required TypedSum repr) when its TypeId actually resolves to a `.Sum` def.
+// Tuple patterns reuse the `.Variant` Core/Prepared shape but their TypeId is
+// a record (TupleN) — no tag, so no TypedSum requirement applies.
+fn pattern_uses_variant(pattern: PreparedPattern, env: ResolvedEnv) Bool {
   case pattern {
-    .Variant(_, _, _) => true,
+    .Variant(tid, _, _) => !is_record_type_id(tid, env),
+    _ => false,
+  }
+}
+
+fn is_record_type_id(tid: TypeId, env: ResolvedEnv) Bool {
+  case env.lookup_type_def(tid) {
+    .Some(.Record(_, _, _)) => true,
     _ => false,
   }
 }

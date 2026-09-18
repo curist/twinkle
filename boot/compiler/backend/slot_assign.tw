@@ -590,7 +590,17 @@ fn collect_binding_monos(
       out[lid.id] = scrutinee_mono
       out
     },
-    .Variant(_, vid, fields) => if !is_matchable_sum(scrutinee_mono, env) {
+    .Variant(_, vid, fields) => if is_record_mono(scrutinee_mono, env) {
+      // Tuple (and other record) scrutinees reuse the `.Variant` Core
+      // pattern shape but have record, not sum, layout: fields are
+      // positional (field i == type-arg i), no tag/variant lookup involved.
+      for field, i in fields {
+        field_mono := record_field_mono(scrutinee_mono, i)
+        out = collect_binding_monos(field, field_mono, env, out)
+      }
+
+      out
+    } else if !is_matchable_sum(scrutinee_mono, env) {
       out
     } else {
       for field, i in fields {
@@ -601,6 +611,29 @@ fn collect_binding_monos(
       out
     },
     _ => out,
+  }
+}
+
+// ── Record field mono resolution (mirrors emit.tw's is_record_scrutinee /
+// tuple_field_mono) ──────────────────────────────────────────────────
+fn is_record_mono(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Named(tid, _) => case lookup_type_def(env, tid) {
+      .Some(.Record(_, _, _)) => true,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn record_field_mono(mono: MonoType, field_idx: Int) MonoType {
+  case mono {
+    .Named(_, args) => if field_idx < args.len() {
+      args[field_idx]
+    } else {
+      .Void
+    },
+    _ => .Void,
   }
 }
 

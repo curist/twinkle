@@ -1,3 +1,5 @@
+use @std.proc
+
 use commands.common.{format_compile_error}
 use compiler.anf.{AnfModule}
 use compiler.backend.closure_convert.{convert_closures}
@@ -16,6 +18,17 @@ pub type CodegenInputs = .{ anf: AnfModule, env: ResolvedEnv, builtins: BuiltinR
 pub fn codegen_inputs(src: String) Result<CodegenInputs, String> {
   artifacts := try pipeline.compile_source(src)
   .Ok(CodegenInputs.{ anf: artifacts.opt, env: artifacts.env, builtins: artifacts.builtins })
+}
+
+// Compiles `src` to Wasm and actually runs it (via the same
+// proc.run_wasm/emit_wasm path `twk run`/`twk test` use), returning the
+// guest process's exit code. `src` must end its work with `proc.exit(n)`
+// (import `@std.proc`); this is for end-to-end semantic assertions where
+// inspecting the emitted WAT text isn't enough to pin down runtime behavior.
+pub fn run_exit_code(src: String) Result<Int, String> {
+  artifacts := try pipeline.compile_source(src)
+  wasm_bytes := pipeline.emit_wasm(artifacts)
+  .Ok(proc.run_wasm(wasm_bytes, ["test"], ""))
 }
 
 pub fn codegen_src(src: String) Result<String, String> {

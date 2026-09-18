@@ -5,7 +5,7 @@ use compiler.codegen.dense_table_plan.{dense_table_plan}
 use compiler.codegen.emit.context.{EmitCtx, Expected, expected}
 use compiler.codegen.emit.control_flow.{append_result_store, arm_expected}
 use compiler.codegen.emit.helpers.{all_arms_diverge, expr_always_diverges, pattern_is_trivial}
-use compiler.codegen.emit.layout_helpers.{cached_layout_of, get_sum_layout_ctx}
+use compiler.codegen.emit.layout_helpers.{cached_layout_of, get_sum_layout_ctx, is_record_scrutinee}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.mono_type.{MonoType}
 
@@ -221,6 +221,12 @@ fn emit_arm_chain(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Inst
 }
 
 fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType, ctx: EmitCtx) Bool {
+  // Record scrutinees (e.g. TupleN) have no tag field to switch on — matching
+  // always goes through the arm chain, which projects fields directly.
+  if is_record_scrutinee(scrutinee_mono, ctx.env) {
+    return false
+  }
+
   layout := cached_layout_of(scrutinee_mono, ctx)
   variant_count := case layout {
     .Sum(s) => s.variants.len(),

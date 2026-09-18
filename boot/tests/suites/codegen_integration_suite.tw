@@ -662,6 +662,69 @@ fn test_match_named_sum_multi_variant() Result<Void, String> {
   .Ok({})
 }
 
+// ── Tuple case-arm patterns (end-to-end execution) ───────────────────
+// These compile *and run* the generated Wasm (via
+// codegen_harness.run_exit_code, which mirrors `twk run`'s
+// compile→emit_wasm→proc.run_wasm path) rather than just inspecting WAT
+// text: tuple patterns lower to the record-layout branch added to
+// emit_pattern_condition/emit_pattern_bindings, and the only way to be
+// sure field projection and binding line up with the right slots is to
+// actually execute the arm and check the value it produces.
+fn assert_runs_to(src: String, expected: Int, label: String) Result<Void, String> {
+  code := try codegen_harness.run_exit_code(src)
+  assert.equal(code, expected)
+}
+
+fn test_tuple_pattern_flat_irrefutable_bind() Result<Void, String> {
+  // (a, b) => a * 10 + b — every element position is a plain identifier
+  // (irrefutable), so this is a single unconditional binding, no tag/eq
+  // checks at all.
+  assert_runs_to(
+    "use @std.proc\ncase (3, 4) {\n  (a, b) => proc.exit(a * 10 + b),\n}\n",
+    34,
+    "tuple flat irrefutable bind",
+  )
+}
+
+fn test_tuple_pattern_nested_variant_holding_tuple() Result<Void, String> {
+  // .Some((key, val)) — a tuple pattern nested inside a sum pattern. The
+  // scrutinee must be a function parameter (not a module-level global):
+  // matching directly over a global sum/record value hits an unrelated,
+  // pre-existing gap where `atom_mono` resolves module globals to a bare
+  // `Anyref_` (see backend/slot_assign.tw's `.AGlobalLocal(_) => .Anyref_`),
+  // independent of tuples — reproducible with plain `Result<Int, String>`
+  // globals too. Out of scope for tuple destructuring.
+  assert_runs_to(
+    "use @std.proc\nfn f(opt: (Int, Int)?) Int {\n  case opt {\n    .Some((key, val)) => key + val,\n    .None => -1,\n  }\n}\nproc.exit(f(.Some((1, 2))))\n",
+    3,
+    "tuple nested variant-holding-tuple",
+  )
+}
+
+fn test_tuple_pattern_refutable_fallthrough() Result<Void, String> {
+  // (0, y) / (x, _) — a literal in the first position makes the first arm
+  // refutable; a non-matching first element falls through to the second
+  // arm's wildcard-tail.
+  src_07 := "use @std.proc\nfn f(t: (Int, Int)) Int {\n  case t {\n    (0, y) => y,\n    (x, _) => x,\n  }\n}\nproc.exit(f((0, 7)))\n"
+  src_57 := "use @std.proc\nfn f(t: (Int, Int)) Int {\n  case t {\n    (0, y) => y,\n    (x, _) => x,\n  }\n}\nproc.exit(f((5, 7)))\n"
+  try assert_runs_to(src_07, 7, "tuple refutable fallthrough (0, 7)")
+  assert_runs_to(src_57, 5, "tuple refutable fallthrough (5, 7)")
+}
+
+fn test_tuple_pattern_nested_sub_tuple() Result<Void, String> {
+  // ((a, b), c) — a tuple pattern nested inside another tuple pattern.
+  // NOTE: a bare nested tuple *literal* scrutinee (`case ((1, 2), 3) { ... }`)
+  // does not type-check today — a pre-existing, unrelated bug in the tuple
+  // literal check-mode path (found during Task 2, out of scope here). Build
+  // the nested value via an annotated binding instead so this test exercises
+  // the nested *pattern* without tripping that literal-synthesis gap.
+  assert_runs_to(
+    "use @std.proc\nfn g(pair: ((Int, Int), Int)) Int {\n  case pair {\n    ((a, b), c) => a + b + c,\n  }\n}\ninner: (Int, Int) = (1, 2)\nouter: ((Int, Int), Int) = (inner, 3)\nproc.exit(g(outer))\n",
+    6,
+    "tuple nested sub-tuple",
+  )
+}
+
 // ── Structural validation (inspects LinkedModule, not WAT text) ─────
 fn has_func_named(linked: LinkedModule, name: String) Bool {
   for f in linked.funcs {
@@ -1069,6 +1132,16 @@ pub fn suite() runner.Suite {
     .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
     .test("match: all-diverging arms", test_match_all_diverging_arms)
     .test("match: named sum with multiple variants", test_match_named_sum_multi_variant)
+    .test("tuple pattern: flat irrefutable bind", test_tuple_pattern_flat_irrefutable_bind)
+    .test(
+      "tuple pattern: nested variant-holding-tuple",
+      test_tuple_pattern_nested_variant_holding_tuple,
+    )
+    .test(
+      "tuple pattern: refutable positions with fallthrough",
+      test_tuple_pattern_refutable_fallthrough,
+    )
+    .test("tuple pattern: nested sub-tuple", test_tuple_pattern_nested_sub_tuple)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",

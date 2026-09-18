@@ -95,3 +95,32 @@ pub fn find_field_index(rec: WasmRecordLayout, fid: FieldId) Int {
 
   error("find_field_index: FieldId ${fid.id} not found in ${rec.sym}")
 }
+
+// True when `mono` is a `Named` type whose definition is a record (no tag —
+// e.g. TupleN, or any other record type). Used to route `.Variant` Core
+// patterns for tuples (which reuse the single-constructor `.Variant` shape
+// but have record, not sum, layout) through record field projection instead
+// of sum tag-check dispatch.
+pub fn is_record_scrutinee(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Named(tid, _) => case env.lookup_type_def(tid) {
+      .Some(.Record(_, _, _)) => true,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// The i-th tuple element's type: the i-th `Named` type arg. Field index ==
+// positional index for tuple records, whose fields are declared `_0.._3` in
+// declaration order.
+pub fn tuple_field_mono(mono: MonoType, i: Int, env: ResolvedEnv) MonoType {
+  case mono {
+    .Named(_, args) => if i < args.len() {
+      args[i]
+    } else {
+      .Void
+    },
+    _ => .Void,
+  }
+}

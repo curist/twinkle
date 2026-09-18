@@ -4,7 +4,7 @@ use compiler.ast as ast
 use compiler.core_ir.{CorePattern}
 use compiler.lower_core.context.{LowerCtx}
 use compiler.lower_core.types.{
-  resolve_type_id, type_id_from_mono, variant_field_types, variant_index,
+  resolve_type_id, tuple_field_types, type_id_from_mono, variant_field_types, variant_index,
 }
 use compiler.mono_type.{MonoType}
 
@@ -78,7 +78,28 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
 
       .{ pattern: .Variant(tid, .{ id: vid_idx }, lowered_pats), ctx: cur_ctx }
     },
-    .Tuple(_) => .{ pattern: .Wildcard, ctx },
+    .Tuple(sub_pats) => {
+      tid := case type_id_from_mono(scrut_ty, ctx.env) {
+        .Some(id) => id,
+        .None => return .{ pattern: .Wildcard, ctx },
+      }
+      field_tys := tuple_field_types(scrut_ty, ctx.env)
+      lowered_pats: Vector<CorePattern> = []
+      cur_ctx := ctx
+
+      for i in 0..sub_pats.len() {
+        sub_ty := if i < field_tys.len() {
+          field_tys[i]
+        } else {
+          .Void
+        }
+        pr := lower_pattern(cur_ctx, sub_pats[i], sub_ty)
+        lowered_pats = .append(pr.pattern)
+        cur_ctx = pr.ctx
+      }
+
+      .{ pattern: .Variant(tid, .{ id: 0 }, lowered_pats), ctx: cur_ctx }
+    },
     .ErrorPattern => .{ pattern: .Wildcard, ctx },
   }
 }

@@ -193,6 +193,17 @@ pub fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<
   }
 }
 
+// Extract tuple element types (TupleN's field types, positionally). A tuple
+// is `MonoType.Named(tuple_tid, args)` where `args` are exactly the element
+// types (fields `_0.._n` map 1:1 to `args[0..n]`), so this is just the
+// scrutinee's `Named` type args — no field lookup needed.
+pub fn tuple_field_types(ty: MonoType, env: ResolvedEnv) Vector<MonoType> {
+  case ty {
+    .Named(_, args) => args,
+    _ => [],
+  }
+}
+
 pub fn iter_elem_type(ty: MonoType, env: ResolvedEnv) MonoType {
   expanded := expand_alias_for_iter(ty, env, 0)
 
