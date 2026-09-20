@@ -233,6 +233,26 @@ if r != 100 {
     );
 }
 
+/// `(a, b) := expr` — tuple-pattern let binding. Task 8 fixes the stage0
+/// parser so this routes to `parse_let_stmt` instead of ICEing on `:=`
+/// (previously mis-parsed as an infix operator). The checker + lowering for
+/// tuple-pattern lets are Task 9/10, so this is `#[ignore]`d until then —
+/// un-ignore in Task 11. Parse-level coverage for this task lives in
+/// `src/syntax/parser.rs`'s test module (`tuple_let_binding_parses_as_tuple_pattern`).
+#[test]
+#[ignore = "enabled in Task 10 (stage0 lowering)"]
+fn tuple_let_binding_runs() {
+    assert_program_matches_expected(
+        r#"
+fn dm(a: Int, b: Int) (Int, Int) { (a / b, a % b) }
+(q, r) := dm(17, 5)
+if q * 100 + r != 302 {
+  error("mismatch")
+}
+"#,
+    );
+}
+
 /// Sanity check on the harness itself: a program whose `if` branch condition
 /// is deliberately wrong must actually trap (nonzero exit), proving the
 /// convention distinguishes "computed value matched" from "computed value

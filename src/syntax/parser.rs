@@ -2190,15 +2190,49 @@ impl Parser {
     fn is_let_binding(&self) -> bool {
         // A let binding has the form: pattern := expr or pattern: Type = expr
         // We need to look ahead to see if there's a := or : after the pattern
-        // For now, we'll use a simple heuristic: if we see an identifier followed by := or :
-        if let Some(TokenKind::Ident) = self.peek_kind() {
-            if let Some(next) = self.tokens.get(self.pos + 1) {
-                matches!(next.kind, TokenKind::ColonEq | TokenKind::Colon)
-            } else {
-                false
+        match self.peek_kind() {
+            Some(TokenKind::Ident) => {
+                if let Some(next) = self.tokens.get(self.pos + 1) {
+                    matches!(next.kind, TokenKind::ColonEq | TokenKind::Colon)
+                } else {
+                    false
+                }
             }
-        } else {
-            false
+            Some(TokenKind::LParen) => {
+                // Tuple-pattern LHS: (a, b) := expr or (a, b): Type = expr.
+                // Scan forward across balanced parens; if the token immediately
+                // after the matching `)` is `:=` or `:`, this is a let binding.
+                // A trailing `=` (tuple rebind, e.g. `(a, b) = expr`) is NOT
+                // claimed here — that falls through to the expression path.
+                let mut depth: i32 = 0;
+                let mut i = self.pos;
+                loop {
+                    match self.tokens.get(i) {
+                        Some(tok) => match tok.kind {
+                            TokenKind::LParen => {
+                                depth += 1;
+                                i += 1;
+                            }
+                            TokenKind::RParen => {
+                                depth -= 1;
+                                i += 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {
+                                i += 1;
+                            }
+                        },
+                        None => return false,
+                    }
+                }
+                matches!(
+                    self.tokens.get(i).map(|t| t.kind),
+                    Some(TokenKind::ColonEq) | Some(TokenKind::Colon)
+                )
+            }
+            _ => false,
         }
     }
 
@@ -2657,7 +2691,13 @@ fn infix_binding_power(op: TokenKind) -> Option<(u8, u8)> {
     use TokenKind::*;
     Some(match op {
         // Assignment (right-associative)
-        Eq | ColonEq => (2, 1),
+        Eq => (2, 1),
+        // `:=` is only valid as a let-binding introducer (handled by
+        // is_let_binding/parse_let_stmt before infix parsing runs); it has
+        // no infix binding power, so a stray `:=` in expression position is
+        // a parse error rather than being coerced into a Binary op (which
+        // would ICE in token_to_binop).
+        ColonEq => return None,
         // Range (lower precedence than assignment)
         DotDot => (1, 3),
         // Logical OR
@@ -2764,6 +2804,13 @@ mod tests {
         let tokens = Lexer::lex(source, file_id).unwrap();
         let mut parser = Parser::new(tokens, file_id);
         parser.parse_expr()
+    }
+
+    fn parse_stmt(source: &str) -> ParseResult<Stmt> {
+        let file_id = FileId(0);
+        let tokens = Lexer::lex(source, file_id).unwrap();
+        let mut parser = Parser::new(tokens, file_id);
+        parser.parse_stmt()
     }
 
     #[test]
@@ -3419,5 +3466,108 @@ foo
     fn test_extern_fn_uppercase_rejected() {
         let result = parse_source("extern host fn BadName()");
         assert!(result.is_err());
+    }
+
+    // Task 8: stage0 let-LHS parser fix. Before this fix, `(a, b) := e` fell
+    // through `is_let_binding` to the expression path, `:=` got an infix
+    // binding power, and `token_to_binop(ColonEq)` hit `unreachable!()` — an
+    // ICE (panic), not a `ParseResult::Err`. These tests assert the *parsed
+    // AST shape* rather than re-demonstrating the panic (a `#[should_panic]`
+    // test would pass equally well on any other panic, e.g. a bad test
+    // fixture, so it's a weaker regression guard than shape assertions).
+
+    #[test]
+    fn tuple_let_binding_parses_as_tuple_pattern() {
+        let stmt = parse_stmt("(a, b) := e").expect("expected a clean parse, not an ICE");
+        match stmt {
+            Stmt::Let {
+                pattern: Pattern::Tuple(elems, _),
+                ty: None,
+                ..
+            } => {
+                assert_eq!(elems.len(), 2);
+                assert!(matches!(&elems[0], Pattern::Ident(name, _) if name == "a"));
+                assert!(matches!(&elems[1], Pattern::Ident(name, _) if name == "b"));
+            }
+            other => panic!("Expected Stmt::Let with a 2-element tuple pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tuple_let_binding_with_type_annotation_parses() {
+        let stmt = parse_stmt("(a, b): (Int, Int) = e").expect("expected a clean parse");
+        match stmt {
+            Stmt::Let {
+                pattern: Pattern::Tuple(elems, _),
+                ty: Some(_),
+                ..
+            } => {
+                assert_eq!(elems.len(), 2);
+            }
+            other => {
+                panic!("Expected Stmt::Let with a tuple pattern and explicit type, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn plain_ident_let_binding_still_parses() {
+        // Guards against the ColonEq-infix-BP removal breaking the ordinary
+        // (non-tuple) let path, which routes through is_let_binding's
+        // pre-existing Ident branch, not the new LParen branch.
+        let stmt = parse_stmt("x := e").expect("expected a clean parse");
+        match stmt {
+            Stmt::Let {
+                pattern: Pattern::Ident(name, _),
+                ..
+            } => assert_eq!(name, "x"),
+            other => panic!("Expected Stmt::Let with an ident pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tuple_tail_expr_still_parses_as_expression() {
+        // A `(`-led statement with no trailing `:=`/`:` after the matching
+        // `)` (e.g. a bare tuple literal tail-expression) must NOT be routed
+        // into the let-binding path.
+        let sf = parse_source("fn f() (Int, Int) { (1, 2) }").unwrap();
+        let func = match &sf.items[0] {
+            Item::Function(f) => f,
+            other => panic!("Expected Function item, got {:?}", other),
+        };
+        assert_eq!(func.body.stmts.len(), 1);
+        match &func.body.stmts[0] {
+            Stmt::Expr(expr) => match &expr.kind {
+                ExprKind::RecordLit { name, fields } => {
+                    assert_eq!(name.as_deref(), Some("Tuple2"));
+                    assert_eq!(fields.len(), 2);
+                }
+                other => panic!("Expected tuple literal desugared to RecordLit, got {other:?}"),
+            },
+            other => panic!("Expected tuple tail expression, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parenthesized_expr_statement_still_parses() {
+        // A `(`-led expression statement with a non-`:=`/`:` follower (here,
+        // nothing at all — the paren group is the whole statement) is not
+        // mistaken for a let binding either.
+        let stmt = parse_stmt("(1 + 2)").expect("expected a clean parse");
+        assert!(matches!(stmt, Stmt::Expr(_)));
+    }
+
+    #[test]
+    fn stray_colon_eq_in_expression_position_is_a_parse_error_not_a_panic() {
+        // With ColonEq's infix binding power removed, a `:=` that is not
+        // claimed by is_let_binding (e.g. mid-expression) must surface as a
+        // ParseResult::Err, never a panic (the original ICE). A single
+        // `parse_stmt` call only parses one statement and doesn't demand
+        // EOF, so `1` alone parses fine and leaves `:= 2` unconsumed; drive
+        // this through `parse_source` (full-program parse) so the leftover
+        // `:=` is reached as the start of the next item/statement and
+        // rejected there.
+        let result = parse_source("1 := 2");
+        assert!(result.is_err(), "expected a parse error, not success");
     }
 }
