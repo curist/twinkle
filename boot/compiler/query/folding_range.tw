@@ -106,6 +106,7 @@ fn ranges_from_block(block: ast.Block) Vector<FoldingRange> {
 fn ranges_from_stmt(stmt: ast.Stmt) Vector<FoldingRange> {
   case stmt {
     .Let(s) => ranges_from_expr(s.value),
+    .LetPattern(s) => ranges_from_expr(s.value),
     .For(s) => {
       result: Vector<FoldingRange> = [.{ start: s.span.start, end: s.span.end, kind: .Region }]
       result.concat(ranges_from_block(s.body))

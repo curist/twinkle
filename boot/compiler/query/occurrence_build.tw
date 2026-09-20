@@ -209,6 +209,11 @@ fn walk_stmt(ctx: Ctx, b: Builder, env: Env, stmt: Stmt) Walk {
         ctx.declare(b2, env, ls.name, ls.name_span, .Local)
       }
     },
+    // TODO: walk pattern binders once destructuring lands (Task 7+).
+    .LetPattern(ls) => {
+      b2 := ctx.walk_type_expr_opt(b, ls.ty)
+      .{ b: ctx.walk_expr(b2, env, ls.value), env }
+    },
     .For(fs) => .{ b: ctx.walk_for(b, env, fs), env },
     .Return(rs) => .{ b: ctx.walk_opt_expr(b, env, rs.value), env },
     .Break(bs) => .{ b: ctx.walk_opt_expr(b, env, bs.value), env },

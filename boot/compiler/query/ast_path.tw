@@ -218,6 +218,7 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
 fn stmt_span(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
+    .LetPattern(s) => s.span,
     .For(s) => s.span,
     .Return(s) => s.span,
     .Break(s) => s.span,

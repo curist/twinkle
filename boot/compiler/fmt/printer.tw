@@ -1,8 +1,8 @@
 use compiler.ast.{
   BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, DeferStmt, Expr, ExternFunctionDecl,
-  ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Module, Param, Pattern,
-  RecordEntry, RecordField, ReturnStmt, Stmt, StringPart, TypeDecl, TypeExpr, TypeParam, UnOp,
-  UseDecl, VariantDecl,
+  ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, Item, LetPatternStmt, LetStmt, Module, Param,
+  Pattern, RecordEntry, RecordField, ReturnStmt, Stmt, StringPart, TypeDecl, TypeExpr, TypeParam,
+  UnOp, UseDecl, VariantDecl,
 }
 use compiler.fmt.doc
 use compiler.fmt.doc.{Doc}
@@ -344,6 +344,7 @@ fn item_span(item: Item) Span {
 fn stmt_span(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
+    .LetPattern(s) => s.span,
     .For(s) => s.span,
     .Return(s) => s.span,
     .Break(s) => s.span,
@@ -1117,6 +1118,7 @@ fn can_unwrap_arm_stmt(stmt: Stmt, tm: TriviaMap) Bool {
 fn format_stmt(stmt: Stmt, tm: TriviaMap) Doc {
   case stmt {
     .Let(s) => format_let(s, tm),
+    .LetPattern(s) => format_let_pattern(s, tm),
     .For(s) => format_for(s, tm),
     .Return(s) => format_return(s, tm),
     .Break(s) => format_break(s, tm),
@@ -1158,6 +1160,11 @@ fn format_let(s: LetStmt, tm: TriviaMap) Doc {
     format_expr(s.value, tm)
   }
   format_assigned(parts, s.value, value_doc, tm)
+}
+
+// TODO(Task 7): render the destructuring pattern, type annotation, and value.
+fn format_let_pattern(s: LetPatternStmt, tm: TriviaMap) Doc {
+  doc.text("/* let-pattern */")
 }
 
 // Structural equality over the "place path" expression forms that can appear as

@@ -65,6 +65,7 @@ fn is_upper_ascii_name(name: String) Bool {
 fn span_of_stmt(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
+    .LetPattern(s) => s.span,
     .For(s) => s.span,
     .Return(s) => s.span,
     .Break(s) => s.span,
@@ -2440,6 +2441,7 @@ fn parse_collect_expr(c: Cursor) ExprParse {
       CollectExpr.{
         pattern,
         pattern_span,
+        element_pattern: .None,
         index,
         index_span,
         iter,
@@ -2900,6 +2902,7 @@ fn parse_for_stmt(c: Cursor) StmtParse {
     ForStmt.{
       pattern,
       pattern_span,
+      element_pattern: .None,
       index,
       index_span,
       iter,

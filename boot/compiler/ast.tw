@@ -109,6 +109,7 @@ pub type Block = .{ stmts: Vector<Stmt>, tail: Expr?, span: Span }
 
 pub type Stmt = {
   Let(LetStmt),
+  LetPattern(LetPatternStmt),
   For(ForStmt),
   Return(ReturnStmt),
   Break(BreakStmt),
@@ -128,9 +129,12 @@ pub type LetStmt = .{
   span: Span,
 }
 
+pub type LetPatternStmt = .{ pattern: Pattern, ty: TypeExpr?, value: Expr, span: Span }
+
 pub type ForStmt = .{
   pattern: String?,
   pattern_span: Span?,
+  element_pattern: Pattern?,
   index: String?,
   index_span: Span?,
   iter: Expr?,
@@ -180,6 +184,7 @@ pub type ExprKind = {
 pub type CollectExpr = .{
   pattern: String?,
   pattern_span: Span?,
+  element_pattern: Pattern?,
   index: String?,
   index_span: Span?,
   iter: Expr?,

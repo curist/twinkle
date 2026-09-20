@@ -157,6 +157,7 @@ fn refs_in_block(b: Block, name: String) NameRefs {
 fn refs_in_stmt(s: Stmt, name: String) NameRefs {
   case s {
     .Let(x) => refs_in_expr(x.value, name),
+    .LetPattern(x) => refs_in_expr(x.value, name),
     .For(x) => {
       out := refs_in_opt_expr(x.iter, name)
       out = .merge_name_refs(refs_in_opt_expr(x.condition, name))
@@ -395,6 +396,7 @@ fn lint_constant_fn(decl: FunctionDecl, module: Module, source: String) Vector<L
 fn stmt_span(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
+    .LetPattern(s) => s.span,
     .For(s) => s.span,
     .Return(s) => s.span,
     .Break(s) => s.span,
@@ -560,6 +562,7 @@ fn lint_stmt(stmt: Stmt, ctx: LintCtx) Vector<LintFinding> {
 
       out
     },
+    .LetPattern(s) => lint_expr(s.value, ctx),
     .For(s) => {
       out: Vector<LintFinding> = []
 
@@ -1649,6 +1652,9 @@ fn stmt_ident_spans(stmt: Stmt, name: String) IdentSpans {
     } else {
       expr_ident_spans(ls.value, name)
     },
+    // Destructuring patterns can rebind `name` under a nested sub-pattern;
+    // the straight-line collector doesn't walk patterns, so stay conservative.
+    .LetPattern(_) => .Uncertain,
     // Nested blocks and deferred evaluation stay outside the straight-line
     // collector. Only a mention matters; unrelated forms contribute no spans.
     .For(_) => if stmt_mentions_name(stmt, name) {
@@ -2233,6 +2239,8 @@ fn stmt_mentions_name(stmt: Stmt, name: String) Bool {
   case stmt {
     // A rebinding of `name` counts as a mention (conservative).
     .Let(s) => s.name == name or expr_uses_name(s.value, name),
+    // Destructuring patterns aren't walked yet; treat as a mention unconditionally.
+    .LetPattern(_) => true,
     .For(s) => {
       iter_u := case s.iter {
         .Some(e) => expr_uses_name(e, name),
@@ -2638,6 +2646,13 @@ fn walk_block(ctx: PrefixCtx, block: Block, tail_expected: Bool) Vector<LintFind
 fn walk_stmt(ctx: PrefixCtx, stmt: Stmt) Vector<LintFinding> {
   case stmt {
     .Let(ls) => {
+      annotated := case ls.ty {
+        .Some(_) => true,
+        .None => false,
+      }
+      ctx.walk_expr(ls.value, annotated)
+    },
+    .LetPattern(ls) => {
       annotated := case ls.ty {
         .Some(_) => true,
         .None => false,
