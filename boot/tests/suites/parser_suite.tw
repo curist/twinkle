@@ -1232,6 +1232,56 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "stmt: for parenthesized condition is not mistaken for a tuple pattern",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for (x > 0) { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            try assert.is_none(s.pattern)
+            try assert.is_none(s.element_pattern)
+            try assert.is_none(s.iter)
+            assert.is_some(s.condition)
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: for tuple-pattern element binder",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for (a, b) in items { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            try assert.is_none(s.pattern)
+            try assert.is_none(s.condition)
+            try assert.is_some(s.iter)
+            assert.is_some(s.element_pattern)
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: for tuple-pattern element binder with index",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for (a, b), i in items { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            try assert.is_some(s.element_pattern)
+
+            case s.index {
+              .Some(idx) => assert.equal(idx, "i"),
+              .None => assert.fail("expected index"),
+            }
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
       "stmt: return with and without value",
       fn() {
         r1 := try parse_body_stmt("fn f() Int { return 42 }", 0)
@@ -1544,6 +1594,38 @@ pub fn suite() runner.Suite {
 
         // collect should parse without diagnostics
         assert.equal(mod.items.len(), 1)
+      },
+    )
+    .test(
+      "expr: collect parenthesized condition is not mistaken for a tuple pattern",
+      fn() {
+        tail := try parse_body_tail("fn f() { collect (n < 5) { n } }")
+
+        case tail.kind {
+          .Collect(ce) => {
+            try assert.is_none(ce.pattern)
+            try assert.is_none(ce.element_pattern)
+            try assert.is_none(ce.iter)
+            assert.is_some(ce.condition)
+          },
+          _ => assert.fail("expected Collect"),
+        }
+      },
+    )
+    .test(
+      "expr: collect tuple-pattern element binder",
+      fn() {
+        tail := try parse_body_tail("fn f() { collect (a, b) in items { a + b } }")
+
+        case tail.kind {
+          .Collect(ce) => {
+            try assert.is_none(ce.pattern)
+            try assert.is_none(ce.condition)
+            try assert.is_some(ce.iter)
+            assert.is_some(ce.element_pattern)
+          },
+          _ => assert.fail("expected Collect"),
+        }
       },
     )
     .test(

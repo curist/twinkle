@@ -2386,10 +2386,62 @@ fn parse_closure_expr(c: Cursor) ExprParse {
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
 }
 
-fn parse_collect_expr(c: Cursor) ExprParse {
+// `for`/`collect` share the same loop-head grammar: a plain-name element
+// binder (`x in xs`, `x, i in xs`), a tuple-pattern element binder
+// (`(a, b) in xs`, `(a, b), i in xs`), or a bare boolean condition
+// (`cond`). A leading `(` is ambiguous — it can start a tuple pattern *or*
+// a parenthesized condition expression (`for (x > 0) { .. }`) — so a
+// bounded balanced-paren scan decides which grammar applies *before*
+// committing to `parse_pattern`: speculatively parsing a non-pattern
+// expression (e.g. `x > 0`) as a pattern would itself emit spurious
+// diagnostics ("expected ',' or ')' in tuple pattern"), so the decision has
+// to be made without invoking the pattern parser.
+type IterHeadParse = .{
+  pattern: String?,
+  pattern_span: Span?,
+  element_pattern: Pattern?,
+  index: String?,
+  index_span: Span?,
+  iter: Expr?,
+  condition: Expr?,
+  cursor: Cursor,
+  diagnostics: Vector<DiagKind>,
+}
+
+// `c` must be positioned on a `.LParen`. Returns the cursor just past the
+// matching `.RParen` (nested parens are tracked via `depth`), or the
+// original cursor if the parens never close (malformed input — the caller's
+// subsequent parse will surface the real diagnostic).
+fn cursor_after_balanced_parens(c: Cursor) Cursor {
+  cur := c
+  depth := 0
+
+  for cur.pos < cur.tokens.len() {
+    k := cur.kind()
+
+    case k {
+      .LParen => {
+        depth = .inc()
+      },
+      .RParen => {
+        depth = .dec()
+
+        if depth == 0 {
+          return cur.advance()
+        }
+      },
+      .Eof => return cur,
+      _ => {},
+    }
+
+    cur = .advance()
+  }
+
+  cur
+}
+
+fn parse_iter_head(c: Cursor, label: String) IterHeadParse {
   diagnostics_out: Vector<DiagKind> = []
-  start_pos := c.pos
-  c = .advance()
   pattern: String? = .None
   pattern_span: Span? = .None
   element_pattern: Pattern? = .None
@@ -2397,8 +2449,17 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   index_span: Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
+  is_tuple_binder := if c.kind() == .LParen {
+    after_parens := cursor_after_balanced_parens(c)
 
-  if c.kind() == .LParen {
+    after_parens.kind() == .In
+      or after_parens.kind() == .Comma and after_parens.at(1).kind() == .Ident
+      and after_parens.at(2).kind() == .In
+  } else {
+    false
+  }
+
+  if is_tuple_binder {
     parsed_pat := parse_pattern(c)
     diagnostics_out = .concat(parsed_pat.diagnostics)
     pat := parsed_pat.value
@@ -2422,8 +2483,11 @@ fn parse_collect_expr(c: Cursor) ExprParse {
       iter = .Some(parsed_iter.value)
       c = parsed_iter.cursor
     } else {
+      // The balanced-paren lookahead already confirmed a trailing `.In` (or
+      // `, <ident> .In`), so this is unreachable in practice; keep a safe
+      // fallback instead of silently mis-parsing.
       diagnostics_out = .append(
-        diag.error(after_pat.span(), "expected 'in' after tuple pattern in collect"),
+        diag.error(after_pat.span(), "expected 'in' after tuple pattern in ${label}"),
       )
       element_pattern = .Some(pat)
       c = after_pat
@@ -2463,6 +2527,25 @@ fn parse_collect_expr(c: Cursor) ExprParse {
     c = parsed_cond.cursor
   }
 
+  .{
+    pattern,
+    pattern_span,
+    element_pattern,
+    index,
+    index_span,
+    iter,
+    condition,
+    cursor: c,
+    diagnostics: diagnostics_out,
+  }
+}
+
+fn parse_collect_expr(c: Cursor) ExprParse {
+  start_pos := c.pos
+  c = .advance()
+  head := parse_iter_head(c, "collect")
+  c = head.cursor
+  diagnostics_out := head.diagnostics
   parsed_body := parse_block(c)
   diagnostics_out = .concat(parsed_body.diagnostics)
   c = parsed_body.cursor
@@ -2471,13 +2554,13 @@ fn parse_collect_expr(c: Cursor) ExprParse {
     id: c.alloc_expr_id(),
     kind: .Collect(
       CollectExpr.{
-        pattern,
-        pattern_span,
-        element_pattern,
-        index,
-        index_span,
-        iter,
-        condition,
+        pattern: head.pattern,
+        pattern_span: head.pattern_span,
+        element_pattern: head.element_pattern,
+        index: head.index,
+        index_span: head.index_span,
+        iter: head.iter,
+        condition: head.condition,
         body: parsed_body.value,
       },
     ),
@@ -2881,95 +2964,24 @@ fn parse_defer_stmt(c: Cursor) StmtParse {
 }
 
 fn parse_for_stmt(c: Cursor) StmtParse {
-  diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   c = .advance()
-  pattern: String? = .None
-  pattern_span: Span? = .None
-  element_pattern: Pattern? = .None
-  index: String? = .None
-  index_span: Span? = .None
-  iter: Expr? = .None
-  condition: Expr? = .None
-
-  if c.kind() == .LParen {
-    parsed_pat := parse_pattern(c)
-    diagnostics_out = .concat(parsed_pat.diagnostics)
-    pat := parsed_pat.value
-    after_pat := parsed_pat.cursor
-
-    if after_pat.kind() == .Comma
-      and after_pat.at(1).kind() == .Ident and after_pat.at(2).kind() == .In {
-      element_pattern = .Some(pat)
-      index = .Some(after_pat.at(1).text())
-      index_span = .Some(after_pat.at(1).span())
-      c = after_pat.at(3)
-      parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_iter.diagnostics)
-      iter = .Some(parsed_iter.value)
-      c = parsed_iter.cursor
-    } else if after_pat.kind() == .In {
-      element_pattern = .Some(pat)
-      c = after_pat.at(1)
-      parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_iter.diagnostics)
-      iter = .Some(parsed_iter.value)
-      c = parsed_iter.cursor
-    } else {
-      diagnostics_out = .append(
-        diag.error(after_pat.span(), "expected 'in' after tuple pattern in for loop"),
-      )
-      element_pattern = .Some(pat)
-      c = after_pat
-    }
-  } else if c.kind() == .Ident {
-    first_name := c.text()
-    first_span := c.span()
-
-    if c.at(1).kind() == .In {
-      pattern = .Some(first_name)
-      pattern_span = .Some(first_span)
-      c = .at(2)
-      parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_iter.diagnostics)
-      iter = .Some(parsed_iter.value)
-      c = parsed_iter.cursor
-    } else if c.at(1).kind() == .Comma and c.at(2).kind() == .Ident and c.at(3).kind() == .In {
-      pattern = .Some(first_name)
-      pattern_span = .Some(first_span)
-      index = .Some(c.at(2).text())
-      index_span = .Some(c.at(2).span())
-      c = .at(4)
-      parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_iter.diagnostics)
-      iter = .Some(parsed_iter.value)
-      c = parsed_iter.cursor
-    } else {
-      parsed_cond := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_cond.diagnostics)
-      condition = .Some(parsed_cond.value)
-      c = parsed_cond.cursor
-    }
-  } else {
-    parsed_cond := parse_expr_bp(c, 0)
-    diagnostics_out = .concat(parsed_cond.diagnostics)
-    condition = .Some(parsed_cond.value)
-    c = parsed_cond.cursor
-  }
-
+  head := parse_iter_head(c, "for loop")
+  c = head.cursor
+  diagnostics_out := head.diagnostics
   parsed_body := parse_block(c)
   diagnostics_out = .concat(parsed_body.diagnostics)
   body := parsed_body.value
   c = parsed_body.cursor
   stmt: Stmt = .For(
     ForStmt.{
-      pattern,
-      pattern_span,
-      element_pattern,
-      index,
-      index_span,
-      iter,
-      condition,
+      pattern: head.pattern,
+      pattern_span: head.pattern_span,
+      element_pattern: head.element_pattern,
+      index: head.index,
+      index_span: head.index_span,
+      iter: head.iter,
+      condition: head.condition,
       body,
       span: c.span_from(start_pos),
     },
