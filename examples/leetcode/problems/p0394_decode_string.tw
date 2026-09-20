@@ -2,15 +2,9 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 // https://leetcode.com/problems/decode-string/
-// Expand encodings like "3[a2[c]]" -> "accaccacc". Two stacks hold the pending
-// repeat counts and prefixes; a stray ']' pops an empty stack and surfaces as
-// an Err via `try`, and an unclosed '[' is caught at the end.
-fn pop<T>(stack: Vector<T>) Result<(T, Vector<T>), String> {
-  case stack.last() {
-    .Some(v) => .Ok((v, stack.drop_last())),
-    .None => .Err("stack underflow"),
-  }
-}
+// Expand encodings like "3[a2[c]]" -> "accaccacc". Each frame holds the
+// repeat count and prefix for one open bracket.
+type DecodeFrame = .{ count: Int, prefix: String }
 
 fn repeat(s: String, k: Int) String {
   // Keep this as ordinary immutable concat. The compiler recognizes this
@@ -27,8 +21,7 @@ fn repeat(s: String, k: Int) String {
 }
 
 fn decode(s: String) Result<String, String> {
-  counts: Vector<Int> = []
-  prefixes: Vector<String> = []
+  frames: Vector<DecodeFrame> = []
   cur := ""
   num := 0
 
@@ -38,19 +31,14 @@ fn decode(s: String) Result<String, String> {
         num = num * 10 + (code - '0')
       },
       code == '[' => {
-        counts = .append(num)
-        prefixes = .append(cur)
+        frames = .append(DecodeFrame.{ count: num, prefix: cur })
         cur = ""
         num = 0
       },
       code == ']' => {
-        (k, remaining_counts) := try pop(counts)
-        counts = remaining_counts
-        (prefix, remaining_prefixes) := try pop(prefixes)
-        prefixes = remaining_prefixes
-        expanded := repeat(cur, k)
-        cur = prefix
-        cur = .concat(expanded)
+        frame := try frames.last().ok_or("stack underflow")
+        frames = .drop_last()
+        cur = frame.prefix.concat(repeat(cur, frame.count))
       },
       _ => {
         cur = .concat(s.slice(i, i + 1))
@@ -58,7 +46,7 @@ fn decode(s: String) Result<String, String> {
     }
   }
 
-  if !counts.is_empty() {
+  if !frames.is_empty() {
     return .Err("unclosed bracket")
   }
 
