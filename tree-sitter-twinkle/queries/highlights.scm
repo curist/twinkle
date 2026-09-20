@@ -133,6 +133,11 @@
 (parameter
   name: (identifier) @variable.parameter)
 
+; Tuple patterns introduce names, like parameter bindings.
+(tuple_pattern
+  (identifier_pattern
+    (identifier) @variable.parameter))
+
 ; Fields
 (field_access
   field: (identifier) @property)
@@ -208,6 +213,16 @@
   ";"
   "=>"
 ] @punctuation.delimiter
+
+; Make tuple structure stand out from ordinary grouping and argument lists.
+(tuple_literal
+  ["(" ")" ","] @punctuation.special)
+
+(tuple_pattern
+  ["(" ")" ","] @punctuation.special)
+
+(tuple_type
+  ["(" ")" ","] @punctuation.special)
 
 ; String interpolation delimiters - after brackets so } takes priority over punctuation.bracket
 (interpolation
