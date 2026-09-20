@@ -3,8 +3,8 @@ use @std.testing as runner
 
 // https://leetcode.com/problems/diameter-of-binary-tree/
 // Longest path (in edges) between any two nodes. A single post-order walk
-// returns both the subtree height and the best diameter seen. There are no
-// tuples, so the two results ride in a small record.
+// returns both the subtree height and the best diameter seen. The result uses
+// a record because the two values have distinct meanings.
 type Tree = { Empty, Node(Tree, Int, Tree) }
 
 type Probe = .{ height: Int, diameter: Int }

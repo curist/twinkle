@@ -19,16 +19,16 @@ fn flush(stack: Vector<Int>, op: Int, num: Int) Result<Vector<Int>, String> {
     '+' => .Ok(stack.append(num)),
     '-' => .Ok(stack.append(-num)),
     '*' => {
-      top := try pop(stack)
-      .Ok(top._1.append(top._0 * num))
+      (top, rest) := try pop(stack)
+      .Ok(rest.append(top * num))
     },
     '/' => {
       if num == 0 {
         return .Err("division by zero")
       }
 
-      top := try pop(stack)
-      .Ok(top._1.append(top._0 / num))
+      (top, rest) := try pop(stack)
+      .Ok(rest.append(top / num))
     },
     _ => .Err("bad operator"),
   }

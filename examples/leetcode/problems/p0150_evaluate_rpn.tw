@@ -35,21 +35,21 @@ fn eval_rpn(tokens: Vector<String>) Result<Int, String> {
         stack = .append(n)
       },
       .None => {
-        right := try pop(stack)
-        left := try pop(right._1)
-        value := try apply(tok, left._0, right._0)
-        stack = left._1.append(value)
+        (right, after_right) := try pop(stack)
+        (left, after_left) := try pop(after_right)
+        value := try apply(tok, left, right)
+        stack = after_left.append(value)
       },
     }
   }
 
-  top := try pop(stack)
+  (top, rest) := try pop(stack)
 
-  if !top._1.is_empty() {
+  if !rest.is_empty() {
     return .Err("too many operands")
   }
 
-  .Ok(top._0)
+  .Ok(top)
 }
 
 pub fn suite() {

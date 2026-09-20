@@ -44,12 +44,12 @@ fn decode(s: String) Result<String, String> {
         num = 0
       },
       code == ']' => {
-        k := try pop(counts)
-        counts = k._1
-        prefix := try pop(prefixes)
-        prefixes = prefix._1
-        expanded := repeat(cur, k._0)
-        cur = prefix._0
+        (k, remaining_counts) := try pop(counts)
+        counts = remaining_counts
+        (prefix, remaining_prefixes) := try pop(prefixes)
+        prefixes = remaining_prefixes
+        expanded := repeat(cur, k)
+        cur = prefix
         cur = .concat(expanded)
       },
       _ => {
