@@ -84,6 +84,24 @@ fn type_is_path(ty: ast.TypeExpr, expected_last_seg: String) Bool {
   }
 }
 
+fn assert_ident_pattern(p: ast.Pattern, name: String) Result<Void, String> {
+  case p.kind {
+    .Ident(n) => if n == name {
+      .Ok({})
+    } else {
+      .Err("expected ident pattern '${name}', got '${n}'")
+    },
+    _ => .Err("expected ident pattern '${name}', got a different pattern kind"),
+  }
+}
+
+fn assert_wildcard_pattern(p: ast.Pattern) Result<Void, String> {
+  case p.kind {
+    .Wildcard => .Ok({}),
+    _ => .Err("expected wildcard pattern"),
+  }
+}
+
 // ── Fixture Helpers ──────────────────────────────────────────────────
 fn read_fixture(path: String) Result<String, String> {
   case fs.read_text(path) {
@@ -2402,6 +2420,128 @@ pub fn suite() runner.Suite {
         msg := parsed.diagnostics[0].message()
         try assert.is_true(msg.contains("last arm"))
         .Ok({})
+      },
+    )
+    .test(
+      "tuple let binds names in block position",
+      fn() {
+        src := "fn f() Int {\n  (a, b) := (3, 4)\n  a\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() == 0)
+        stmt := try parse_body_stmt(src, 0)
+
+        case stmt {
+          .LetPattern(lp) => {
+            try assert.is_none(lp.ty)
+
+            case lp.pattern.kind {
+              .Tuple(elems) => {
+                try assert.is_true(elems.len() == 2)
+                try assert_ident_pattern(elems[0], "a")
+                try assert_ident_pattern(elems[1], "b")
+                .Ok({})
+              },
+              _ => assert.fail("expected tuple pattern"),
+            }
+          },
+          _ => assert.fail("expected LetPattern stmt"),
+        }
+      },
+    )
+    .test(
+      "tuple tail expression is not consumed as a statement",
+      fn() {
+        src := "fn divmod(a: Int, b: Int) (Int, Int) { (a / b, a % b) }"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() == 0)
+        tail := try parse_body_tail(src)
+        assert_expr_kind(tail, "Tuple")
+      },
+    )
+    .test(
+      "annotated tuple let carries a type",
+      fn() {
+        src := "fn f() Int {\n  (a, b): (Int, Int) = (1, 2)\n  a\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() == 0)
+        stmt := try parse_body_stmt(src, 0)
+
+        case stmt {
+          .LetPattern(lp) => assert.is_some(lp.ty),
+          _ => assert.fail("expected LetPattern stmt"),
+        }
+      },
+    )
+    .test(
+      "module-level tuple let parses to a LetPattern item",
+      fn() {
+        src := "fn dm(a: Int, b: Int) (Int, Int) { (a / b, a % b) }\n(q, r) := dm(17, 5)"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() == 0)
+        found := false
+
+        for item in parsed.value.items {
+          case item {
+            .Stmt(s) => case s {
+              .LetPattern(_) => {
+                found = true
+              },
+              _ => {},
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found)
+      },
+    )
+    .test(
+      "tuple-pattern rebind is a clean diagnostic",
+      fn() {
+        src := "fn f() Int {\n  a := 1\n  b := 2\n  (a, b) = (3, 4)\n  a\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() >= 1)
+        found := false
+
+        for d in parsed.diagnostics {
+          if d.message().contains("rebind") {
+            found = true
+          }
+        }
+
+        assert.is_true(found)
+      },
+    )
+    .test(
+      "nested tuple let with wildcard parses",
+      fn() {
+        src := "fn f() Int {\n  ((a, b), _) := ((1, 2), 3)\n  a\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() == 0)
+        stmt := try parse_body_stmt(src, 0)
+
+        case stmt {
+          .LetPattern(lp) => case lp.pattern.kind {
+            .Tuple(elems) => {
+              try assert.is_true(elems.len() == 2)
+
+              case elems[0].kind {
+                .Tuple(inner) => {
+                  try assert.is_true(inner.len() == 2)
+                  try assert_ident_pattern(inner[0], "a")
+                  try assert_ident_pattern(inner[1], "b")
+                  .Ok({})
+                },
+                _ => assert.fail("expected nested tuple pattern"),
+              }
+
+              try assert_wildcard_pattern(elems[1])
+              .Ok({})
+            },
+            _ => assert.fail("expected tuple pattern"),
+          },
+          _ => assert.fail("expected LetPattern stmt"),
+        }
       },
     )
 }

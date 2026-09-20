@@ -6,8 +6,9 @@ use lib.source.span.{Span}
 use .ast.{
   BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, DeferStmt, Expr, ExprKind,
   ExprStmt, ExternFunctionDecl, ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, ImportTypeItem,
-  ImportValueItem, Item, LetStmt, Module, Param, Pattern, RecordEntry, RecordField, ReturnStmt, Stmt,
-  StringPart, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UnOp, UseDecl, VariantDecl,
+  ImportValueItem, Item, LetPatternStmt, LetStmt, Module, Param, Pattern, RecordEntry, RecordField,
+  ReturnStmt, Stmt, StringPart, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UnOp, UseDecl,
+  VariantDecl,
 }
 use .cursor
 use .cursor.{Cursor}
@@ -2945,6 +2946,137 @@ fn parse_stmt(c: Cursor) StmtParse {
   }
 }
 
+// Convert a parsed tuple/ident expression into a binding pattern. Returns
+// `.Some` only when every leaf is a name, `_`, or a nested tuple of the same —
+// i.e. the shape is bindable. Anything else (calls, literals, field access)
+// yields `.None`, signalling the caller to emit a diagnostic.
+fn tuple_expr_to_pattern(e: Expr) Pattern? {
+  case e.kind {
+    .Ident(name) => if name == "_" {
+      .Some(Pattern.{ kind: .Wildcard, span: e.span })
+    } else {
+      .Some(Pattern.{ kind: .Ident(name), span: e.span })
+    },
+    .Tuple(elems) => {
+      subs: Vector<Pattern> = []
+
+      for el in elems {
+        p := try tuple_expr_to_pattern(el)
+        subs = .append(p)
+      }
+
+      .Some(Pattern.{ kind: .Tuple(subs), span: e.span })
+    },
+    _ => .None,
+  }
+}
+
+// Peek-and-reinterpret a `(`-led statement as a tuple-destructuring binding.
+// Parses the leading parenthesised expression, then decides by the following
+// token: `:=` / `: T =` produce a `LetPattern`; a bare `=` is a rebind attempt
+// (unsupported, clean diagnostic); anything else (e.g. a tuple *tail* expression
+// like `(a / b, a % b)`) returns `.None` so the caller keeps its normal path.
+fn try_parse_tuple_let(c: Cursor) StmtParse? {
+  start_pos := c.pos
+
+  // Parse the LHS above the binding power of `=` (`.Assign`, bp 1) so a trailing
+  // `=` is left unconsumed and can be caught as a rebind attempt below. All other
+  // infix operators bind tighter, so ordinary expressions parse unchanged.
+  parsed_expr := parse_expr_bp(c, 2)
+  expr := parsed_expr.value
+  after := parsed_expr.cursor
+
+  is_tuple := case expr.kind {
+    .Tuple(_) => true,
+    _ => false,
+  }
+
+  if !is_tuple {
+    return .None
+  }
+
+  nk := after.kind()
+
+  if nk == .Eq {
+    diagnostics_out := parsed_expr.diagnostics
+    diagnostics_out = .append(
+      diag.error(
+        after.span(),
+        "tuple-pattern rebind not supported; use ':=' for a new binding or 'case' to match",
+      ),
+    )
+    parsed_value := parse_expr_bp(after.advance(), 0)
+    diagnostics_out = .concat(parsed_value.diagnostics)
+    c2 := parsed_value.cursor
+    stmt: Stmt = .ErrorStmt(c2.span_from(start_pos))
+
+    return .Some(.{ value: stmt, cursor: c2, diagnostics: diagnostics_out })
+  }
+
+  if nk != .ColonEq and nk != .Colon {
+    return .None
+  }
+
+  pattern_diags: Vector<DiagKind> = []
+  pattern := case tuple_expr_to_pattern(expr) {
+    .Some(p) => p,
+    .None => {
+      pattern_diags = .append(
+        diag.error(
+          expr.span,
+          "tuple binding pattern must contain only names, `_`, or nested tuples",
+        ),
+      )
+      Pattern.{ kind: .ErrorPattern, span: expr.span }
+    },
+  }
+
+  if nk == .ColonEq {
+    diagnostics_out := parsed_expr.diagnostics
+    diagnostics_out = .concat(pattern_diags)
+    parsed_value := parse_expr_bp(after.advance(), 0)
+    diagnostics_out = .concat(parsed_value.diagnostics)
+    c2 := parsed_value.cursor
+    stmt: Stmt = .LetPattern(
+      LetPatternStmt.{
+        pattern,
+        ty: .None,
+        value: parsed_value.value,
+        span: c2.span_from(start_pos),
+      },
+    )
+
+    return .Some(.{ value: stmt, cursor: c2, diagnostics: diagnostics_out })
+  }
+
+  // nk == .Colon: annotated form `(a, b): (Int, Int) = expr`
+  diagnostics_out := parsed_expr.diagnostics
+  diagnostics_out = .concat(pattern_diags)
+  parsed_ty := parse_type_expr(after.advance())
+  diagnostics_out = .concat(parsed_ty.diagnostics)
+  ty_c := parsed_ty.cursor
+
+  if ty_c.kind() != .Eq {
+    diagnostics_out = .append(diag.error(ty_c.span(), "expected '=' after typed tuple binding"))
+    stmt: Stmt = .ErrorStmt(ty_c.span_from(start_pos))
+
+    return .Some(.{ value: stmt, cursor: ty_c, diagnostics: diagnostics_out })
+  }
+
+  parsed_value := parse_expr_bp(ty_c.advance(), 0)
+  diagnostics_out = .concat(parsed_value.diagnostics)
+  c2 := parsed_value.cursor
+  stmt: Stmt = .LetPattern(
+    LetPatternStmt.{
+      pattern,
+      ty: .Some(parsed_ty.value),
+      value: parsed_value.value,
+      span: c2.span_from(start_pos),
+    },
+  )
+  .Some(.{ value: stmt, cursor: c2, diagnostics: diagnostics_out })
+}
+
 fn parse_block(c: Cursor) BlockParse {
   diagnostics_out: Vector<DiagKind> = []
   stmts: Vector<Stmt> = []
@@ -2990,6 +3122,23 @@ fn parse_block(c: Cursor) BlockParse {
       continue
     }
 
+    if k == .LParen {
+      case try_parse_tuple_let(c) {
+        .Some(sp) => {
+          diagnostics_out = .concat(sp.diagnostics)
+          stmts = .append(sp.value)
+          c = sp.cursor
+
+          if c.kind() == .Semi {
+            c = .advance()
+          }
+
+          continue
+        },
+        .None => {},
+      }
+    }
+
     parsed_expr := parse_expr_bp(c, 0)
     diagnostics_out = .concat(parsed_expr.diagnostics)
     expr := parsed_expr.value
@@ -3027,12 +3176,12 @@ fn parse_block(c: Cursor) BlockParse {
   .{ value: block, cursor: c.advance(), diagnostics: diagnostics_out }
 }
 
-fn parse_top_level_stmt(c: Cursor) ItemParse {
-  start_pos := c.pos
-  parsed_stmt := parse_stmt(c)
-  diagnostics_out := parsed_stmt.diagnostics
-  c = parsed_stmt.cursor
-
+fn finish_top_level_stmt(
+  start_pos: Int,
+  stmt_value: Stmt,
+  c: Cursor,
+  diagnostics_out: Vector<DiagKind>,
+) ItemParse {
   if c.pos <= start_pos {
     c = .with_pos(start_pos + 1)
   }
@@ -3043,14 +3192,29 @@ fn parse_top_level_stmt(c: Cursor) ItemParse {
 
   // If we consumed to EOF or explicit item start boundary, return.
   if c.kind() == .Eof {
-    return .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+    return .{ value: .Stmt(stmt_value), cursor: c, diagnostics: diagnostics_out }
   }
 
   if c.pos < c.tokens.len() and c.preceded_by_newline() and is_item_start(c.kind()) {
-    return .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+    return .{ value: .Stmt(stmt_value), cursor: c, diagnostics: diagnostics_out }
   }
 
-  .{ value: .Stmt(parsed_stmt.value), cursor: c, diagnostics: diagnostics_out }
+  .{ value: .Stmt(stmt_value), cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_top_level_stmt(c: Cursor) ItemParse {
+  start_pos := c.pos
+
+  // A `(`-led top-level statement may be a tuple-destructuring binding.
+  if c.kind() == .LParen {
+    case try_parse_tuple_let(c) {
+      .Some(sp) => return finish_top_level_stmt(start_pos, sp.value, sp.cursor, sp.diagnostics),
+      .None => {},
+    }
+  }
+
+  parsed_stmt := parse_stmt(c)
+  finish_top_level_stmt(start_pos, parsed_stmt.value, parsed_stmt.cursor, parsed_stmt.diagnostics)
 }
 
 fn parse_pub_top_level_stmt(c: Cursor) ItemParse {
