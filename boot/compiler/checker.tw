@@ -3993,6 +3993,7 @@ fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
       ib := cur_ctx.bind_iterable_vars(
         iter_expr,
         for_stmt.pattern,
+        for_stmt.element_pattern,
         for_stmt.index,
         "for-loop",
         cur_diags,
@@ -4018,6 +4019,7 @@ fn bind_iterable_vars(
   ctx: InferCtx,
   iter_expr: Expr,
   pattern: String?,
+  element_pattern: Pattern?,
   index: String?,
   index_err_label: String,
   diags: Vector<DiagKind>,
@@ -4032,7 +4034,29 @@ fn bind_iterable_vars(
   // iterable. Lowering consumes it directly instead of re-deriving the mode from
   // the receiver's `Var(_)` shape or a separate `method_calls` entry.
   cur_ctx.iterable_lowering[iter_expr.id] = .{ elem_ty: info.elem_ty, kind: info.kind }
-  cur_ctx = .bind_optional(pattern, info.elem_ty)
+
+  case element_pattern {
+    .Some(pat) => if pattern_is_irrefutable(pat) {
+      pr := check_pattern(pat, info.elem_ty, cur_ctx, cur_diags)
+      cur_ctx = pr.ctx
+      cur_diags = pr.diags
+    } else {
+      cur_diags = .append(
+        .Error(
+          .ParseError(
+            .{
+              span: pat.span,
+              message: "refutable pattern not allowed in a loop binding; use `case`",
+              help_lines: [],
+            },
+          ),
+        ),
+      )
+    },
+    .None => {
+      cur_ctx = .bind_optional(pattern, info.elem_ty)
+    },
+  }
 
   case index {
     .Some(idx_name) => if info.secondary_allowed {
@@ -4191,7 +4215,14 @@ fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<DiagKind
 
   case ce.iter {
     .Some(iter_expr) => {
-      ib := cur_ctx.bind_iterable_vars(iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      ib := cur_ctx.bind_iterable_vars(
+        iter_expr,
+        ce.pattern,
+        ce.element_pattern,
+        ce.index,
+        "collect",
+        cur_diags,
+      )
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },
@@ -4221,7 +4252,14 @@ fn check_collect(
 
   case ce.iter {
     .Some(iter_expr) => {
-      ib := cur_ctx.bind_iterable_vars(iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      ib := cur_ctx.bind_iterable_vars(
+        iter_expr,
+        ce.pattern,
+        ce.element_pattern,
+        ce.index,
+        "collect",
+        cur_diags,
+      )
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },

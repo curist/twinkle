@@ -1,72 +1,13 @@
 //! Block statement chain lowering.
 
-use compiler.ast.{Block, Expr, Pattern, Stmt}
-use compiler.core_ir.{CoreExpr, FieldId, LocalId}
+use compiler.ast.{Block, Expr, Stmt}
+use compiler.core_ir.{CoreExpr, LocalId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
-use compiler.lower_core.helpers.{is_terminal, local_expr, record_get_expr, void_expr}
+use compiler.lower_core.helpers.{is_terminal, local_expr, void_expr}
 use compiler.lower_core.iteration.{lower_for}
 use compiler.lower_core.lvalues.{lower_lvalue_assign}
-use compiler.lower_core.types.{tuple_field_types}
-use compiler.mono_type.{MonoType}
+use compiler.lower_core.pattern_bindings.{LoweredStmt, lower_pattern_bindings, wrap_lowered}
 use lib.source.span.{Span}
-
-type LoweredStmt = { LocalLet(LocalId, CoreExpr, Span), AnonLet(CoreExpr, Span) }
-
-type LetPatternLowerOut = .{ stmts: Vector<LoweredStmt>, ctx: LowerCtx }
-
-// Desugar an irrefutable pattern binding against `base` (a Core expr already
-// evaluated exactly once) into a flat sequence of `LocalLet`s: `.Ident` leaves
-// bind directly to `base`/a field read of it, `.Tuple` sub-patterns recurse
-// through positional `._N` field reads (an intermediate anon temp per nesting
-// level so each field read is only evaluated once), and `.Wildcard` binds
-// nothing. Mirrors `lower_pattern`'s traversal shape, but emits ordinary
-// field-read statements instead of a variant-match `CorePattern` — there is
-// nothing to match here, only to bind.
-fn lower_pattern_bindings(ctx: LowerCtx, base: CoreExpr, pat: Pattern, span: Span) LetPatternLowerOut {
-  case pat.kind {
-    .Wildcard => .{ stmts: [], ctx },
-    .Ident(name) => {
-      lo := ctx.alloc_local(name)
-      .{ stmts: [.LocalLet(lo.local, base, span)], ctx: lo.ctx }
-    },
-    .Tuple(subs) => {
-      field_tys := tuple_field_types(base.ty, ctx.env)
-      out_stmts: Vector<LoweredStmt> = []
-      cur_ctx := ctx
-
-      for i in 0..subs.len() {
-        sub_ty := if i < field_tys.len() {
-          field_tys[i]
-        } else {
-          MonoType.Void
-        }
-        field := record_get_expr(base, FieldId.{ id: i }, sub_ty, span)
-
-        // For a nested tuple sub-pattern, bind an intermediate temp so the
-        // field read is evaluated once, then recurse against the temp.
-        case subs[i].kind {
-          .Tuple(_) => {
-            tlo := cur_ctx.alloc_anon_local()
-            cur_ctx = tlo.ctx
-            out_stmts = .append(.LocalLet(tlo.local, field, span))
-            temp_expr := local_expr(tlo.local, sub_ty, span)
-            r := lower_pattern_bindings(cur_ctx, temp_expr, subs[i], span)
-            cur_ctx = r.ctx
-            out_stmts = .concat(r.stmts)
-          },
-          _ => {
-            r := lower_pattern_bindings(cur_ctx, field, subs[i], span)
-            cur_ctx = r.ctx
-            out_stmts = .concat(r.stmts)
-          },
-        }
-      }
-
-      .{ stmts: out_stmts, ctx: cur_ctx }
-    },
-    _ => .{ stmts: [], ctx },
-  }
-}
 
 pub fn lower_stmts(
   ctx: LowerCtx,
@@ -233,35 +174,4 @@ pub fn lower_stmts(
   }
 
   wrap_lowered(lowered, tail_out)
-}
-
-fn wrap_lowered(lowered: Vector<LoweredStmt>, tail: ExprOut) ExprOut {
-  result_expr := tail.expr
-  cur_ctx := tail.ctx
-  i := lowered.len() - 1
-
-  for i >= 0 {
-    case lowered[i] {
-      .LocalLet(local, value, stmt_span) => {
-        result_expr = .{
-          kind: .Let(local, value, result_expr),
-          ty: result_expr.ty,
-          span: stmt_span,
-        }
-      },
-      .AnonLet(value, stmt_span) => {
-        ao := cur_ctx.alloc_anon_local()
-        result_expr = .{
-          kind: .Let(ao.local, value, result_expr),
-          ty: result_expr.ty,
-          span: stmt_span,
-        }
-        cur_ctx = ao.ctx
-      },
-    }
-
-    i = .dec()
-  }
-
-  .{ expr: result_expr, ctx: cur_ctx }
 }

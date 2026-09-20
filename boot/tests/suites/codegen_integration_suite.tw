@@ -825,6 +825,36 @@ fn test_let_pattern_module_global() Result<Void, String> {
   )
 }
 
+// ── `for`/`collect` element-pattern destructuring, end-to-end execution ──
+// `for (a, b) in xs { .. }` and `collect (a, b) in xs { .. }` route through
+// the same `bind_iterable_vars` (checker) / `setup_indexed_iter` (lowering)
+// change points as the plain-name form; run the generated Wasm to confirm
+// the per-element destructure actually binds the right values.
+fn test_for_element_pattern_destructure() Result<Void, String> {
+  // (1*10+2) + (3*10+4) = 12 + 34 = 46.
+  assert_runs_to(
+    "fn main() Int {\n  xs := [(1, 2), (3, 4)]\n  sum := 0\n  for (a, b) in xs { sum = sum + a * 10 + b }\n  sum\n}\nc := main()\nif c != 46 { error(\"bad\") }\n",
+    0,
+    "for element-pattern destructure",
+  )
+}
+
+fn test_for_element_pattern_destructure_with_index() Result<Void, String> {
+  assert_runs_to(
+    "fn main() Int {\n  xs := [(1, 2), (3, 4)]\n  acc := 0\n  for (a, b), i in xs { acc = acc + (a + b) * i }\n  acc\n}\nc := main()\nif c != 7 { error(\"bad\") }\n",
+    0,
+    "for element-pattern destructure with index",
+  )
+}
+
+fn test_collect_element_pattern_destructure() Result<Void, String> {
+  assert_runs_to(
+    "fn main() Int {\n  xs := [(1, 2), (3, 4)]\n  ys := collect (a, b) in xs { a + b }\n  ys[0] * 10 + ys[1]\n}\nc := main()\nif c != 37 { error(\"bad\") }\n",
+    0,
+    "collect element-pattern destructure",
+  )
+}
+
 // ── Structural validation (inspects LinkedModule, not WAT text) ─────
 fn has_func_named(linked: LinkedModule, name: String) Bool {
   for f in linked.funcs {
@@ -1256,6 +1286,12 @@ pub fn suite() runner.Suite {
     .test("let-pattern: nested with wildcard", test_let_pattern_nested_with_wildcard)
     .test("let-pattern: single evaluation", test_let_pattern_single_evaluation)
     .test("let-pattern: module global", test_let_pattern_module_global)
+    .test("for: element-pattern destructure", test_for_element_pattern_destructure)
+    .test(
+      "for: element-pattern destructure with index",
+      test_for_element_pattern_destructure_with_index,
+    )
+    .test("collect: element-pattern destructure", test_collect_element_pattern_destructure)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",

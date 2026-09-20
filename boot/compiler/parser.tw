@@ -2392,12 +2392,43 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   c = .advance()
   pattern: String? = .None
   pattern_span: Span? = .None
+  element_pattern: Pattern? = .None
   index: String? = .None
   index_span: Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 
-  if c.kind() == .Ident {
+  if c.kind() == .LParen {
+    parsed_pat := parse_pattern(c)
+    diagnostics_out = .concat(parsed_pat.diagnostics)
+    pat := parsed_pat.value
+    after_pat := parsed_pat.cursor
+
+    if after_pat.kind() == .Comma
+      and after_pat.at(1).kind() == .Ident and after_pat.at(2).kind() == .In {
+      element_pattern = .Some(pat)
+      index = .Some(after_pat.at(1).text())
+      index_span = .Some(after_pat.at(1).span())
+      c = after_pat.at(3)
+      parsed_iter := parse_expr_bp(c, 0)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.value)
+      c = parsed_iter.cursor
+    } else if after_pat.kind() == .In {
+      element_pattern = .Some(pat)
+      c = after_pat.at(1)
+      parsed_iter := parse_expr_bp(c, 0)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.value)
+      c = parsed_iter.cursor
+    } else {
+      diagnostics_out = .append(
+        diag.error(after_pat.span(), "expected 'in' after tuple pattern in collect"),
+      )
+      element_pattern = .Some(pat)
+      c = after_pat
+    }
+  } else if c.kind() == .Ident {
     first_name := c.text()
     first_span := c.span()
 
@@ -2442,7 +2473,7 @@ fn parse_collect_expr(c: Cursor) ExprParse {
       CollectExpr.{
         pattern,
         pattern_span,
-        element_pattern: .None,
+        element_pattern,
         index,
         index_span,
         iter,
@@ -2855,12 +2886,43 @@ fn parse_for_stmt(c: Cursor) StmtParse {
   c = .advance()
   pattern: String? = .None
   pattern_span: Span? = .None
+  element_pattern: Pattern? = .None
   index: String? = .None
   index_span: Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 
-  if c.kind() == .Ident {
+  if c.kind() == .LParen {
+    parsed_pat := parse_pattern(c)
+    diagnostics_out = .concat(parsed_pat.diagnostics)
+    pat := parsed_pat.value
+    after_pat := parsed_pat.cursor
+
+    if after_pat.kind() == .Comma
+      and after_pat.at(1).kind() == .Ident and after_pat.at(2).kind() == .In {
+      element_pattern = .Some(pat)
+      index = .Some(after_pat.at(1).text())
+      index_span = .Some(after_pat.at(1).span())
+      c = after_pat.at(3)
+      parsed_iter := parse_expr_bp(c, 0)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.value)
+      c = parsed_iter.cursor
+    } else if after_pat.kind() == .In {
+      element_pattern = .Some(pat)
+      c = after_pat.at(1)
+      parsed_iter := parse_expr_bp(c, 0)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
+      iter = .Some(parsed_iter.value)
+      c = parsed_iter.cursor
+    } else {
+      diagnostics_out = .append(
+        diag.error(after_pat.span(), "expected 'in' after tuple pattern in for loop"),
+      )
+      element_pattern = .Some(pat)
+      c = after_pat
+    }
+  } else if c.kind() == .Ident {
     first_name := c.text()
     first_span := c.span()
 
@@ -2903,7 +2965,7 @@ fn parse_for_stmt(c: Cursor) StmtParse {
     ForStmt.{
       pattern,
       pattern_span,
-      element_pattern: .None,
+      element_pattern,
       index,
       index_span,
       iter,

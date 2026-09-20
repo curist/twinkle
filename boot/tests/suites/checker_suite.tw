@@ -3218,4 +3218,13 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "for-loop element pattern rejects refutable sub-pattern",
+      fn() {
+        src := "fn main() Void {\n  xs := [(1, 2)]\n  for (a, .Some(x)) in xs { }\n}"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs.join("\n"), "refutable")
+        .Ok({})
+      },
+    )
 }

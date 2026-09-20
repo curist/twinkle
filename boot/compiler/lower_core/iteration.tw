@@ -1,6 +1,6 @@
 //! Collect and for-loop lowering helpers.
 
-use compiler.ast.{Block, CollectExpr, Expr, ForStmt}
+use compiler.ast.{Block, CollectExpr, Expr, ForStmt, Pattern}
 use compiler.builder_family.{BuilderConfig, vector_builder_config}
 use compiler.builtin_refs
 use compiler.checker.{IterableLoweringKind}
@@ -11,6 +11,7 @@ use compiler.lower_core.control_flow.{rewrite_index_loop_continue}
 use compiler.lower_core.helpers.{
   global_func_expr, local_expr, record_get_expr, variant_pattern, void_expr,
 }
+use compiler.lower_core.pattern_bindings.{lower_pattern_bindings, wrap_lowered}
 use compiler.lower_core.types.{find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono}
 use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
@@ -36,6 +37,7 @@ fn setup_indexed_iter(
   ctx: LowerCtx,
   iter_expr: Expr,
   pattern: String?,
+  element_pattern: Pattern?,
   index: String?,
   body: Block,
   s: Span,
@@ -106,7 +108,10 @@ fn setup_indexed_iter(
     .Some(name) => name,
     .None => "_",
   }
-  elem_lo := ctx.alloc_local(elem_name)
+  elem_lo := case element_pattern {
+    .Some(_) => ctx.alloc_anon_local(),
+    .None => ctx.alloc_local(elem_name),
+  }
   elem_local := elem_lo.local
   ctx = elem_lo.ctx
   idx_user_local: LocalId? = .None
@@ -120,9 +125,19 @@ fn setup_indexed_iter(
     .None => {},
   }
 
+  destructure_stmts := case element_pattern {
+    .Some(pat) => {
+      br := lower_pattern_bindings(ctx, local_expr(elem_local, elem_ty, s), pat, s)
+      ctx = br.ctx
+      br.stmts
+    },
+    .None => [],
+  }
+
   body_r := lower_block_fn(ctx, body)
   ctx = body_r.ctx
   ctx = .pop_scope()
+  body_r = wrap_lowered(destructure_stmts, body_r)
   .{
     ctx,
     arr_local,
@@ -665,6 +680,7 @@ pub fn lower_collect(
         ctx,
         iter_expr,
         ce.pattern,
+        ce.element_pattern,
         ce.index,
         ce.body,
         s,
@@ -724,6 +740,7 @@ pub fn lower_for(
         ctx,
         iter_expr,
         for_stmt.pattern,
+        for_stmt.element_pattern,
         for_stmt.index,
         for_stmt.body,
         s,
