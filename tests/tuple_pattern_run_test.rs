@@ -286,6 +286,35 @@ if r != 37 { error("mismatch") }
     );
 }
 
+/// `collect (a, b) in <Iterator<T>> { ... }` — tuple-pattern element binding
+/// in a `collect` comprehension over `Iterator<(Int, Int)>` (as opposed to
+/// the Vector/String path exercised by `tuple_collect_destructure_runs`
+/// above). The checker accepts this (`bind_tuple_pattern` in the
+/// `MonoType::Named { type_id: ITERATOR_TYPE_ID, .. }` arm of
+/// `collect_impl`, `src/types/check.rs`) and boot supports it, but
+/// `lower_iterator_collect` had no `Pattern::Tuple` wiring, so a
+/// well-typed program hit `LowerError::InternalError` ("unresolved name
+/// 'a' ... compiler bug") instead of compiling. Body is `a * 10 + b` (not
+/// `a + b`) specifically so a field swap (binding `a`/`b` to the wrong
+/// positional `RecordGet`) changes the result — this asserts field order,
+/// not just that both fields round-trip.
+#[test]
+fn tuple_collect_iterator_destructure_runs() {
+    assert_program_matches_expected(
+        r#"
+fn main() Int {
+  it := Iterator.unfold(0, fn(n: Int) {
+    if n < 2 { UnfoldStep.Yield((n, n * 10), n + 1) } else { UnfoldStep.Done }
+  })
+  ys := collect (a, b) in it { a * 10 + b }
+  ys[0] * 100 + ys[1]
+}
+r := main()
+if r != 20 { error("mismatch") }
+"#,
+    );
+}
+
 /// `((a, b), _) := ((1, 2), 3)` — nested tuple-pattern let, block-level
 /// (inside a function, not module-level). Exercises the intermediate-temp
 /// recursion in `lower_tuple_pattern_bindings` plus the wildcard leaf (`_`

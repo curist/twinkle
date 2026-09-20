@@ -1596,6 +1596,13 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        // NOTE: currently unreachable — `resolve_type_with_current_vars`
+        // (src/types/check.rs) only allows `Int | String | Byte` as a Dict
+        // key type (`TypeError::InvalidDictKey` otherwise), so `key_ty` here
+        // can never be a `TupleN` and `pattern` can never actually be
+        // `Pattern::Tuple` in a well-typed program. Kept for symmetry with
+        // the generic/iterator for-loop paths and in case that key-type
+        // restriction is ever lifted; do not assume this is exercised.
         if let Pattern::Tuple(..) = pattern {
             self.predeclare_tuple_pattern(pattern, false);
         }
@@ -1603,6 +1610,12 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         });
+        // NOTE: currently unreachable — the checker's `for`-over-Dict
+        // handling (src/types/check.rs) only binds the value/`index_pattern`
+        // slot when it is `Pattern::Ident`; a `Pattern::Tuple` there is
+        // simply never bound (no error, no binding), so `val_pattern` can
+        // never actually be `Some(Pattern::Tuple(..))` for a name that's
+        // referenced in `body`. Kept for symmetry/future-proofing only.
         if let Some(Pattern::Tuple(..)) = val_pattern {
             self.predeclare_tuple_pattern(val_pattern.unwrap(), false);
         }
@@ -4492,6 +4505,9 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        if let Pattern::Tuple(..) = pattern {
+            self.predeclare_tuple_pattern(pattern, false);
+        }
         let idx_user = index_pattern.and_then(|ip| {
             if let Pattern::Ident(name, _) = ip {
                 Some(self.local_allocator.alloc_and_bind(name.clone()))
@@ -4501,7 +4517,10 @@ impl Lowerer {
         });
         let body_val_local = self.local_allocator.alloc_and_bind("__c_val".to_string());
 
-        let body_expr = self.lower_expr(body)?;
+        let mut body_expr = self.lower_expr(body)?;
+        if let Pattern::Tuple(..) = pattern {
+            body_expr = self.lower_tuple_pattern_bindings(elem_local, &elem_ty, pattern, body_expr);
+        }
         let body_ty = body_expr.ty.clone();
         self.local_allocator.pop_scope();
 
@@ -4898,6 +4917,14 @@ impl Lowerer {
         };
 
         self.local_allocator.push_scope();
+        // NOTE: no `Pattern::Tuple` arm here (unlike the analogous for-loop
+        // path in `lower_dict_for_stmt`) — both `pattern` (Dict key) and
+        // `val_pattern` (Dict value) are currently unreachable as tuples: the
+        // checker restricts Dict keys to `Int | String | Byte`
+        // (`TypeError::InvalidDictKey`, src/types/check.rs), and the
+        // collect-over-Dict checker path only binds the value/`index_pattern`
+        // slot when it is `Pattern::Ident`. See the matching NOTE comments in
+        // `lower_dict_for_stmt`.
         let key_local = match pattern {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
