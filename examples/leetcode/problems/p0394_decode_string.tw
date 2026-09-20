@@ -2,10 +2,8 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 // https://leetcode.com/problems/decode-string/
-// Expand encodings like "3[a2[c]]" -> "accaccacc". Each frame holds the
+// Expand encodings like "3[a2[c]]" -> "accaccacc". Each stack entry pairs the
 // repeat count and prefix for one open bracket.
-type DecodeFrame = .{ count: Int, prefix: String }
-
 fn repeat(s: String, k: Int) String {
   // Keep this as ordinary immutable concat. The compiler recognizes this
   // consume-reassign loop and lowers it through the internal string builder.
@@ -21,7 +19,7 @@ fn repeat(s: String, k: Int) String {
 }
 
 fn decode(s: String) Result<String, String> {
-  frames: Vector<DecodeFrame> = []
+  frames: Vector<(Int, String)> = []
   cur := ""
   num := 0
 
@@ -31,14 +29,14 @@ fn decode(s: String) Result<String, String> {
         num = num * 10 + (code - '0')
       },
       code == '[' => {
-        frames = .append(DecodeFrame.{ count: num, prefix: cur })
+        frames = .append((num, cur))
         cur = ""
         num = 0
       },
       code == ']' => {
-        frame := try frames.last().ok_or("stack underflow")
+        (k, prefix) := try frames.last().ok_or("stack underflow")
         frames = .drop_last()
-        cur = frame.prefix.concat(repeat(cur, frame.count))
+        cur = prefix.concat(repeat(cur, k))
       },
       _ => {
         cur = .concat(s.slice(i, i + 1))
