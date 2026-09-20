@@ -1,6 +1,8 @@
 use super::env::{LocalEnv, TypeEnv, ValueEnv};
 use super::error::TypeError;
-use super::patterns::{PatternChecker, is_tuple_scrutinee};
+use super::patterns::{
+    PatternChecker, is_tuple_named, is_tuple_scrutinee, tuple_type_id_for_arity,
+};
 use super::ty::{
     CELL_TYPE_ID, CHANNEL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
     RANGE_TYPE_ID, RESULT_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
@@ -231,6 +233,33 @@ impl TypeChecker {
                             };
 
                             checker.value_env.add_value(name.clone(), value_ty);
+                        } else if let Pattern::Tuple(_, tuple_span) = pattern {
+                            // Module-global tuple destructuring — mirrors the
+                            // `Pattern::Ident` arm above (recovery bindings on
+                            // failure to avoid noisy follow-up diagnostics),
+                            // but binds every leaf identifier into module
+                            // scope (`value_env`) via `bind_tuple_pattern`.
+                            let rhs_ty = if let Some(ann_ty) = ty {
+                                match checker.resolve_type(ann_ty) {
+                                    Ok(t) => {
+                                        let _ = checker.check_expr(value, &t);
+                                        t
+                                    }
+                                    Err(()) => {
+                                        checker.bind_tuple_pattern_idents_recovery(pattern, true);
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                match checker.synth_expr(value) {
+                                    Ok(t) => checker.zonk(&t),
+                                    Err(()) => {
+                                        checker.bind_tuple_pattern_idents_recovery(pattern, true);
+                                        continue;
+                                    }
+                                }
+                            };
+                            let _ = checker.bind_tuple_pattern(pattern, &rhs_ty, *tuple_span, true);
                         } else {
                             checker.errors.push(TypeError::UnsupportedFeature {
                                 feature: "pattern matching in top-level let bindings",
@@ -2682,6 +2711,132 @@ impl TypeChecker {
     }
 
     //
+    // Tuple-pattern binding (let / for / collect)
+    //
+
+    /// Recurse a tuple binding pattern against its expected type, binding
+    /// identifiers and rejecting refutable sub-patterns. Shared by
+    /// `check_let_stmt`, `check_for_stmt`, `collect_impl`, and the top-level
+    /// (module-global) `Item::Stmt::Let` walk in `check_module` — a binding
+    /// position always requires an irrefutable pattern, unlike a `case` arm.
+    ///
+    /// `module_scope` selects the bind target: top-level lets bind into
+    /// `value_env` (module scope, visible to later top-level items, mirroring
+    /// the plain `Pattern::Ident` top-level-let arm); every other caller binds
+    /// into the current `local_env` scope.
+    ///
+    /// Reuses the same arity-to-TypeId resolution
+    /// (`tuple_type_id_for_arity`/`is_tuple_named`) that
+    /// `PatternChecker::check_pattern`'s case-arm `Pattern::Tuple` arm uses,
+    /// so binding-position and case-position tuple typing never drift apart.
+    /// `span` is accepted for a uniform call-site signature across let/for/
+    /// collect callers, but every `Pattern` variant already carries its own
+    /// span, so diagnostics use the pattern's own span rather than this one.
+    #[allow(clippy::result_unit_err)]
+    fn bind_tuple_pattern(
+        &mut self,
+        pat: &Pattern,
+        expected: &MonoType,
+        _span: Span,
+        module_scope: bool,
+    ) -> Result<(), ()> {
+        match pat {
+            Pattern::Wildcard(_) => Ok(()),
+
+            Pattern::Ident(name, _) => {
+                if module_scope {
+                    self.value_env.add_value(name.clone(), expected.clone());
+                } else {
+                    self.local_env.bind(name.clone(), expected.clone());
+                }
+                Ok(())
+            }
+
+            Pattern::Tuple(subs, tuple_span) => {
+                let Some(pattern_type_id) = tuple_type_id_for_arity(subs.len()) else {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "tuple patterns",
+                        span: *tuple_span,
+                        note: format!("tuple patterns support 2 to 4 elements, got {}", subs.len()),
+                    });
+                    return Err(());
+                };
+
+                match expected {
+                    // Same arity as the expected tuple type: recurse per element.
+                    MonoType::Named { type_id, args }
+                        if *type_id == pattern_type_id && args.len() == subs.len() =>
+                    {
+                        let mut had_error = false;
+                        for (sub, arg_ty) in subs.iter().zip(args.iter()) {
+                            if self
+                                .bind_tuple_pattern(sub, arg_ty, *tuple_span, module_scope)
+                                .is_err()
+                            {
+                                had_error = true;
+                            }
+                        }
+                        if had_error { Err(()) } else { Ok(()) }
+                    }
+                    // Expected is a tuple, but of a different arity.
+                    MonoType::Named { type_id, args } if is_tuple_named(*type_id) => {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: args.len(),
+                            actual: subs.len(),
+                            span: *tuple_span,
+                        });
+                        Err(())
+                    }
+                    // Expected isn't a tuple type at all.
+                    _ => {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: expected.clone(),
+                            actual: MonoType::Void, // Dummy — no concrete type inferred yet
+                            span: *tuple_span,
+                            note: Some("tuple pattern requires a tuple-typed value".to_string()),
+                        });
+                        Err(())
+                    }
+                }
+            }
+
+            Pattern::Variant { span, .. } | Pattern::Literal(_, span) => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "refutable pattern in binding",
+                    span: *span,
+                    note: "refutable pattern not allowed in a binding; use `case` to match \
+                           instead"
+                        .to_string(),
+                });
+                Err(())
+            }
+        }
+    }
+
+    /// Recovery path for `bind_tuple_pattern` call sites: when the RHS/element
+    /// type couldn't be resolved (a synth/check error already reported), still
+    /// bind every identifier in the pattern to a fresh MetaVar so downstream
+    /// uses don't cascade into spurious "undefined variable" diagnostics.
+    fn bind_tuple_pattern_idents_recovery(&mut self, pat: &Pattern, module_scope: bool) {
+        match pat {
+            Pattern::Ident(name, _) => {
+                let recovery_ty = self.fresh_meta();
+                if module_scope {
+                    self.value_env.add_value(name.clone(), recovery_ty);
+                } else {
+                    self.local_env.bind(name.clone(), recovery_ty);
+                }
+            }
+            Pattern::Tuple(subs, _) => {
+                for sub in subs {
+                    self.bind_tuple_pattern_idents_recovery(sub, module_scope);
+                }
+            }
+            Pattern::Wildcard(_) | Pattern::Variant { .. } | Pattern::Literal(..) => {}
+        }
+    }
+
+    //
     // Let statements
     //
 
@@ -2746,7 +2901,34 @@ impl TypeChecker {
                 // Just evaluate the value for side effects
                 let _ = self.synth_expr(value);
             }
-            Pattern::Variant { .. } | Pattern::Literal(..) | Pattern::Tuple(..) => {
+            Pattern::Tuple(_, tuple_span) => {
+                let rhs_ty = if let Some(ann_ty) = ty {
+                    // Type annotation provided - check mode. Bind using the
+                    // annotated type even if checking fails, to avoid noisy
+                    // follow-up "undefined variable" diagnostics.
+                    match self.resolve_type(ann_ty) {
+                        Ok(t) => {
+                            let _ = self.check_expr(value, &t);
+                            t
+                        }
+                        Err(()) => {
+                            self.bind_tuple_pattern_idents_recovery(pattern, false);
+                            return;
+                        }
+                    }
+                } else {
+                    // No annotation - synthesis mode.
+                    match self.synth_expr(value) {
+                        Ok(t) => self.zonk(&t),
+                        Err(()) => {
+                            self.bind_tuple_pattern_idents_recovery(pattern, false);
+                            return;
+                        }
+                    }
+                };
+                let _ = self.bind_tuple_pattern(pattern, &rhs_ty, *tuple_span, false);
+            }
+            Pattern::Variant { .. } | Pattern::Literal(..) => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "pattern matching in let bindings",
                     span: value.span,
@@ -3998,6 +4180,24 @@ impl TypeChecker {
                     }
                 }
             }
+            // `(a, b) = e` — the LHS parses as a tuple literal desugared to a
+            // TupleN record constructor (see `parse_grouped`). Report a
+            // dedicated diagnostic rather than the generic "complex
+            // assignment target" error: tuple patterns can't be rebound in
+            // place, only freshly bound with `:=` or matched with `case`.
+            ExprKind::RecordLit {
+                name: Some(record_name),
+                ..
+            } if matches!(record_name.as_str(), "Tuple2" | "Tuple3" | "Tuple4") => {
+                self.errors.push(TypeError::UnsupportedFeature {
+                    feature: "tuple-pattern rebind",
+                    span,
+                    note: "tuple-pattern rebind not supported; use `:=` for a new binding or \
+                           `case` to match instead"
+                        .to_string(),
+                });
+                Err(())
+            }
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "complex assignment target",
@@ -4033,6 +4233,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &elem, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop",
@@ -4053,6 +4256,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Byte),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &MonoType::Byte, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop",
@@ -4073,6 +4279,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Int),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &MonoType::Int, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop",
@@ -4094,6 +4303,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &elem_ty, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop over Iterator",
@@ -4115,6 +4327,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &elem_ty, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop over IntoIterator",
@@ -4133,6 +4348,9 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        let _ = self.bind_tuple_pattern(pattern, &key_ty, iter.span, false);
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in for loop",
@@ -4218,6 +4436,14 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *elem),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        if self
+                            .bind_tuple_pattern(pattern, &elem, span, false)
+                            .is_err()
+                        {
+                            had_error = true;
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in collect",
@@ -4238,6 +4464,14 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Byte),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        if self
+                            .bind_tuple_pattern(pattern, &MonoType::Byte, span, false)
+                            .is_err()
+                        {
+                            had_error = true;
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in collect",
@@ -4258,6 +4492,14 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), MonoType::Int),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        if self
+                            .bind_tuple_pattern(pattern, &MonoType::Int, span, false)
+                            .is_err()
+                        {
+                            had_error = true;
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in collect",
@@ -4279,6 +4521,14 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        if self
+                            .bind_tuple_pattern(pattern, &elem_ty, span, false)
+                            .is_err()
+                        {
+                            had_error = true;
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in collect over Iterator",
@@ -4298,6 +4548,14 @@ impl TypeChecker {
                 match pattern {
                     Pattern::Ident(name, _) => self.local_env.bind(name.clone(), *key_ty),
                     Pattern::Wildcard(_) => {}
+                    Pattern::Tuple(..) => {
+                        if self
+                            .bind_tuple_pattern(pattern, &key_ty, span, false)
+                            .is_err()
+                        {
+                            had_error = true;
+                        }
+                    }
                     _ => {
                         self.errors.push(TypeError::UnsupportedFeature {
                             feature: "complex pattern in collect",
@@ -4810,5 +5068,99 @@ mod tests {
             result.is_ok(),
             "expected function-local shadow/rebind to typecheck, got: {result:?}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Tuple-pattern binding (let / for / collect) — Task 9
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_tuple_pattern_let_matching_arity_binds_elements() {
+        // (a, b) := (1, 2) — flat irrefutable tuple pattern, module-global let.
+        let result = typecheck("(a, b) := (1, 2)\nc := a + b");
+        assert!(
+            result.is_ok(),
+            "expected matching-arity tuple let to typecheck, got: {result:?}"
+        );
+        let module = result.unwrap();
+        assert_eq!(
+            module.value_env.lookup("a"),
+            Some(MonoType::Int),
+            "expected `a` to be bound as Int"
+        );
+        assert_eq!(
+            module.value_env.lookup("b"),
+            Some(MonoType::Int),
+            "expected `b` to be bound as Int"
+        );
+    }
+
+    #[test]
+    fn test_tuple_pattern_let_refutable_subpattern_rejected() {
+        // (a, .Some(x)) — a Variant sub-pattern is refutable and not allowed
+        // in a binding position (only in `case`).
+        let result = typecheck("(a, .Some(x)): (Int, Int?) = (1, .Some(2))");
+        assert!(
+            result.is_err(),
+            "expected refutable sub-pattern in a let binding to fail"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                TypeError::UnsupportedFeature { note, .. } if note.contains("refutable")
+            )),
+            "expected a diagnostic mentioning 'refutable', got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_tuple_pattern_let_arity_mismatch_rejected() {
+        // (a, b, c) — pattern arity 3 against a Tuple2-typed RHS.
+        let result = typecheck("(a, b, c) := (1, 2)");
+        assert!(
+            result.is_err(),
+            "expected arity-mismatched tuple let to fail"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TypeError::WrongArity { .. })),
+            "expected a WrongArity error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_tuple_pattern_rebind_is_rejected() {
+        // (a, b) = e — Task 8 deliberately left `=` unclaimed by the tuple-
+        // pattern parser, so this falls to the general Assign expression
+        // path; it must be rejected with a dedicated diagnostic rather than
+        // the generic "complex assignment target" message.
+        let result = typecheck("(a, b) := (1, 2)\n(a, b) = (3, 4)");
+        assert!(result.is_err(), "expected tuple-pattern rebind to fail");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                TypeError::UnsupportedFeature { note, .. } if note.contains("rebind")
+            )),
+            "expected a diagnostic mentioning 'rebind', got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_tuple_pattern_let_nested_tuple_binds_elements() {
+        // ((a, b), c) := ((1, 2), 3) — nested tuple pattern, closes a
+        // Task-8 coverage gap (no committed test for this shape).
+        let result = typecheck("((a, b), c) := ((1, 2), 3)\nd := a + b + c");
+        assert!(
+            result.is_ok(),
+            "expected nested tuple let to typecheck, got: {result:?}"
+        );
+        let module = result.unwrap();
+        assert_eq!(module.value_env.lookup("a"), Some(MonoType::Int));
+        assert_eq!(module.value_env.lookup("b"), Some(MonoType::Int));
+        assert_eq!(module.value_env.lookup("c"), Some(MonoType::Int));
     }
 }

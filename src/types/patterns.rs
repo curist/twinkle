@@ -9,7 +9,12 @@ use crate::syntax::span::Span;
 use std::collections::HashSet;
 
 /// Resolve the compiler-known TupleN TypeId for a given arity (2..=4).
-fn tuple_type_id_for_arity(arity: usize) -> Option<super::ty::TypeId> {
+///
+/// `pub(crate)` so `bind_tuple_pattern` in `check.rs` (binding-position tuple
+/// patterns in `let`/`for`/`collect`) can reuse the same arity-to-TypeId
+/// resolution as `PatternChecker::check_pattern`'s case-arm tuple arm, rather
+/// than re-deriving it.
+pub(crate) fn tuple_type_id_for_arity(arity: usize) -> Option<super::ty::TypeId> {
     match arity {
         2 => Some(TUPLE2_TYPE_ID),
         3 => Some(TUPLE3_TYPE_ID),
@@ -235,10 +240,7 @@ impl<'a> PatternChecker<'a> {
                     self.errors.push(TypeError::UnsupportedFeature {
                         feature: "tuple patterns",
                         span: *span,
-                        note: format!(
-                            "tuple patterns support 2 to 4 elements, got {}",
-                            subs.len()
-                        ),
+                        note: format!("tuple patterns support 2 to 4 elements, got {}", subs.len()),
                     });
                     return Err(());
                 };
