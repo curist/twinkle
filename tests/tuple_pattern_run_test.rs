@@ -333,6 +333,37 @@ if r != 12 { error("mismatch") }
     );
 }
 
+/// `(_, _) := expr` — an all-wildcard binder. Legal: it evaluates the RHS
+/// (for its side effect) but binds no names. A regression that treats an
+/// all-wildcard pattern as a dead no-op and skips evaluating the RHS
+/// entirely would leave the side-effecting counter at 0 instead of 1. The
+/// counter is a *local* Cell passed by parameter (not a module-global Cell
+/// captured by a closure) — a module-global-Cell-plus-closure combination
+/// traps stage0 with an unrelated pre-existing "illegal cast" bug (verified
+/// independent of tuple syntax entirely), so this test is deliberately
+/// written to avoid that unrelated gap and stay isolated to the
+/// all-wildcard binder question.
+#[test]
+fn tuple_let_all_wildcard_binds_nothing() {
+    assert_program_matches_expected(
+        r#"
+fn bump(cnt: Cell<Int>) (Int, Int) {
+  cnt.update(fn(n) { n + 1 })
+  (cnt.get(), cnt.get())
+}
+fn main() Int {
+  cnt := Cell.new(0)
+  (_, _) := bump(cnt)
+  cnt.get()
+}
+r := main()
+if r != 1 {
+  error("mismatch")
+}
+"#,
+    );
+}
+
 /// Sanity check on the harness itself: a program whose `if` branch condition
 /// is deliberately wrong must actually trap (nonzero exit), proving the
 /// convention distinguishes "computed value matched" from "computed value

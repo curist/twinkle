@@ -825,6 +825,21 @@ fn test_let_pattern_module_global() Result<Void, String> {
   )
 }
 
+fn test_let_pattern_all_wildcard() Result<Void, String> {
+  // (_, _) := expr — an all-wildcard binder. Legal: it evaluates the RHS
+  // (for its side effect) but binds no names. A regression that treats an
+  // all-wildcard pattern as a dead no-op and skips evaluating the RHS
+  // entirely would leave the side-effecting counter at 0 instead of 1.
+  // The counter is a *local* Cell passed by parameter (not a module-global
+  // Cell captured by a closure) to keep this test isolated to the
+  // all-wildcard binder question.
+  assert_runs_to(
+    "fn bump(cnt: Cell<Int>) (Int, Int) {\n  cnt.update(fn(n) { n + 1 })\n  (cnt.get(), cnt.get())\n}\nfn main() Int {\n  cnt := Cell.new(0)\n  (_, _) := bump(cnt)\n  cnt.get()\n}\nc := main()\nif c != 1 { error(\"bad\") }\n",
+    0,
+    "let-pattern all-wildcard binder",
+  )
+}
+
 // ── `for`/`collect` element-pattern destructuring, end-to-end execution ──
 // `for (a, b) in xs { .. }` and `collect (a, b) in xs { .. }` route through
 // the same `bind_iterable_vars` (checker) / `setup_indexed_iter` (lowering)
@@ -1286,6 +1301,7 @@ pub fn suite() runner.Suite {
     .test("let-pattern: nested with wildcard", test_let_pattern_nested_with_wildcard)
     .test("let-pattern: single evaluation", test_let_pattern_single_evaluation)
     .test("let-pattern: module global", test_let_pattern_module_global)
+    .test("let-pattern: all-wildcard binder", test_let_pattern_all_wildcard)
     .test("for: element-pattern destructure", test_for_element_pattern_destructure)
     .test(
       "for: element-pattern destructure with index",
