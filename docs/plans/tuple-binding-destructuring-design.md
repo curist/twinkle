@@ -106,15 +106,33 @@ already parsed as. **Module-level bindings** (`parse_top_level_stmt`, which
 calls `parse_stmt` directly and has no block-tail fallback) need the equivalent
 reinterpretation wired in separately — module-level `(a, b) := …` is a real
 case. After `for` / `collect`, a leading `(` in the binder is unambiguously a
-tuple pattern element (no tail conflict there). **Spike this dual-path handling
-first** — it is the one genuinely fiddly parser change.
+tuple pattern element (no tail conflict there). **Spike the parser
+disambiguation first — on _both_ compilers**: boot's dual-path
+(`parse_block` fallback + `parse_top_level_stmt`) handling, and stage0's
+`is_let_binding` `(`-led lookahead + `ColonEq`-BP removal. These are the one
+genuinely fiddly change on each side.
 
-Related stage0 pre-existing bug to fix in scope: `(a, b) := …` currently
-**ICEs** stage0's parser — `infix_binding_power` (`src/syntax/parser.rs:2660`)
-gives `ColonEq` a binding power but `token_to_binop` (`parser.rs:2732`) has no
-`ColonEq` arm and hits `unreachable!()`. Add the missing handling (this sits
-directly on the feature's parser path; `for (a, b) in …` already parses cleanly
-in stage0, so it is specific to the let LHS).
+**stage0 has the analogous let-LHS disambiguation to solve too** — it is not
+"already parsing." Today `is_let_binding` (`src/syntax/parser.rs:2194`) only
+recognizes a binding when the *first* token is an `Ident` followed by `:=`/`:`,
+so a `(`-led LHS is never routed to `parse_let_stmt` (which *does* call
+`parse_pattern`, which *does* handle tuple patterns). Instead `(a, b) := e`
+falls to the expression path, parses `(a, b)` as a tuple expression, treats `:=`
+as an infix operator (`infix_binding_power` gives `ColonEq` a BP,
+`parser.rs:2660`), and calls `token_to_binop(ColonEq)` → `unreachable!()`
+(`parser.rs:2732`) — the ICE.
+
+The fix is **not** to add a `ColonEq` arm to `token_to_binop`: that would stop
+the panic but produce a `Binary` *expression* (there is no `BinOp` for `:=`),
+which never becomes `Stmt::Let { pattern: Pattern::Tuple }` and so never reaches
+the checker/lowering work below. The correct fix is to **extend `is_let_binding`
+to detect a `(`-led tuple-pattern LHS** (lookahead scanning past the balanced
+`)` for a trailing `:=`/`:`), and to **remove or gate the `ColonEq` infix BP**
+so the let path claims it first. `for`/`collect` binders genuinely already parse
+(their `parse_pattern` path handles `(a, b)`); only the let LHS needs this.
+Unlike boot, stage0's `parse_block` collects only statements (no
+implicit-return tail), so there is no tail-routing hazard — the stage0 lookahead
+is simpler than boot's, but non-zero.
 
 ## Architecture
 
@@ -124,18 +142,23 @@ the two compilers):
 - **boot** carries a first-class AST node so the surface round-trips through the
   formatter, type-checks with precise diagnostics, and then lowers by
   desugaring to positional `._N` field-access bindings.
-- **stage0** is **already pattern-generic** and does *not* need a parse-time
-  desugar. Its AST already holds patterns — `Stmt::Let { pattern: Pattern }`,
-  `Stmt::For { pattern: Pattern, index_pattern: Option<Pattern> }`,
-  `Collect { pattern, index_pattern }` (`src/syntax/ast.rs`) — and the parser
-  already parses `(a, b) := …`, `for (a, b) in …`, etc. The real remaining work
-  is in the **checker and lowering**, which today have explicit
-  `TypeError::UnsupportedFeature { note: "…for now" }` / `LowerError` placeholders
-  on the `Pattern::Tuple` branches of `check_let_stmt`/`check_for_stmt`
-  (`src/types/check.rs`) and `src/ir/lower.rs` — deliberate stubs awaiting this
-  feature. So stage0's task is: implement `Pattern::Tuple` handling in those
-  checker branches (note: `check_for_stmt` branches per iterable kind —
-  Vector/String/Range/Iterator — so the pattern handling is repeated) and in
+- **stage0** is **already pattern-generic in its AST** and needs no *new* AST
+  nodes and no parse-time desugar. Its AST holds patterns — `Stmt::Let { pattern:
+  Pattern }`, `Stmt::For { pattern, index_pattern: Option<Pattern> }`,
+  `Collect { pattern, index_pattern }` (`src/syntax/ast.rs`) — `parse_let_stmt`
+  and the `for`/`collect` binders already run `parse_pattern` (which handles
+  `Pattern::Tuple`). But there is real stage0 **parser** work for the let LHS: a
+  `(`-led binding is not currently recognized as a let and ICEs (see
+  Disambiguation) — fix `is_let_binding` + the `ColonEq` BP. `for`/`collect`
+  binders already parse. The bulk of the remaining stage0 work is **checker and
+  lowering**, which have explicit `TypeError::UnsupportedFeature { note: "…for
+  now" }` / `LowerError` placeholders on the pattern branches of
+  `check_let_stmt`/`check_for_stmt` (`src/types/check.rs`) and `src/ir/lower.rs`
+  — deliberate stubs awaiting this feature. So stage0's task is: the let-LHS
+  parser fix, then implement pattern handling in those checker branches (note:
+  `check_for_stmt` branches per iterable kind — Vector/String/Range/Iterator —
+  so it is repeated; and `check_let_stmt`'s placeholder is a combined
+  `Variant | Literal | Tuple` arm at `check.rs:2749` — split out `Tuple`) and in
   `lower.rs`'s `Stmt::Let`/`Stmt::For` lowering, mirroring boot's temp+`._N`
   mechanism. This makes the two compilers structurally *closer* (both do real
   pattern type-checking in place), not divergent.
@@ -226,10 +249,11 @@ user identifiers.
 ### stage0 (`src/`)
 
 No new AST nodes — stage0's AST is already pattern-generic (`Stmt::Let.pattern`,
-`Stmt::For.pattern`/`index_pattern`, `Collect.pattern`/`index_pattern`), and the
-parser already produces `Pattern::Tuple` in these positions. The work is in the
-checker + lowering (see below), not the parser/AST — apart from the `ColonEq`
-ICE fix noted under Disambiguation.
+`Stmt::For.pattern`/`index_pattern`, `Collect.pattern`/`index_pattern`), and
+`parse_pattern` already produces `Pattern::Tuple`. The work is: the **let-LHS
+parser fix** (`is_let_binding` `(`-led lookahead + `ColonEq`-BP removal — see
+Disambiguation; `for`/`collect` binders already parse), plus **checker +
+lowering** (see below). No new AST node and no parse-time desugar.
 
 **Note the deliberate two-compiler encoding asymmetry:** boot adds a *new*
 `LetPattern` Stmt variant (widening boot's `LetStmt.name: String` to a pattern
@@ -380,10 +404,12 @@ parse-time desugar) is what keeps the surface syntax from being rewritten into
   module-level (`parse_top_level_stmt`) path and the stage0 `ColonEq` ICE. Spike
   all three first — see the Disambiguation section.
 - **Two-compiler work is not symmetric.** boot: new AST node + checker + lowering
-  + printer + the wiring checklist above. stage0: no parser/AST work — fill in
-  the checker + lowering `Pattern::Tuple` placeholders (the checker branch is
-  per-iterable-kind, so more than one site). The compilers end up structurally
-  closer than a "boot node vs stage0 desugar" framing would suggest.
+  + printer + the wiring checklist above. stage0: **a let-LHS parser fix**
+  (`is_let_binding` `(`-led lookahead + `ColonEq`-BP removal — do *not* just add
+  a `token_to_binop` arm, which mis-parses as an expression) plus filling in the
+  checker + lowering pattern placeholders (the checker branch is per-iterable-
+  kind, so more than one site). No new AST node either side; the compilers end up
+  structurally closer than a "boot node vs stage0 desugar" framing suggests.
 - **Formatter fidelity** is why boot uses a first-class node; a parse-time
   desugar would make `twk fmt` rewrite the surface into `__t := …; a := __t._0`.
 - **Not affected: the Byte tuple-field boxing fix.** The design uses the ordinary
