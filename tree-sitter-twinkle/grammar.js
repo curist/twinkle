@@ -541,7 +541,7 @@ module.exports = grammar({
 
     wildcard_pattern: $ => '_',
 
-    literal_pattern: $ => choice(
+    literal_pattern: $ => prec.dynamic(10, choice(
       $.int_literal,
       $.char_literal,
       $.float_literal,
@@ -549,9 +549,9 @@ module.exports = grammar({
       $.string_literal,
       $.raw_string_literal,
       $.multiline_string,
-    ),
+    )),
 
-    identifier_pattern: $ => $.identifier,
+    identifier_pattern: $ => prec.dynamic(10, $.identifier),
 
     // ===== Control Flow =====
 
@@ -576,7 +576,7 @@ module.exports = grammar({
     ),
 
     for_in_condition: $ => seq(
-      field('binding', choice($.identifier, $.wildcard_pattern)),
+      field('binding', choice($.identifier, $.wildcard_pattern, $.tuple_pattern)),
       optional(seq(',', field('index', $.identifier))),
       'in',
       field('iterable', $._expression),
@@ -586,7 +586,8 @@ module.exports = grammar({
 
     collect_expression: $ => seq(
       'collect',
-      field('binding', choice($.identifier, $.wildcard_pattern)),
+      field('binding', choice($.identifier, $.wildcard_pattern, $.tuple_pattern)),
+      optional(seq(',', field('index', $.identifier))),
       'in',
       field('iterable', $._expression),
       field('body', $.block),
@@ -751,12 +752,12 @@ module.exports = grammar({
 
     let_binding: $ => choice(
       seq(
-        field('name', $.identifier),
+        field('name', choice($.identifier, $.tuple_pattern)),
         ':=',
         field('value', $._expression),
       ),
       seq(
-        field('name', $.identifier),
+        field('name', choice($.identifier, $.tuple_pattern)),
         ':',
         field('type', $.type),
         '=',
@@ -904,6 +905,12 @@ module.exports = grammar({
     [$.unary_expression, $.field_access],
     [$.unary_expression, $.call_expression],
     [$.unary_expression, $.index_access],
+    // Statement-leading '(' is ambiguous between a tuple/parenthesized
+    // expression and a tuple_pattern let-binding LHS (e.g. `(1, x) := e`
+    // vs. `(1, x)` as a tuple-literal expression statement) until the
+    // parser sees whether `:=`/`: type =` follows the closing ')'.
+    [$.literal_pattern, $._literal],
+    [$.identifier_pattern, $._primary_expression],
   ],
 });
 

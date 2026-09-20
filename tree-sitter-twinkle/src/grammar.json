@@ -2686,41 +2686,49 @@
       "value": "_"
     },
     "literal_pattern": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "SYMBOL",
-          "name": "int_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "char_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "float_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "bool_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "string_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "raw_string_literal"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "multiline_string"
-        }
-      ]
+      "type": "PREC_DYNAMIC",
+      "value": 10,
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "int_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "char_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "float_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "bool_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "string_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "raw_string_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "multiline_string"
+          }
+        ]
+      }
     },
     "identifier_pattern": {
-      "type": "SYMBOL",
-      "name": "identifier"
+      "type": "PREC_DYNAMIC",
+      "value": 10,
+      "content": {
+        "type": "SYMBOL",
+        "name": "identifier"
+      }
     },
     "if_expression": {
       "type": "SEQ",
@@ -2835,6 +2843,10 @@
               {
                 "type": "SYMBOL",
                 "name": "wildcard_pattern"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "tuple_pattern"
               }
             ]
           }
@@ -2906,9 +2918,38 @@
               {
                 "type": "SYMBOL",
                 "name": "wildcard_pattern"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "tuple_pattern"
               }
             ]
           }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": ","
+                },
+                {
+                  "type": "FIELD",
+                  "name": "index",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",
@@ -3550,8 +3591,17 @@
               "type": "FIELD",
               "name": "name",
               "content": {
-                "type": "SYMBOL",
-                "name": "identifier"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "tuple_pattern"
+                  }
+                ]
               }
             },
             {
@@ -3575,8 +3625,17 @@
               "type": "FIELD",
               "name": "name",
               "content": {
-                "type": "SYMBOL",
-                "name": "identifier"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "tuple_pattern"
+                  }
+                ]
               }
             },
             {
@@ -4078,6 +4137,14 @@
     [
       "unary_expression",
       "index_access"
+    ],
+    [
+      "literal_pattern",
+      "_literal"
+    ],
+    [
+      "identifier_pattern",
+      "_primary_expression"
     ]
   ],
   "precedences": [

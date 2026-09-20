@@ -582,6 +582,10 @@
             "named": true
           },
           {
+            "type": "tuple_pattern",
+            "named": true
+          },
+          {
             "type": "wildcard_pattern",
             "named": true
           }
@@ -593,6 +597,16 @@
         "types": [
           {
             "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "index": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
@@ -1163,6 +1177,10 @@
             "named": true
           },
           {
+            "type": "tuple_pattern",
+            "named": true
+          },
+          {
             "type": "wildcard_pattern",
             "named": true
           }
@@ -1613,6 +1631,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "tuple_pattern",
             "named": true
           }
         ]
