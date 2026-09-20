@@ -1,0 +1,21 @@
+fn dm(a: Int, b: Int) (Int, Int) {
+  (a / b, a % b)
+}
+
+(q, r) := dm(17, 5)
+
+fn main() Int {
+  (a, _): (Int, Int) = (10, 20)
+  ((x, y), z) := ((1, 2), 3)
+  sum := 0
+  for (p, q) in [(1, 2)] {
+    sum = sum + p + q
+  }
+  for (p, q), i in [(1, 2)] {
+    sum = sum + (p + q) * i
+  }
+  ys := collect (m, n) in [(1, 2)] {
+    m + n
+  }
+  a + x + y + z + sum + ys[0]
+}

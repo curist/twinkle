@@ -1162,9 +1162,19 @@ fn format_let(s: LetStmt, tm: TriviaMap) Doc {
   format_assigned(parts, s.value, value_doc, tm)
 }
 
-// TODO(Task 7): render the destructuring pattern, type annotation, and value.
 fn format_let_pattern(s: LetPatternStmt, tm: TriviaMap) Doc {
-  doc.text("/* let-pattern */")
+  parts: Vector<Doc> = [format_pattern(s.pattern, tm)]
+
+  case s.ty {
+    .Some(ty) => {
+      parts = .append(doc.text(": "))
+      parts = .append(format_type_expr(ty))
+      parts = .append(doc.text(" = "))
+    },
+    .None => parts = .append(doc.text(" := ")),
+  }
+
+  format_assigned(parts, s.value, format_expr(s.value, tm), tm)
 }
 
 // Structural equality over the "place path" expression forms that can appear as
@@ -1242,9 +1252,9 @@ fn format_for(s: ForStmt, tm: TriviaMap) Doc {
 
   case s.iter {
     .Some(iter) => {
-      case s.pattern {
+      case s.element_pattern {
         .Some(pat) => {
-          parts = .append(doc.text(pat))
+          parts = .append(format_pattern(pat, tm))
 
           case s.index {
             .Some(idx) => {
@@ -1255,7 +1265,21 @@ fn format_for(s: ForStmt, tm: TriviaMap) Doc {
 
           parts = .append(doc.text(" in "))
         },
-        .None => {},
+        .None => case s.pattern {
+          .Some(pat) => {
+            parts = .append(doc.text(pat))
+
+            case s.index {
+              .Some(idx) => {
+                parts = .append(doc.text(", ${idx}"))
+              },
+              .None => {},
+            }
+
+            parts = .append(doc.text(" in "))
+          },
+          .None => {},
+        },
       }
 
       parts = .append(format_expr(iter, tm))
@@ -2386,9 +2410,9 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
 
   case coll.iter {
     .Some(iter) => {
-      case coll.pattern {
+      case coll.element_pattern {
         .Some(pat) => {
-          parts = .append(doc.text(pat))
+          parts = .append(format_pattern(pat, tm))
 
           case coll.index {
             .Some(idx) => {
@@ -2399,7 +2423,21 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
 
           parts = .append(doc.text(" in "))
         },
-        .None => {},
+        .None => case coll.pattern {
+          .Some(pat) => {
+            parts = .append(doc.text(pat))
+
+            case coll.index {
+              .Some(idx) => {
+                parts = .append(doc.text(", ${idx}"))
+              },
+              .None => {},
+            }
+
+            parts = .append(doc.text(" in "))
+          },
+          .None => {},
+        },
       }
 
       parts = .append(format_expr(iter, tm))

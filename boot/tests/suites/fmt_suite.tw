@@ -222,4 +222,5 @@ pub fn suite() runner.Suite {
       "preserves a blank between a module doc and a doc-less declaration",
       assert_fmt_case("module_doc_blank_before_decl"),
     )
+    .test("formats tuple binding and destructuring forms", assert_fmt_case("tuple_binding"))
 }
