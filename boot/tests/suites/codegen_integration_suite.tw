@@ -770,6 +770,40 @@ fn test_match_module_global_sum_scrutinee() Result<Void, String> {
   )
 }
 
+// ── `LetPattern` statements (`(a, b) := e`), end-to-end execution ────
+// These desugar to a temp binding plus positional `._N` field reads in
+// lower_stmts; run the generated Wasm to confirm binding order, nesting,
+// and single-evaluation of the RHS (not just that it type-checks).
+fn test_let_pattern_flat_destructure() Result<Void, String> {
+  // (q, r) := dm(17, 5) — flat tuple destructure binds each element by
+  // position from an ordinary function return value.
+  assert_runs_to(
+    "fn dm(a: Int, b: Int) (Int, Int) { (a / b, a % b) }\nfn main() Int {\n  (q, r) := dm(17, 5)\n  q * 100 + r\n}\ncode := main()\nif code != 302 { error(\"bad\") }\n",
+    0,
+    "let-pattern flat destructure",
+  )
+}
+
+fn test_let_pattern_nested_with_wildcard() Result<Void, String> {
+  // ((a, b), _) := ((1, 2), 3) — nested tuple pattern plus a wildcard leaf
+  // that binds nothing.
+  assert_runs_to(
+    "fn main() Int {\n  ((a, b), _) := ((1, 2), 3)\n  a * 10 + b\n}\nc := main()\nif c != 12 { error(\"bad\") }\n",
+    0,
+    "let-pattern nested with wildcard",
+  )
+}
+
+fn test_let_pattern_single_evaluation() Result<Void, String> {
+  // The RHS must be evaluated exactly once even though it's destructured
+  // into two bindings — a side-effecting counter catches double-evaluation.
+  assert_runs_to(
+    "cnt := Cell.new(0)\nfn bump() (Int, Int) {\n  cnt.update(fn(n) { n + 1 })\n  (cnt.get(), 0)\n}\nfn main() Int {\n  (a, _) := bump()\n  a * 10 + cnt.get()\n}\nc := main()\nif c != 11 { error(\"bad\") }\n",
+    0,
+    "let-pattern single evaluation",
+  )
+}
+
 // ── Structural validation (inspects LinkedModule, not WAT text) ─────
 fn has_func_named(linked: LinkedModule, name: String) Bool {
   for f in linked.funcs {
@@ -1197,6 +1231,9 @@ pub fn suite() runner.Suite {
       test_tuple_pattern_byte_field_rebound_rematch,
     )
     .test("match: module-global sum scrutinee", test_match_module_global_sum_scrutinee)
+    .test("let-pattern: flat destructure", test_let_pattern_flat_destructure)
+    .test("let-pattern: nested with wildcard", test_let_pattern_nested_with_wildcard)
+    .test("let-pattern: single evaluation", test_let_pattern_single_evaluation)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",
