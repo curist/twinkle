@@ -797,8 +797,17 @@ fn test_let_pattern_nested_with_wildcard() Result<Void, String> {
 fn test_let_pattern_single_evaluation() Result<Void, String> {
   // The RHS must be evaluated exactly once even though it's destructured
   // into two bindings — a side-effecting counter catches double-evaluation.
+  // Both leaves (a, b) must be real bindings sourced from field reads (no
+  // wildcard): a regression that skips the outer temp hoist and re-embeds
+  // `bump()` into each field read independently would still produce a
+  // single call under a wildcard-containing pattern like `(a, _)` (the
+  // wildcard leaf never re-evaluates the RHS), so that shape can't actually
+  // detect double-evaluation. With two real leaves, a missing hoist calls
+  // `bump()` twice, driving the counter to 2 and tripping the `cnt.get() !=
+  // 1` sentinel below (which pins the RHS ran exactly once), forcing
+  // `main()` to return the 999 sentinel and `error("bad")` to fire.
   assert_runs_to(
-    "cnt := Cell.new(0)\nfn bump() (Int, Int) {\n  cnt.update(fn(n) { n + 1 })\n  (cnt.get(), 0)\n}\nfn main() Int {\n  (a, _) := bump()\n  a * 10 + cnt.get()\n}\nc := main()\nif c != 11 { error(\"bad\") }\n",
+    "cnt := Cell.new(0)\nfn bump() (Int, Int) {\n  cnt.update(fn(n) { n + 1 })\n  (cnt.get(), cnt.get())\n}\nfn main() Int {\n  (a, b) := bump()\n  if cnt.get() != 1 { return 999 }\n  a + b\n}\nc := main()\nif c != 2 { error(\"bad\") }\n",
     0,
     "let-pattern single evaluation",
   )
