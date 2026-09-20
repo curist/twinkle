@@ -12,7 +12,8 @@ use lib.source.span.{Span}
 
 use .ast.{
   BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, Expr, ForStmt, FunctionDecl,
-  LetStmt, Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
+  LetPatternStmt, LetStmt, Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart,
+  TypeExpr, UnOp,
 }
 use .builtin_refs
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
@@ -5295,6 +5296,7 @@ fn check_continue_stmt(cs: ContinueStmt, ctx: InferCtx, diags: Vector<DiagKind>)
 fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   case stmt {
     .Let(ls) => check_let(ls, ctx, diags),
+    .LetPattern(lp) => check_let_pattern(lp, ctx, diags),
     .Expr(es) => {
       r := ctx.synth(es.expr, diags)
       .{ ctx: r.ctx.maybe_unused_value(es.expr.span, r.ty), diags: r.diags }
@@ -5385,6 +5387,44 @@ fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
       // Inferred: x := value
       val_r := ctx.synth(ls.value, diags)
       .{ ctx: val_r.ctx.bind_local(ls.name, val_r.ty), diags: val_r.diags }
+    },
+  }
+}
+
+// Destructuring let: `(a, b) := value` or `(a, b): T = value`. Refutable
+// sub-patterns (e.g. `.Some(x)`) are rejected outright — a binding must
+// always succeed. Bindings land directly in the current frame, mirroring
+// `check_let` (no push_scope/pop_scope): a scoped wrapper would discard the
+// destructured names once the statement ends.
+fn check_let_pattern(lp: LetPatternStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+  if !pattern_is_irrefutable(lp.pattern) {
+    return .{
+      ctx,
+      diags: diags.append(
+        .Error(
+          .ParseError(
+            .{
+              span: lp.pattern.span,
+              message: "refutable pattern not allowed in a binding; use `case`",
+              help_lines: [],
+            },
+          ),
+        ),
+      ),
+    }
+  }
+
+  case lp.ty {
+    .Some(ty_expr) => {
+      // Annotated: (a, b): T = value — use check mode to push expected type down
+      ann := resolve_annotation(ty_expr, ctx, diags)
+      cr := ann.ctx.check_expr(lp.value, ann.ty, ann.diags)
+      check_pattern(lp.pattern, ann.ty, cr.ctx, cr.diags)
+    },
+    .None => {
+      // Inferred: (a, b) := value
+      val_r := ctx.synth(lp.value, diags)
+      check_pattern(lp.pattern, val_r.ty, val_r.ctx, val_r.diags)
     },
   }
 }

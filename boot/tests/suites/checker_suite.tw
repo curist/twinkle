@@ -3182,4 +3182,40 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "tuple LetPattern arity mismatch reports diagnostic",
+      fn() {
+        src := "fn f() Int {\n  (a, b, c) := (1, 2)\n  a\n}"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs.join("\n"), "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "tuple LetPattern rejects refutable sub-pattern",
+      fn() {
+        src := "fn f() Int {\n  (a, .Some(x)) := (1, .Some(2))\n  a\n}"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs.join("\n"), "refutable")
+        .Ok({})
+      },
+    )
+    .test(
+      "annotated tuple LetPattern: wildcard binds nothing, element type flows",
+      fn() {
+        src := "fn f() Int {\n  (a, _): (Int, Int) = (10, 20)\n  a\n}"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "a\n}"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "inferred tuple LetPattern binds directly into the current frame",
+      fn() {
+        src := "fn f() Int {\n  (a, b) := (3, 4)\n  a * 10 + b\n}"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "a * 10 + b"), "Int")
+        .Ok({})
+      },
+    )
 }
