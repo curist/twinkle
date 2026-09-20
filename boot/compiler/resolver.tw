@@ -907,6 +907,9 @@ pub fn extract_exports_for_module(
           .None => {},
         }
       },
+      // Destructuring binds (`(a, b) := …`) are never `pub`, so they export
+      // nothing — same as the default, made explicit for the new variant.
+      .Stmt(.LetPattern(_)) => {},
       _ => {},
     }
   }

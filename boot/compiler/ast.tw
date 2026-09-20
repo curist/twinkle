@@ -212,6 +212,29 @@ pub type PatternKind = {
   ErrorPattern,
 }
 
+// Leaf identifiers introduced by an irrefutable binder pattern, in
+// left-to-right source order. `.Ident` leaves bind a name, `.Tuple`
+// recurses positionally, and `.Wildcard` binds nothing. Refutable forms
+// (variant/literal sub-patterns) never appear in a binding and contribute
+// no names. Used to enumerate the new bindings a `LetPattern` introduces —
+// both consumers that need one entry per leaf (module-global allocation) and
+// analyses that treat the leaves like the name a `LetStmt` declares.
+pub fn pattern_leaf_idents(pat: Pattern) Vector<String> {
+  case pat.kind {
+    .Ident(name) => [name],
+    .Tuple(subs) => {
+      out: Vector<String> = []
+
+      for sub in subs {
+        out = .concat(sub.pattern_leaf_idents())
+      }
+
+      out
+    },
+    _ => [],
+  }
+}
+
 pub type BinOp = {
   Add,
   Sub,

@@ -30,6 +30,11 @@ pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
     } else {
       .None
     },
+    .LetPattern(lp) => if lp.span.contains(offset) {
+      find_node_in_expr(lp.value, offset)
+    } else {
+      .None
+    },
     .For(fs) => {
       if !fs.span.contains(offset) {
         return .None

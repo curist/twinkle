@@ -813,6 +813,18 @@ fn test_let_pattern_single_evaluation() Result<Void, String> {
   )
 }
 
+fn test_let_pattern_module_global() Result<Void, String> {
+  // (q, r) := dm(17, 5) at *module* level: each leaf becomes a module
+  // global, allocated in the same pre-pass that assigns `.Let` globals and
+  // written by $init via positional `._N` reads. A later top-level function
+  // (`main`) must see `q`/`r` as ordinary globals.
+  assert_runs_to(
+    "fn dm(a: Int, b: Int) (Int, Int) { (a / b, a % b) }\n(q, r) := dm(17, 5)\nfn main() Int { q * 100 + r }\nc := main()\nif c != 302 { error(\"bad\") }\n",
+    0,
+    "let-pattern module global",
+  )
+}
+
 // ── Structural validation (inspects LinkedModule, not WAT text) ─────
 fn has_func_named(linked: LinkedModule, name: String) Bool {
   for f in linked.funcs {
@@ -1243,6 +1255,7 @@ pub fn suite() runner.Suite {
     .test("let-pattern: flat destructure", test_let_pattern_flat_destructure)
     .test("let-pattern: nested with wildcard", test_let_pattern_nested_with_wildcard)
     .test("let-pattern: single evaluation", test_let_pattern_single_evaluation)
+    .test("let-pattern: module global", test_let_pattern_module_global)
     .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",

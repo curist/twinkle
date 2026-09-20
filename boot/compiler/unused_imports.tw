@@ -343,6 +343,10 @@ fn collect_used_names_stmt(stmt: Stmt, used: Cell<Dict<String, Bool>>) {
         .None => {},
       }
 
+      // The binder pattern is irrefutable (only Ident/Wildcard/nested Tuple —
+      // refutable variant/literal sub-patterns are rejected by the checker), so
+      // it only introduces new names and references no imported constructors.
+      // Walking `ty` + `value` covers every use; the pattern itself needs none.
       collect_used_names_expr(ls.value, used)
     },
     .For(fs) => {

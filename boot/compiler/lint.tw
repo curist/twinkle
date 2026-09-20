@@ -9,6 +9,7 @@
 
 use compiler.ast.{
   Block, CondArm, Expr, ForStmt, FunctionDecl, LetStmt, Module, RecordEntry, Stmt, TypeExpr,
+  pattern_leaf_idents,
 }
 use compiler.mono_type.{MonoType, contains_meta, mono_eq}
 use compiler.resolver.{ResolvedEnv}
@@ -1652,9 +1653,13 @@ fn stmt_ident_spans(stmt: Stmt, name: String) IdentSpans {
     } else {
       expr_ident_spans(ls.value, name)
     },
-    // Destructuring patterns can rebind `name` under a nested sub-pattern;
-    // the straight-line collector doesn't walk patterns, so stay conservative.
-    .LetPattern(_) => .Uncertain,
+    // A destructuring leaf named `name` reintroduces the spelling in a new
+    // role (bail like `.Let`); otherwise only the RHS can mention it.
+    .LetPattern(lp) => if pattern_leaf_idents(lp.pattern).contains(name) {
+      .Uncertain
+    } else {
+      expr_ident_spans(lp.value, name)
+    },
     // Nested blocks and deferred evaluation stay outside the straight-line
     // collector. Only a mention matters; unrelated forms contribute no spans.
     .For(_) => if stmt_mentions_name(stmt, name) {
@@ -2239,8 +2244,9 @@ fn stmt_mentions_name(stmt: Stmt, name: String) Bool {
   case stmt {
     // A rebinding of `name` counts as a mention (conservative).
     .Let(s) => s.name == name or expr_uses_name(s.value, name),
-    // Destructuring patterns aren't walked yet; treat as a mention unconditionally.
-    .LetPattern(_) => true,
+    // A leaf named `name` (a rebinding) or a mention in the RHS both count.
+    .LetPattern(lp) => pattern_leaf_idents(lp.pattern).contains(name)
+      or expr_uses_name(lp.value, name),
     .For(s) => {
       iter_u := case s.iter {
         .Some(e) => expr_uses_name(e, name),

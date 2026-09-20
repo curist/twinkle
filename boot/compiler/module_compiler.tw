@@ -499,6 +499,9 @@ pub fn select_lib_exports(
             },
           )
         },
+        // Destructuring binds are never `pub`, so they contribute no lib
+        // exports — explicit no-op for the new variant.
+        .LetPattern(_) => {},
         _ => {},
       },
       _ => {},

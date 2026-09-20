@@ -13,7 +13,7 @@ use lib.source.span.{Span}
 use .ast.{
   BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, Expr, ForStmt, FunctionDecl,
   LetPatternStmt, LetStmt, Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart,
-  TypeExpr, UnOp,
+  TypeExpr, UnOp, pattern_leaf_idents,
 }
 use .builtin_refs
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
@@ -5344,6 +5344,10 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
       .{ ctx: r.ctx, diags: final_diags }
     },
     .Let(_) => .{ ctx, diags },
+    // Destructuring at module level binds each leaf ident into module scope,
+    // mirroring `.Let`. Pass 1 routes annotated/unannotated forms explicitly
+    // (below); this arm keeps the standalone entry point correct too.
+    .LetPattern(lp) => check_let_pattern(lp, ctx, diags),
     _ => .{ ctx, diags },
   }
 }
@@ -5656,6 +5660,15 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
               .{ ctx: trial.ctx, diags: pass1_diags }
             },
           },
+          .LetPattern(lp) => case lp.ty {
+            .Some(_) => check_let_pattern(lp, ctx, pass1_diags),
+            .None => {
+              // Suppress diagnostics — re-checked in Pass 3 once function
+              // return types are known, mirroring the unannotated `.Let` path.
+              trial := check_let_pattern(lp, ctx, [])
+              .{ ctx: trial.ctx, diags: pass1_diags }
+            },
+          },
           _ => check_top_level_stmt(stmt, ctx, pass1_diags),
         }
         ctx = r.ctx
@@ -5696,6 +5709,32 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
               },
             },
             .None => {},
+          }
+
+          ctx = r.ctx
+          pass3_diags = r.diags
+        },
+        _ => {},
+      },
+      .Stmt(.LetPattern(lp)) => case lp.ty {
+        .None => {
+          old_ctx := ctx
+          r := check_let_pattern(lp, ctx, pass3_diags)
+
+          // Re-checking may sharpen any leaf's type now that function return
+          // types are known; flag a change so stale Pass-2 fn diags recompute.
+          for name in pattern_leaf_idents(lp.pattern) {
+            case r.ctx.lookup_local(name) {
+              .Some(new_ty) => case old_ctx.lookup_local(name) {
+                .Some(old_ty) => if old_ty != new_ty {
+                  any_type_updated = true
+                },
+                .None => {
+                  any_type_updated = true
+                },
+              },
+              .None => {},
+            }
           }
 
           ctx = r.ctx

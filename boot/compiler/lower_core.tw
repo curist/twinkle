@@ -7,22 +7,25 @@
 use lib.source.diagnostics.{DiagKind}
 use lib.source.span.{Span}
 
-use .ast.{Block, CondArm, Expr, Module}
+use .ast.{Block, CondArm, Expr, Module, Pattern, pattern_leaf_idents}
 use .builtins.{BuiltinRegistry}
 use .checker.{CheckResult}
-use .core_ir.{CoreExpr, CoreModule, ExternalValueRef, FuncId, FunctionDef, GlobalId, LocalId}
+use .core_ir.{
+  CoreExpr, CoreModule, ExternalValueRef, FieldId, FuncId, FunctionDef, GlobalId, LocalId,
+}
 use .lower_core.calls.{lower_call}
 use .lower_core.closures.{lower_closure}
 use .lower_core.context.{ExprOut, LowerCtx, new_ctx}
 use .lower_core.control_flow.{lower_if}
 use .lower_core.functions.{lower_function}
-use .lower_core.helpers.{void_expr}
+use .lower_core.helpers.{local_expr, record_get_expr, void_expr}
 use .lower_core.iteration.{lower_collect, lower_for}
 use .lower_core.lvalues.{lower_lvalue_assign}
 use .lower_core.operators.{lower_binary, lower_unary}
 use .lower_core.records.{lower_anon_record, lower_field, lower_named_record, lower_tuple}
 use .lower_core.statements.{lower_stmts}
 use .lower_core.strings.{lower_string_interp}
+use .lower_core.types.{tuple_field_types}
 use .lower_core.variants.{lower_array, lower_case, lower_index, lower_variant}
 use .mono_type.{MonoType}
 use .resolver.{FunctionOrigin}
@@ -36,6 +39,66 @@ pub type LowerResult = .{
   next_global_local_id: Int,
   pub_value_globals: Dict<String, LocalId>,
   imported_value_origins: Dict<Int, ExternalValueRef>,
+}
+
+type ModulePatternOut = .{ expr: CoreExpr, ctx: LowerCtx }
+
+// Expand an irrefutable binder pattern against `base` (a Core expr already
+// bound to a temp so it is evaluated once) into a chain of `GlobalSet`s that
+// write each leaf ident's module global, terminating in `cont`. `.Tuple`
+// sub-patterns recurse through positional `._N` reads, hoisting a temp per
+// nesting level so each field read runs once; `.Wildcard` binds nothing.
+// Mirrors block-level `lower_pattern_bindings` but targets module globals — the
+// leaf globals must already be registered in `ctx.module_globals` by the caller.
+fn lower_module_pattern_set(ctx: LowerCtx, base: CoreExpr, pat: Pattern, span: Span, cont: CoreExpr) ModulePatternOut {
+  case pat.kind {
+    .Wildcard => .{ expr: cont, ctx },
+    .Ident(name) => {
+      gid := case ctx.module_globals[name] {
+        .Some(id) => id,
+        .None => LocalId.{ id: -1 },
+      }
+      ao := ctx.alloc_anon_local()
+      set := CoreExpr.{ kind: .GlobalSet(GlobalId.{ id: gid.id }, base), ty: .Void, span }
+      .{ expr: .{ kind: .Let(ao.local, set, cont), ty: .Void, span }, ctx: ao.ctx }
+    },
+    .Tuple(subs) => {
+      field_tys := tuple_field_types(base.ty, ctx.env)
+      acc := cont
+      cur_ctx := ctx
+      i := subs.len() - 1
+
+      // Fold right-to-left so each step wraps the accumulated continuation.
+      for _ in 0..subs.len() {
+        sub_ty := if i < field_tys.len() {
+          field_tys[i]
+        } else {
+          MonoType.Void
+        }
+        field := record_get_expr(base, FieldId.{ id: i }, sub_ty, span)
+
+        case subs[i].kind {
+          .Tuple(_) => {
+            tlo := cur_ctx.alloc_anon_local()
+            temp := local_expr(tlo.local, sub_ty, span)
+            inner := lower_module_pattern_set(tlo.ctx, temp, subs[i], span, acc)
+            acc = .{ kind: .Let(tlo.local, field, inner.expr), ty: .Void, span }
+            cur_ctx = inner.ctx
+          },
+          _ => {
+            r := lower_module_pattern_set(cur_ctx, field, subs[i], span, acc)
+            acc = r.expr
+            cur_ctx = r.ctx
+          },
+        }
+
+        i = .dec()
+      }
+
+      .{ expr: acc, ctx: cur_ctx }
+    },
+    _ => .{ expr: cont, ctx },
+  }
 }
 
 // ── Expression lowering ─────────────────────────────────────────────
@@ -281,6 +344,17 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             pub_value_globals[ls.name] = gid
           }
         },
+        // Destructuring bind: allocate one global per leaf ident, in the same
+        // left-to-right order the emission pass will consume them. Destructured
+        // module bindings are never `pub`, so none feed `pub_value_globals`.
+        .LetPattern(lp) => {
+          for name in pattern_leaf_idents(lp.pattern) {
+            gid := LocalId.{ id: ctx.next_global }
+            ctx.next_global = .inc()
+            ctx.module_globals[name] = gid
+            module_let_globals = .append(gid)
+          }
+        },
         _ => {},
       },
       _ => {},
@@ -388,6 +462,33 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             .{ kind: .GlobalSet(GlobalId.{ id: gid.id }, r.expr), ty: .Void, span: ls.span },
           )
           ctx.module_globals[ls.name] = gid
+        },
+        .LetPattern(lp) => {
+          has_init = true
+
+          // Lower the RHS once (in the outer scope, before the new bindings
+          // exist), then consume one pre-assigned global per leaf ident in the
+          // same order the pre-pass allocated them.
+          r := lower_expr(ctx, lp.value)
+          ctx = r.ctx
+          leaf_names := pattern_leaf_idents(lp.pattern)
+
+          for name in leaf_names {
+            gid := module_let_globals[module_let_index]
+            module_let_index = .inc()
+            ctx.module_globals[name] = gid
+          }
+
+          // Bind the RHS to a temp evaluated once, then expand the pattern into
+          // positional `._N` reads that GlobalSet each leaf's global.
+          tlo := ctx.alloc_anon_local()
+          ctx = tlo.ctx
+          temp_expr := local_expr(tlo.local, r.expr.ty, lp.span)
+          built := lower_module_pattern_set(ctx, temp_expr, lp.pattern, lp.span, void_expr(lp.span))
+          ctx = built.ctx
+          init_stmts = .append(
+            .{ kind: .Let(tlo.local, r.expr, built.expr), ty: .Void, span: lp.span },
+          )
         },
         .Expr(es) => {
           has_init = true

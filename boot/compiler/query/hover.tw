@@ -1,8 +1,8 @@
 //! Hover query: find the type of the expression at a given byte offset.
 
 use compiler.ast.{
-  Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Param, Pattern,
-  RecordField, Stmt, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UseDecl, VariantDecl,
+  Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Item, LetPatternStmt, LetStmt, Param,
+  Pattern, RecordField, Stmt, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UseDecl, VariantDecl,
 }
 use compiler.checker.{CheckResult}
 use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name, spec}
@@ -348,7 +348,50 @@ fn hover_stmt(ctx: HoverContext, stmt: Stmt) HoverResult? {
 fn hover_stmt_special(ctx: HoverContext, stmt: Stmt) HoverResult? {
   case stmt {
     .Let(ls) => ctx.hover_let_stmt(ls),
+    .LetPattern(lp) => ctx.hover_let_pattern_stmt(lp),
     .For(fs) => ctx.hover_for_stmt(fs),
+    _ => .None,
+  }
+}
+
+// Hover over a destructured leaf name: descend the binder pattern to the leaf
+// whose span covers the offset, projecting the RHS type positionally (tuple
+// field types are the Named type's args) to report that leaf's type.
+fn hover_let_pattern_stmt(ctx: HoverContext, lp: LetPatternStmt) HoverResult? {
+  if !lp.span.contains(ctx.offset) {
+    return .None
+  }
+
+  val_ty := try ctx.typed.type_map[lp.value.id]
+  ctx.hover_pattern_leaf(lp.pattern, val_ty).or_else(fn() { ctx.hover_optional_type_expr(lp.ty) })
+}
+
+fn hover_pattern_leaf(ctx: HoverContext, pat: Pattern, ty: MonoType) HoverResult? {
+  case pat.kind {
+    .Ident(_) => if pat.span.contains(ctx.offset) {
+      .Some(.{ content: ty_to_string_env(ctx.typed.env, ty), span: pat.span })
+    } else {
+      .None
+    },
+    .Tuple(subs) => {
+      field_tys := case ty {
+        .Named(_, args) => args,
+        _ => [],
+      }
+
+      for i in 0..subs.len() {
+        if subs[i].span.contains(ctx.offset) {
+          sub_ty := if i < field_tys.len() {
+            field_tys[i]
+          } else {
+            MonoType.Void
+          }
+          return ctx.hover_pattern_leaf(subs[i], sub_ty)
+        }
+      }
+
+      .None
+    },
     _ => .None,
   }
 }
