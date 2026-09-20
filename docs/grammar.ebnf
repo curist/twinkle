@@ -422,29 +422,42 @@ ForStmt =
 
 ForCondition =
       Identifier ( "," Identifier )? "in" Expr
+    | TuplePattern ( "," Identifier )? "in" Expr
     | Expr ;
 (* Implementation note:
    - `for key, value in expr`  (dict / pair iteration)
    - `for x in expr`          (iterator / range / vector / string / set / channel)
    - `for expr`               (while-style loop; condition is expr)
+   - `for (a, b) in expr`      (tuple-destructuring element binder)
+   - `for (a, b), i in expr`   (destructured element + Int index)
    - Parsers typically:
        - If the first token is `Identifier` and later on the same header line
          there is an `in`, parse as a binding-form condition.
        - Otherwise, parse as a generic Expr condition.
    - `in` is *not* an infix operator in Expr grammar, so `x in y`
-     is not a valid Expr and cannot conflict. *)
+     is not a valid Expr and cannot conflict.
+   - The TuplePattern binder is restricted to the irrefutable subset (same
+     restriction as LetBinding's tuple form; see LetBinding). It is
+     syntactically distinct from the two-identifier element+index form: `for
+     a, b in expr` binds element `a` and index `b`, while `for (a, b) in expr`
+     destructures the element itself into `a` and `b`. The parens disambiguate. *)
 
 CollectExpr =
     "collect" CollectCondition Block ;
 
 CollectCondition =
       Identifier ( "," Identifier )? "in" Expr
+    | TuplePattern ( "," Identifier )? "in" Expr
     | Expr ;
 (* Implementation note:
    - `collect x in expr { ... }`      produces `Vector<T>` (T = block value type).
    - `collect x, i in expr { ... }`   two-binder form (element + Int index);
      supported for Vector/String/Range/Dict/Set, not Iterator. For Dict the
      binders are key K and value V; for String x is a Byte.
+   - `collect (a, b) in expr { ... }` / `collect (a, b), i in expr { ... }`:
+     tuple-destructuring element binder, with the same irrefutable-subset
+     restriction and element-vs-element+index disambiguation as ForCondition
+     (see ForCondition).
    - `collect expr { ... }`           conditional (while-style) form; `expr: Bool`.
    - Binders are scoped within the block. Header disambiguation mirrors
      ForCondition: an `in` later on the same header line selects the binding form,
@@ -514,11 +527,26 @@ TopLevelStmt =
 
 LetBinding =
       Identifier ":=" Expr
-    | Identifier ":" Type "=" Expr ;
+    | Identifier ":" Type "=" Expr
+    | TuplePattern ":=" Expr
+    | TuplePattern ":" Type "=" Expr ;
 (* Implementation note:
    - `x := expr`    : inferred-typed binding.
    - `x: T = expr`  : explicitly-typed binding.
-   - These bindings do *not* form mutually recursive groups. *)
+   - `(a, b) := expr` / `(a, b): (Int, Int) = expr` : tuple-pattern
+     destructuring binding. Reuses TuplePattern (see Pattern Matching) as the
+     binder shape, but restricted to the *irrefutable* subset: only
+     IdentifierPattern, WildcardPattern, and nested TuplePattern. EnumPattern
+     and LiteralPattern sub-patterns are syntactically accepted by TuplePattern
+     but are semantically rejected here as a compile error ("refutable pattern
+     not allowed in a binding; use `case`") — the grammar does not encode this
+     restriction structurally.
+   - The RHS is evaluated exactly once; elements are then projected
+     positionally (`_0`, `_1`, …), including through nested patterns.
+   - These bindings do *not* form mutually recursive groups.
+   - Tuple-pattern *rebind* (`(a, b) = expr` reassigning already-bound names)
+     is not supported; only the declaration forms above are — use `:=`/`: T =`
+     or `case`. *)
 
 DeferStmt =
     "defer" Expr ;

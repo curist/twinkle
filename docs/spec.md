@@ -342,6 +342,18 @@ immutable values.
 Lexical scopes are introduced by: function bodies, brace blocks, pattern-bound
 names in `case` arms, loop variables in `for`, and top-level module scope.
 
+The left-hand side may also be a tuple pattern, destructuring the right-hand
+side into several names in one step:
+
+```tw
+(q, r) := divmod(17, 5)             // inferred
+(q, r): (Int, Int) = divmod(17, 5)  // annotated
+```
+
+See §13.7 ("Binding-position destructuring") for the full binder syntax
+(`for`/`collect` element binders, nesting, wildcards) and the irrefutability
+rule.
+
 ### 7.4 Rebinding
 
 ```tw
@@ -948,7 +960,14 @@ All `for` loops are statements returning `Void`:
 for condition { body }
 for x in coll { body }
 for x, i in coll { body }
+for (x, y) in coll { body }       // destructure a tuple element
+for (x, y), i in coll { body }    // destructured element + index
 ```
+
+The `(x, y)` binder destructures a tuple-valued element in place; it is
+syntactically distinct from the two-identifier `x, i` form (element +
+index) — see §13.7 ("Binding-position destructuring") for the binder syntax
+and the irrefutability rule.
 
 <a id="iterable-collections"></a>**Iterable collections.** `for x in coll` (and
 `collect`, below) support exactly these types, each with dedicated type-directed
@@ -982,6 +1001,8 @@ collection (`Vector<T>`, `Range`) from a helper, or return `Iterator<T>` via
 xs := collect x in range(10) { x * x }
 ys := collect x, i in range(10) { x + i }
 zs := collect n < 10 { n }              // conditional (while) form
+ws := collect (x, y) in pairs { x + y }        // destructure a tuple element
+vs := collect (x, y), i in pairs { x + y + i } // destructured element + index
 ```
 
 * Produces `Vector<T>`; the element type is the body expression's type, and all
@@ -992,6 +1013,9 @@ zs := collect n < 10 { n }              // conditional (while) form
 * The two-binder form `collect x, i in coll` is supported for `Vector<T>`,
   `String`, `Range`, `Dict<K,V>`, and `Set<K>` (not `Iterator<T>`). For
   `Dict<K,V>`, the binders are key `K` and value `V`; for `String`, `x: Byte`.
+* The `(x, y)` element binder destructures a tuple-valued element, with the
+  same syntax and irrefutability rule as `for` (see §13.7, "Binding-position
+  destructuring").
 * `continue` skips emission; `break` ends early and returns the partial vector.
 * A body of type `Void` is an error (collect expects a value to push).
 
@@ -1129,8 +1153,10 @@ meaningful names (coordinates, colors, parser state) want a record.
 * **Destructuring:** `case` arms can match tuple patterns — `(x, y)`,
   `(x, y, z)`, `(w, x, y, z)` — with the same arity of 2–4 and full nesting
   (a tuple pattern's sub-patterns can themselves be tuple, enum, literal, or
-  binding patterns). `(a, b) :=` binding, `for` patterns, and function
-  parameter patterns do not support tuple destructuring yet.
+  binding patterns). `(a, b) :=` bindings and `for`/`collect` element binders
+  also destructure tuples, restricted to irrefutable patterns — see
+  "Binding-position destructuring" below. Tuple-pattern *rebind*
+  (`(a, b) = expr`) and function-parameter tuple patterns are not supported.
 
 Tuples desugar to compiler-known nominal records `Tuple2`/`Tuple3`/`Tuple4`
 (fields `_0.._3`); the names are reserved and never written directly. Being
@@ -1157,6 +1183,46 @@ describe := fn(p: (Int, Int)) String {
   }
 }
 ```
+
+#### Binding-position destructuring
+
+Beyond `case`, tuple patterns can also appear as the binder in a `let`
+declaration, and as the element binder of `for`/`collect`:
+
+```tw
+(q, r) := divmod(17, 5)             // inferred
+(q, r): (Int, Int) = divmod(17, 5)  // annotated — the annotation is
+                                     // divmod's expected return type
+
+for (x, y) in pairs { println(x + y) }
+for (x, y), i in pairs { println(i) }             // element + index
+
+collect (x, y) in pairs { x + y }
+collect (x, y), i in pairs { x + y + i }
+```
+
+Patterns nest and allow `_` wildcards, the same as inside a tuple:
+
+```tw
+((a, b), c) := ((1, 2), 3)   // a = 1, b = 2, c = 3
+(_, total) := stats          // binds only the second element
+(_, _) := call_for_effect()  // evaluates the RHS, binds nothing
+```
+
+Two rules apply to every binding-position tuple pattern:
+
+* **Single evaluation.** The right-hand side (or, for `for`/`collect`, the
+  iterated element) is evaluated exactly once and then projected — a
+  side-effecting or expensive expression runs a single time regardless of
+  arity or nesting.
+* **Irrefutable only.** A binder may use only identifiers, `_`, and nested
+  tuples. A refutable sub-pattern — a variant (`.Some(x)`), qualified variant,
+  or literal — anywhere in the binder is a **compile-time error**; use `case`
+  instead.
+
+These forms don't (yet) support tuple-pattern *rebind* (`(a, b) = expr`
+reassigning already-bound names — only the declaration forms above) or
+function-parameter tuple patterns.
 
 ---
 
