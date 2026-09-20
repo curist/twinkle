@@ -1190,10 +1190,10 @@ Beyond `case`, tuple patterns can also appear as the binder in a `let`
 declaration, and as the element binder of `for`/`collect`:
 
 ```tw
-(q, r) := divmod(17, 5)             // inferred
-(q, r): (Int, Int) = divmod(17, 5)  // annotated — the annotation is
-                                     // divmod's expected return type
+(q, r) := divmod(17, 5)                 // inferred
+(q, r): (Int, Int) = divmod(17, 5)      // annotated (must match divmod's return type)
 
+pairs := [(1, 2), (3, 4)]               // Vector<(Int, Int)>
 for (x, y) in pairs { println(x + y) }
 for (x, y), i in pairs { println(i) }             // element + index
 
@@ -1221,8 +1221,10 @@ Two rules apply to every binding-position tuple pattern:
   instead.
 
 These forms don't (yet) support tuple-pattern *rebind* (`(a, b) = expr`
-reassigning already-bound names — only the declaration forms above) or
-function-parameter tuple patterns.
+reassigning already-bound names — only the declaration forms above),
+function-parameter tuple patterns, or `pub` (a module-level tuple-pattern
+`let` is always non-`pub`; `pub (a, b) := expr` is a parse error — export the
+individual names with separate `pub` bindings instead).
 
 ---
 

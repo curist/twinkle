@@ -538,12 +538,13 @@ LetBinding =
      binder shape, but restricted to the *irrefutable* subset: only
      IdentifierPattern, WildcardPattern, and nested TuplePattern. EnumPattern
      and LiteralPattern sub-patterns are syntactically accepted by TuplePattern
-     but are semantically rejected here as a compile error ("refutable pattern
-     not allowed in a binding; use `case`") — the grammar does not encode this
-     restriction structurally.
+     but are semantically rejected here as a compile error — the grammar does
+     not encode this restriction structurally.
    - The RHS is evaluated exactly once; elements are then projected
      positionally (`_0`, `_1`, …), including through nested patterns.
    - These bindings do *not* form mutually recursive groups.
+   - `pub` (see TopLevelStmt) is not currently supported with a TuplePattern
+     LHS; module-level tuple-pattern lets are always non-`pub`.
    - Tuple-pattern *rebind* (`(a, b) = expr` reassigning already-bound names)
      is not supported; only the declaration forms above are — use `:=`/`: T =`
      or `case`. *)
