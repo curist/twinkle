@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Design source of truth:** `docs/plans/tuple-binding-destructuring-design.md`. This plan implements it verbatim; if a detail conflicts, the design wins.
+- **Design source of truth:** `docs/plans/archive/tuple-binding-destructuring-design.md`. This plan implements it verbatim; if a detail conflicts, the design wins.
 - **Two-compiler parity is the hard gate:** `make stage2` (self-host fixed point) must reach a fixed point. Both compilers must implement the checker + lowering for the feature to even reach it.
 - **In scope:** irrefutable patterns only — identifiers, `_` wildcards, nested tuples `((a, b), c)`, arity 2–4 at each level. RHS evaluated exactly once.
 - **Out of scope (must be a clean compile error, not silent):** refutable sub-patterns (`.Some(x)`, qualified variants, literals) in a binder; tuple-pattern *rebind* `(a, b) = e`; function-parameter tuple patterns; arity >4, 1-tuples, `()` unit.

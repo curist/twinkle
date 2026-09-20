@@ -422,3 +422,5 @@ parse-time desugar) is what keeps the surface syntax from being rewritten into
 - **Follow-on adoption** (rewriting compiler multi-return call sites to
   `(a, b) :=`) is deliberately *not* in this plan; it is the motivating payoff
   and a natural next step once this lands.
+
+Follow-on: adopt `(a, b) :=` at multi-return call sites in `boot/compiler/*.tw` to replace helper records and exercise the self-hosted compiler on its own new syntax.
