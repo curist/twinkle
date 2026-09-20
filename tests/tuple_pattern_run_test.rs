@@ -233,14 +233,12 @@ if r != 100 {
     );
 }
 
-/// `(a, b) := expr` — tuple-pattern let binding. Task 8 fixes the stage0
-/// parser so this routes to `parse_let_stmt` instead of ICEing on `:=`
-/// (previously mis-parsed as an infix operator). The checker + lowering for
-/// tuple-pattern lets are Task 9/10, so this is `#[ignore]`d until then —
-/// un-ignore in Task 11. Parse-level coverage for this task lives in
-/// `src/syntax/parser.rs`'s test module (`tuple_let_binding_parses_as_tuple_pattern`).
+/// `(a, b) := expr` — tuple-pattern let binding, at module level. Exercises
+/// the module-global pre-pass: `q` and `r` must be pre-registered with
+/// stable LocalIds (via `collect_module_globals`'s tuple-leaf walk) so the
+/// tuple-let lowering binds them to the same GlobalLocal ids that later
+/// reads resolve against.
 #[test]
-#[ignore = "enabled in Task 10 (stage0 lowering)"]
 fn tuple_let_binding_runs() {
     assert_program_matches_expected(
         r#"
@@ -249,6 +247,59 @@ fn dm(a: Int, b: Int) (Int, Int) { (a / b, a % b) }
 if q * 100 + r != 302 {
   error("mismatch")
 }
+"#,
+    );
+}
+
+/// `for (a, b) in xs { ... }` — tuple-pattern element binding in a `for`
+/// loop over `Vector<(Int, Int)>`. Expected: 1*10+2 + 3*10+4 = 46.
+#[test]
+fn tuple_for_destructure_runs() {
+    assert_program_matches_expected(
+        r#"
+fn main() Int {
+  xs := [(1, 2), (3, 4)]
+  sum := 0
+  for (a, b) in xs { sum = sum + a * 10 + b }
+  sum
+}
+r := main()
+if r != 46 { error("mismatch") }
+"#,
+    );
+}
+
+/// `collect (a, b) in xs { ... }` — tuple-pattern element binding in a
+/// `collect` comprehension over `Vector<(Int, Int)>`.
+#[test]
+fn tuple_collect_destructure_runs() {
+    assert_program_matches_expected(
+        r#"
+fn main() Int {
+  xs := [(1, 2), (3, 4)]
+  ys := collect (a, b) in xs { a + b }
+  ys[0] * 10 + ys[1]
+}
+r := main()
+if r != 37 { error("mismatch") }
+"#,
+    );
+}
+
+/// `((a, b), _) := ((1, 2), 3)` — nested tuple-pattern let, block-level
+/// (inside a function, not module-level). Exercises the intermediate-temp
+/// recursion in `lower_tuple_pattern_bindings` plus the wildcard leaf (`_`
+/// contributes no binding).
+#[test]
+fn tuple_let_nested_destructure_runs() {
+    assert_program_matches_expected(
+        r#"
+fn f() Int {
+  ((a, b), _) := ((1, 2), 3)
+  a * 10 + b
+}
+r := f()
+if r != 12 { error("mismatch") }
 "#,
     );
 }

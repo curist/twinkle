@@ -339,16 +339,32 @@ impl Lowerer {
     fn collect_module_globals(&mut self, ast: &SourceFile) {
         let mut next_id = self.global_local_start;
         for item in &ast.items {
-            if let Item::Stmt(Stmt::Let {
-                pattern: Pattern::Ident(name, _),
-                ..
-            }) = item
-            {
-                self.module_globals.insert(name.clone(), LocalId(next_id));
-                next_id += 1;
+            if let Item::Stmt(Stmt::Let { pattern, .. }) = item {
+                self.collect_module_global_pattern(pattern, &mut next_id);
             }
         }
         self.next_global_id = next_id;
+    }
+
+    /// Register every leaf ident of a module-level `let` pattern (a bare
+    /// `Pattern::Ident`, or the leaves of a `Pattern::Tuple`) with a stable
+    /// LocalId. Tuple leaves need this too — `Stmt::Let`'s `Pattern::Tuple`
+    /// arm (in `lower_stmt_head`) reuses these pre-assigned ids at module
+    /// level so later functions' `GlobalLocal(id)` references match, exactly
+    /// like the plain `Pattern::Ident` case.
+    fn collect_module_global_pattern(&mut self, pattern: &Pattern, next_id: &mut u32) {
+        match pattern {
+            Pattern::Ident(name, _) => {
+                self.module_globals.insert(name.clone(), LocalId(*next_id));
+                *next_id += 1;
+            }
+            Pattern::Tuple(sub_pats, _) => {
+                for sub in sub_pats {
+                    self.collect_module_global_pattern(sub, next_id);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Collect extern function metadata for WASM import generation.
@@ -740,6 +756,143 @@ impl Lowerer {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Tuple pattern destructuring (let / for / collect)
+    // -----------------------------------------------------------------------
+
+    /// Recursively pre-bind the leaf identifiers of a tuple pattern into the
+    /// current local-allocator scope, WITHOUT producing any Core IR. Must run
+    /// *before* lowering whatever body/continuation references these names,
+    /// so that name resolution during that lowering finds the same LocalIds
+    /// that `lower_tuple_pattern_bindings` will later wrap the body with.
+    ///
+    /// `bind_as_module_global`: when true (module-level `Stmt::Let` inside
+    /// `__init__`), leaf idents reuse their pre-assigned GlobalLocal id from
+    /// `self.module_globals` (registered by `collect_module_globals`),
+    /// mirroring the `Pattern::Ident` module-global handling at the
+    /// `Stmt::Let` site. For-loop / collect element bindings are always
+    /// fresh locals, so those callers pass `false`.
+    fn predeclare_tuple_pattern(&mut self, pat: &Pattern, bind_as_module_global: bool) {
+        match pat {
+            Pattern::Wildcard(_) => {}
+            Pattern::Ident(name, _) => {
+                if bind_as_module_global
+                    && let Some(&pre_id) = self.module_globals.get(name.as_str())
+                {
+                    self.local_allocator.bind(name.clone(), pre_id);
+                } else {
+                    self.local_allocator.alloc_and_bind(name.clone());
+                }
+            }
+            Pattern::Tuple(sub_pats, _) => {
+                for sub in sub_pats {
+                    self.predeclare_tuple_pattern(sub, bind_as_module_global);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Expand a tuple pattern into nested `Let`s binding each leaf ident to a
+    /// positional `RecordGet` off `base_local` (a value of the tuple's
+    /// `TupleN` record type), wrapping `body`. Field indices use the same
+    /// `get_field_index(type_id, "_i")` convention as the case-arm
+    /// `Pattern::Tuple` lowering (see `lower_pattern`'s `Pattern::Tuple` arm).
+    /// Wildcards contribute no binding. Nested `Pattern::Tuple` sub-patterns
+    /// bind an intermediate temp local to the `RecordGet` and recurse
+    /// against it.
+    ///
+    /// Leaf idents must already be bound in scope (via
+    /// `predeclare_tuple_pattern`, called before lowering `body`) — this
+    /// looks up their LocalIds rather than allocating fresh ones, so
+    /// references inside the already-lowered `body` resolve to the same
+    /// locals we bind here.
+    fn lower_tuple_pattern_bindings(
+        &mut self,
+        base_local: LocalId,
+        base_ty: &MonoType,
+        pat: &Pattern,
+        body: CoreExpr,
+    ) -> CoreExpr {
+        let sub_pats = match pat {
+            Pattern::Tuple(sub_pats, _) => sub_pats,
+            // Callers only ever invoke this for Pattern::Tuple; nothing to
+            // expand for a bare leaf reached directly.
+            _ => return body,
+        };
+
+        let (type_id, field_tys): (TypeId, &[MonoType]) = match base_ty {
+            MonoType::Named { type_id, args } => (*type_id, args.as_slice()),
+            _ => (
+                match sub_pats.len() {
+                    3 => TUPLE3_TYPE_ID,
+                    4 => TUPLE4_TYPE_ID,
+                    _ => TUPLE2_TYPE_ID,
+                },
+                &[],
+            ),
+        };
+
+        let span = body.span;
+        let body_ty = body.ty.clone();
+        let mut acc = body;
+
+        for (i, sub) in sub_pats.iter().enumerate().rev() {
+            let field_idx = self
+                .type_env
+                .get_field_index(type_id, &format!("_{}", i))
+                .unwrap_or(i);
+            let field_ty = field_tys.get(i).cloned().unwrap_or(MonoType::Void);
+            let get_expr = CoreExpr {
+                kind: CoreExprKind::RecordGet {
+                    target: Box::new(CoreExpr {
+                        kind: CoreExprKind::Local(base_local),
+                        ty: base_ty.clone(),
+                        span,
+                    }),
+                    field: FieldId(field_idx),
+                },
+                ty: field_ty.clone(),
+                span,
+            };
+
+            acc = match sub {
+                Pattern::Wildcard(_) => acc,
+                Pattern::Ident(name, _) => {
+                    let local = self
+                        .local_allocator
+                        .lookup(name)
+                        .unwrap_or_else(|| self.local_allocator.alloc_and_bind(name.clone()));
+                    CoreExpr {
+                        kind: CoreExprKind::Let {
+                            local,
+                            value: Box::new(get_expr),
+                            body: Box::new(acc),
+                        },
+                        ty: body_ty.clone(),
+                        span,
+                    }
+                }
+                Pattern::Tuple(..) => {
+                    let temp = self.local_allocator.alloc();
+                    let inner = self.lower_tuple_pattern_bindings(temp, &field_ty, sub, acc);
+                    CoreExpr {
+                        kind: CoreExprKind::Let {
+                            local: temp,
+                            value: Box::new(get_expr),
+                            body: Box::new(inner),
+                        },
+                        ty: body_ty.clone(),
+                        span,
+                    }
+                }
+                _ => acc,
+            };
+        }
+
+        acc
+    }
+
     fn lower_stmt_head(&mut self, stmt: &Stmt, rest: &[Stmt], span: Span) -> Option<CoreExpr> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
@@ -782,6 +935,32 @@ impl Lowerer {
                                 local,
                                 value: Box::new(value_expr),
                                 body: Box::new(body),
+                            },
+                            ty,
+                            span,
+                        })
+                    }
+                    Pattern::Tuple(..) => {
+                        let value_expr = self.lower_expr(value)?;
+                        let value_ty = value_expr.ty.clone();
+                        // Temp holding the tuple value itself. At module level
+                        // this is never a leaf name, so it never collides
+                        // with a pre-assigned global id — always a fresh local.
+                        let temp = self.local_allocator.alloc();
+                        // Pre-bind leaf idents BEFORE lowering `rest`, so
+                        // references to them resolve to the LocalIds (or
+                        // pre-assigned GlobalLocal ids, at module level) that
+                        // `lower_tuple_pattern_bindings` wraps around below.
+                        self.predeclare_tuple_pattern(pattern, self.in_init_context);
+                        let rest_body = self.lower_stmts(rest, span)?;
+                        let ty = rest_body.ty.clone();
+                        let wrapped =
+                            self.lower_tuple_pattern_bindings(temp, &value_ty, pattern, rest_body);
+                        Some(CoreExpr {
+                            kind: CoreExprKind::Let {
+                                local: temp,
+                                value: Box::new(value_expr),
+                                body: Box::new(wrapped),
                             },
                             ty,
                             span,
@@ -1112,6 +1291,9 @@ impl Lowerer {
                     Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
                     _ => self.local_allocator.alloc(),
                 };
+                if let Pattern::Tuple(..) = pattern {
+                    self.predeclare_tuple_pattern(pattern, false);
+                }
 
                 // Optionally bind index variable
                 let idx_user = index_pattern.as_ref().and_then(|ip| {
@@ -1135,7 +1317,11 @@ impl Lowerer {
                     iter_span,
                 );
 
-                let body_expr = self.lower_block(body)?;
+                let mut body_expr = self.lower_block(body)?;
+                if let Pattern::Tuple(..) = pattern {
+                    body_expr =
+                        self.lower_tuple_pattern_bindings(elem_local, &elem_ty, pattern, body_expr);
+                }
                 self.local_allocator.pop_scope();
 
                 // Increment idx using Assign (mutation) then Continue
@@ -1410,12 +1596,25 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        if let Pattern::Tuple(..) = pattern {
+            self.predeclare_tuple_pattern(pattern, false);
+        }
         let val_local = val_pattern.map(|vp| match vp {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         });
+        if let Some(Pattern::Tuple(..)) = val_pattern {
+            self.predeclare_tuple_pattern(val_pattern.unwrap(), false);
+        }
 
-        let body_expr = self.lower_block(body)?;
+        let mut body_expr = self.lower_block(body)?;
+        if let Pattern::Tuple(..) = pattern {
+            body_expr = self.lower_tuple_pattern_bindings(key_local, &key_ty, pattern, body_expr);
+        }
+        if let (Some(Pattern::Tuple(..)), Some(vl)) = (val_pattern, val_local) {
+            body_expr =
+                self.lower_tuple_pattern_bindings(vl, &val_ty, val_pattern.unwrap(), body_expr);
+        }
         self.local_allocator.pop_scope();
 
         // key_value = keys_tmp[idx_tmp]
@@ -1681,6 +1880,9 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        if let Pattern::Tuple(..) = pattern {
+            self.predeclare_tuple_pattern(pattern, false);
+        }
 
         let idx_user = index_pattern.and_then(|ip| {
             if let Pattern::Ident(name, _) = ip {
@@ -1690,7 +1892,10 @@ impl Lowerer {
             }
         });
 
-        let body_expr = self.lower_block(body)?;
+        let mut body_expr = self.lower_block(body)?;
+        if let Pattern::Tuple(..) = pattern {
+            body_expr = self.lower_tuple_pattern_bindings(elem_local, &elem_ty, pattern, body_expr);
+        }
         self.local_allocator.pop_scope();
 
         // Call(ITERATOR_NEXT, [Local(loop_it)])
@@ -5185,16 +5390,24 @@ impl Lowerer {
             Pattern::Ident(name, _) => self.local_allocator.alloc_and_bind(name.clone()),
             _ => self.local_allocator.alloc(),
         };
+        if let Pattern::Tuple(..) = pattern {
+            self.predeclare_tuple_pattern(pattern, false);
+        }
         let idx_user = index_pattern.and_then(|ip| match ip {
             Pattern::Ident(name, _) => Some(self.local_allocator.alloc_and_bind(name.clone())),
             _ => None,
         });
 
+        let elem_ty_for_pat = elem_ty.clone();
         let elem_value =
             self.lower_index_core_expr(arr_local_expr, idx_expr.clone(), elem_ty, iter_span);
 
         let body_val_local = self.local_allocator.alloc_and_bind("__c_val".to_string());
-        let body_expr = self.lower_expr(body)?;
+        let mut body_expr = self.lower_expr(body)?;
+        if let Pattern::Tuple(..) = pattern {
+            body_expr =
+                self.lower_tuple_pattern_bindings(elem_local, &elem_ty_for_pat, pattern, body_expr);
+        }
         let body_ty = body_expr.ty.clone();
 
         self.local_allocator.pop_scope();
