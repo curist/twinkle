@@ -61,9 +61,13 @@ not anticipate. The decomposition design (scalar-only return, in-place mutable
 handle, control flow carries only the scalar), the recommended helper-write
 approach (compose with the existing bare-vector S4 rather than add an inliner),
 caller thaw/freeze rules, and bail conditions are captured in
-`docs/plans/2026-09-26-aggregate-abi-rewrite-design.md`. The one open question
-to resolve first: whether bare-vector S4 flattens a *param-sourced* handle
-threaded into `swap`.
+`docs/plans/2026-09-26-aggregate-abi-rewrite-design.md`. The open question was
+resolved by prototype (2026-09-26): bare-vector S4 does **not** flatten a
+param-sourced handle threaded into `swap` (it roots regions only on
+`collect`/`make` producers), so Option A does not compose for free. The design
+doc now recommends **Option B** — a narrow, self-contained `swap` beta-reduce
+inside the decomposed clone: single flat clone, matches the committed
+`permute$mvagg` WAT test verbatim, tightest hot loop.
 
 ## File Map
 

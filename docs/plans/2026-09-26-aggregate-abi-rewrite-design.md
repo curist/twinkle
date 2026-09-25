@@ -123,10 +123,37 @@ tests pass verbatim.
   remapping, all-or-nothing bail), more moving parts, higher risk. Larger than
   the decomposition itself.
 
-**Recommendation:** Option A. The performance goal (in-place write, no COW
-alloc) is met by either, and A reuses the verified S4 path. Adjusting one test
-assertion is cheaper and safer than a new inliner. Decide the Option-A
-integration-risk question first (param-sourced bare-vector S4 firing on `swap`).
+**Recommendation (revised after prototype): Option B.** See the prototype
+result below — Option A does *not* compose for free, so its "reuse the verified
+path" advantage largely evaporates.
+
+### Prototype result (2026-09-26)
+
+A minimal fixture (`scratchpad/param_thread_probe.tw`) threads a `Vector<Int>`
+**param** through an owned `swap` continuation and the recursion — the exact
+shape `permute$mvagg` would create when it passes its flat handle to `swap`.
+Result: `swap`'s WAT still calls `set_at__Int` → `rt_arr__set` (persistent), no
+`$mv`/`$mvagg` clone, no `mutvec regions` reported. The existing bare-vector S4
+**does not fire on a param-sourced handle**: `classify_producer_prime`
+(`mutvec_call_region.tw:159`) roots a region only on a `collect`/`make`/array
+producer op, and a param has no defining op.
+
+So Option A requires a genuinely new pass — recognize a MutVec-typed **param**
+as a region root and thread it cross-function into `swap`, flattening `swap` to
+a second in-place clone with coordinated repr. That is at least as much new code
+as Option B, plus a second flat clone and cross-function repr coordination, and
+it leaves a `swap` call in the hot loop (call overhead against the 1.25×/1.5×
+gate).
+
+Option B's inliner is narrow and self-contained: at each
+`L = call swap(vec(carrier), i, j)` whose result feeds the carrier's vector
+field, beta-reduce `swap` (straight-line owned `Vector→Vector` helper) into the
+decomposed clone with `v ↦ handle`; its `set_at` then retargets to
+`mutvec_set_i64(handle, …)` in place (plan Task 4 Step 4, unchanged), and the
+handle identity is preserved. Bail (persistent fallback) if the helper is not
+straight-line, has control flow/multiple returns, or its vector arg is not the
+carrier handle. Single clone, matches the committed test verbatim, tightest
+code.
 
 ## Caller boundary rules (thaw + freeze)
 
@@ -167,9 +194,13 @@ aggregate MutVec) before any sibling is allocated (plan Task 4 Step 6).
 
 ## Suggested implementation order for the follow-up
 
-1. Resolve the Option-A integration question (does bare-vector S4 flatten a
-   param-sourced handle threaded into `swap`? — prototype on the scratch clone).
+1. ~~Resolve the Option-A integration question~~ — **done (2026-09-26): bare-vector
+   S4 does NOT flatten a param-sourced handle; Option B chosen.** See prototype
+   result above.
 2. New module `mutvec_aggregate_rewrite.tw`: pure `build_decomposed_sibling`
+   (record-explosion + the narrow `swap` beta-reduce, `.None` bail), unit-tested
+   on the real specialized clone body before any wiring. (Superseding the
+   Option-A "compose with bare-vector S4" note in step 3 below.)
    (record-explosion, `.None` bail), unit-tested on the real specialized clone
    body before any wiring.
 3. Wire the aggregate plan into `mutvec_call_phase` (sibling gen, unified
