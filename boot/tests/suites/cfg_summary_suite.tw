@@ -519,6 +519,7 @@ fn one_param_summary(role: ownership.ParamRole, ipp: variant_id.PathSet) ownersh
     params: [ownership.ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: true }],
     ret: .MayAliasParams([0]),
     ret_paths: [],
+    ret_exact_param: .None,
   }
 }
 
@@ -588,6 +589,7 @@ fn ret_path_pairs(rps: Vector<ownership.ReturnPathOwn>) Vector<Int> {
             pairs = .append(f)
             pairs = .append(0 - 1)
           },
+          .OwnedFromField(_, _) => {},
         },
         .None => {},
       },
@@ -607,6 +609,7 @@ fn has_variant_shell_fresh(rps: Vector<ownership.ReturnPathOwn>, tag: Int, idx: 
       .None => case r.own {
         .OwnedFresh => true,
         .OwnedFromParam(_) => false,
+        .OwnedFromField(_, _) => false,
       },
       .Some(_) => false,
     }
@@ -636,6 +639,7 @@ fn has_variant_field_from(
     own_ok := case r.own {
       .OwnedFromParam(k) => k == param,
       .OwnedFresh => false,
+      .OwnedFromField(_, _) => false,
     }
     if via_ok and fld_ok and own_ok {
       return true
@@ -658,6 +662,7 @@ fn has_from_param_path(rps: Vector<ownership.ReturnPathOwn>, k: Int) Bool {
     own_ok := case r.own {
       .OwnedFromParam(p) => p == k,
       .OwnedFresh => false,
+      .OwnedFromField(_, _) => false,
     }
     if via_ok and fld_ok and own_ok {
       return true
@@ -680,6 +685,7 @@ fn has_direct_field_fresh(rps: Vector<ownership.ReturnPathOwn>, f: Int) Bool {
     own_ok := case r.own {
       .OwnedFresh => true,
       .OwnedFromParam(_) => false,
+      .OwnedFromField(_, _) => false,
     }
     if via_ok and fld_ok and own_ok {
       return true
@@ -1634,8 +1640,9 @@ pub fn suite() runner.Suite {
           ],
           ret: .MayAliasParams([0, 1]),
           ret_paths: [],
+          ret_exact_param: .None,
         }
-        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh, ret_paths: [] }
+        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh, ret_paths: [], ret_exact_param: .None }
         try assert.equal(
           summary.render_summary(consumed),
           "summary: p0=Borrowed p1=Published ret=alias(p0,p1)",
@@ -1913,6 +1920,7 @@ pub fn suite() runner.Suite {
           ],
           ret: .OwnedFresh,
           ret_paths: [],
+          ret_exact_param: .None,
         }
         try assert.equal(summary.render_summary(s), "summary: p0=Consumed paths{[]} ret=fresh")
         .Ok({})
@@ -2096,6 +2104,7 @@ pub fn suite() runner.Suite {
           ],
           ret: .MayAliasParams([0]),
           ret_paths: [],
+          ret_exact_param: .None,
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
@@ -2138,6 +2147,7 @@ pub fn suite() runner.Suite {
           ],
           ret: .OwnedFresh,
           ret_paths: [],
+          ret_exact_param: .None,
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
@@ -2304,6 +2314,7 @@ pub fn suite() runner.Suite {
           ],
           ret: .MayAliasParams([0]),
           ret_paths: [],
+          ret_exact_param: .None,
         }
         v := ownership.select_variant(7, s, [true, true])
         try assert.equal(v.unique.len(), 2) // (0,[]) + (0,[.f0]); p1 contributes nothing
@@ -2409,6 +2420,7 @@ pub fn suite() runner.Suite {
           ],
           ret: .OwnedFresh,
           ret_paths: [],
+          ret_exact_param: .None,
         }
         try assert.equal(
           summary.render_summary(s),

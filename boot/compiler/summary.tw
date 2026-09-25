@@ -121,7 +121,7 @@ pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
     ParamSummary.{ base_role: .Published, in_place_paths: vid.empty_set(), flows_to_return: false }
   }
-  .{ params, ret: .Shared, ret_paths: [] }
+  .{ params, ret: .Shared, ret_paths: [], ret_exact_param: .None }
 }
 
 // ── Summary equality (fixpoint stop condition) ──────────────────────
@@ -174,6 +174,10 @@ fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
       .OwnedFromParam(kb) => ka == kb,
       _ => false,
     },
+    .OwnedFromField(ka, fa) => case b {
+      .OwnedFromField(kb, fb) => ka == kb and fa == fb,
+      _ => false,
+    },
   }
 }
 
@@ -209,6 +213,7 @@ fn own_key(o: ReturnOwn) Int {
   case o {
     .OwnedFresh => 0 - 1,
     .OwnedFromParam(k) => k,
+    .OwnedFromField(k, _) => k,
   }
 }
 
@@ -536,7 +541,7 @@ fn run_scc(
         .Some(s) => table = table_put(
           table,
           id,
-          Summary.{ params: s.params, ret: s.ret, ret_paths: [] },
+          Summary.{ params: s.params, ret: s.ret, ret_paths: [], ret_exact_param: s.ret_exact_param },
         ),
         .None => {},
       }
@@ -947,6 +952,35 @@ fn candidate_variants(view: CfgView, generic: SummaryTable, sem: OptimizerSemant
           unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
         }
         cands = .append(v.canonicalize_variant())
+      } else {
+        // Syntax only proposes a seeded hypothesis. The ownership summary must
+        // validate exact field lineage at every return before publication.
+        reconstructs := false
+        for blk in f.blocks {
+          for inst in blk.instructions {
+            case inst.op {
+              .ARecord(_, _) => reconstructs = true,
+              _ => {},
+            }
+          }
+        }
+        if reconstructs and k < f.params.len() {
+          paths := vid.shell_set()
+          for blk in f.blocks {
+            for inst in blk.instructions {
+              case inst.op {
+                .ARecordGet(.ALocal(base), field, tid) => if base.id == f.params[k].id
+                  and !sem.sem_field_is_primitive(tid, field) {
+                  paths = .add(vid.field(field.id))
+                },
+                _ => {},
+              }
+            }
+          }
+          if has_non_shell_path(paths) {
+            cands = .append(variant_for_paths(f.func_id, k, paths))
+          }
+        }
       }
     }
   }
@@ -979,7 +1013,32 @@ fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
       ps
     }
   }
-  .{ params, ret: .MayAliasParams([k]), ret_paths: [] }
+  .{ params, ret: .MayAliasParams([k]), ret_paths: [], ret_exact_param: .Some(k) }
+}
+
+fn optimistic_variant_hypothesis(gs: Summary, v: vid.VariantId) Summary {
+  k := seed_param_of(v)
+  s := optimistic_hypothesis(gs, k)
+  paths := vid.shell_set()
+  ret_paths: Vector<ReturnPathOwn> = []
+  for req in v.unique {
+    if req.path.segs.len() == 1 {
+      field := req.path.segs[0]
+      paths = .add(req.path)
+      ret_paths = .append(
+        ReturnPathOwn.{ via: .Direct, field: .Some(field), own: .OwnedFromField(k, field) },
+      )
+    }
+  }
+  if !ret_paths.is_empty() {
+    s.ret = .OwnedFresh
+    s.ret_exact_param = .None
+    s.ret_paths = ret_paths
+    ps := s.params[k]
+    ps.in_place_paths = paths
+    s.params[k] = ps
+  }
+  s
 }
 
 fn seed_param_of(v: vid.VariantId) Int {
@@ -1035,13 +1094,39 @@ fn project_summary_to_shell(s: Summary, k: Int) Summary {
 // A converged variant survives only if it still consumes param k in place AND
 // still returns exactly alias([k]) -- an alias-forced publish fails the first,
 // a widened return fails the second.
-fn variant_valid(s: Summary, k: Int) Bool {
+fn variant_valid(s: Summary, v: vid.VariantId) Bool {
+  k := seed_param_of(v)
   param_ok := if k >= 0 and k < s.params.len() {
     !s.params[k].in_place_paths.is_empty()
   } else {
     false
   }
-  param_ok and ret_aliases_exactly_param(s.ret, k)
+  if !param_ok {
+    return false
+  }
+  fields := v.unique.filter(fn(req) { !req.path.is_shell() })
+  if fields.is_empty() {
+    return ret_aliases_exactly_param(s.ret, k)
+  }
+  if s.ret != .OwnedFresh {
+    return false
+  }
+  for req in fields {
+    if req.path.segs.len() != 1 {
+      return false
+    }
+    found := false
+    for rp in s.ret_paths {
+      if rp.via == .Direct
+        and rp.field == .Some(req.path.segs[0]) and rp.own == .OwnedFromField(k, req.path.segs[0]) {
+        found = true
+      }
+    }
+    if !found {
+      return false
+    }
+  }
+  true
 }
 
 // generic table with each in-SCC member's current variant iterate overlaid, so a
@@ -1099,7 +1184,10 @@ fn run_scc_variants(
       // seed active members optimistically
       member_iter = Dict.new()
       for m, k in member_pidx {
-        member_iter[m] = optimistic_hypothesis(table_get(generic, m), k)
+        member_iter[m] = optimistic_variant_hypothesis(
+          table_get(generic, m),
+          member_key[m].unwrap(),
+        )
       }
 
       // monotone worklist fixpoint (Gauss-Seidel: overlay reads live iterates)
@@ -1123,7 +1211,7 @@ fn run_scc_variants(
           next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve, require)
           prev := case member_iter.get(m) {
             .Some(s) => s,
-            .None => optimistic_hypothesis(table_get(generic, m), k),
+            .None => optimistic_variant_hypothesis(table_get(generic, m), member_key[m].unwrap()),
           }
           if !same_summary(next, prev) {
             member_iter[m] = next
@@ -1144,9 +1232,9 @@ fn run_scc_variants(
         for m, k in member_pidx {
           conv := case member_iter.get(m) {
             .Some(s) => s,
-            .None => optimistic_hypothesis(table_get(generic, m), k),
+            .None => optimistic_variant_hypothesis(table_get(generic, m), member_key[m].unwrap()),
           }
-          if !variant_valid(conv, k) {
+          if !variant_valid(conv, member_key[m].unwrap()) {
             failed = .append(m)
           }
         }
@@ -1170,7 +1258,13 @@ fn run_scc_variants(
     case member_iter.get(m) {
       .Some(s) => {
         k := seed_param_of(v)
-        if variant_valid(s, k) {
+        if variant_valid(s, v) {
+          if v.unique.any(fn(req) { !req.path.is_shell() }) {
+            // Reconstruction owns only the explicitly proven full field tier.
+            // Publishing a shell-only tier would lose its field precondition.
+            vtable = .vtable_put(v, s)
+            continue
+          }
           shell_v := variant_for_paths(m, k, vid.shell_set())
           vtable = .vtable_put(shell_v, project_summary_to_shell(s, k))
           full_paths := s.params[k].in_place_paths
@@ -1708,6 +1802,7 @@ fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
     own := case r.own {
       .OwnedFresh => "fresh",
       .OwnedFromParam(k) => "from(p${k})",
+      .OwnedFromField(k, f) => "from(p${k}.f${f})",
     }
     parts = .append("${via}${fld}=${own}")
   }

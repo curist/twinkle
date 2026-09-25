@@ -424,7 +424,29 @@ fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
   for c in all_cands.fields.candidates {
     out[c.func_id.id] = true
   }
+  for f in anf.functions {
+    if has_reconstruction(f.body) {
+      out[f.func_id.id] = true
+    }
+  }
   out
+}
+
+fn has_reconstruction(e: AnfExpr) Bool {
+  case e {
+    .Let(_, op, _, body) => {
+      found := case op {
+        .ARecord(_, _) => true,
+        .AIf(_, t, el) => has_reconstruction(t) or has_reconstruction(el),
+        .AMatch(_, arms) => arms.any(fn(a) { has_reconstruction(a.body) }),
+        .ALoop(body) => has_reconstruction(body),
+        .ADefer(body) => has_reconstruction(body),
+        _ => false,
+      }
+      found or has_reconstruction(body)
+    },
+    _ => false,
+  }
 }
 
 pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {

@@ -8,12 +8,14 @@ use compiler.cfg
 use compiler.codegen.mutable_produce
 use compiler.codegen.variant_route
 use compiler.codegen.variant_specialize
+use compiler.field_facts as ff
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
 use compiler.resolver
 use compiler.summary
 use lib.module.loader
+use tests.suites.mutvec_call_suite as mutvec
 
 fn fixtures_dir() String {
   "${loader.find_project_root("boot")}/tests/fixtures/cfg/sound_uniqueness"
@@ -147,6 +149,60 @@ fn op_calls(op: AnfOp, target: Int) Bool {
 pub fn suite() runner.Suite {
   runner
     .suite("variant_specialize")
+    .test(
+      "owned reconstruction rejects fresh and different field substitutes",
+      fn() Result<Void, String> {
+        for name in ["recursive_record_fresh_substitute", "recursive_record_other_field", "recursive_record_helper_substitute"] {
+          st := mutvec.mutvec_call_stage(mutvec.fixture_path(name))
+          try assert.is_false(
+            st.spec.routes.any(fn(r) { r.fallback_reason == .None
+              and r.clone_name.contains("permute$v") }),
+          )
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "owned reconstruction routes preserve the vector field lineage",
+      fn() Result<Void, String> {
+        missing: Vector<String> = []
+        for name in [
+          "recursive_record_scratch",
+          "recursive_record_escape",
+          "recursive_record_field_escape",
+        ] {
+          st := mutvec.mutvec_call_stage(mutvec.fixture_path(name))
+          route := case st.spec.routes.find(fn(r) { r.fallback_reason == .None
+            and r.clone_name.contains("permute$v") }) {
+            .Some(r) => r,
+            .None => {
+              missing = .append(name)
+              continue
+            },
+          }
+          seed := st.spec.seeds.by_func[route.clone_func].unwrap()
+          try assert.ok(
+            seed.field_seed_paths.values().any(fn(f: ff.FieldMap) { f.is_unique(ff.field_path(0)) }),
+            "${name}: values field must be owned",
+          )
+          try assert.ok(route.route_sites.len() > 0, "${name}: entry must route")
+          try assert.ok(route.recursive_routes.len() > 0, "${name}: recursion must route")
+          try assert.ok(calls_target(st.spec.anf, "run", route.clone_func), "entry calls the owned clone")
+          vt := summary.compute_variants(st.spec.pruned_view, st.builtins, st.sem, st.spec.summary)
+          owned := vt.variant_get(route.variant).unwrap().summary
+          try assert.ok(owned.ret == .OwnedFresh, "owned variant returns a fresh record shell")
+          try assert.ok(owned.ret_paths.any(fn(rp) {
+            rp.via == .Direct and rp.field == .Some(0) and rp.own == .OwnedFromField(0, 0)
+          }), "values returns exactly the incoming values field")
+          generic := ownership.summary_get(st.spec.summary, route.generic_func).unwrap()
+          try assert.ok(
+            generic.ret != .MayAliasParams([0]),
+            "reconstructed shell cannot alias input",
+          )
+        }
+        assert.ok(missing.is_empty(), "missing owned permute route: ${missing.join(", ")}")
+      },
+    )
     .test(
       "setb publishes a variant selectable when the record arg is unique",
       fn() Result<Void, String> {

@@ -73,7 +73,7 @@ pub type ParamSummary = .{
 //                            !in_place_paths.is_empty() =>  base_role == Consumed && flows_to_return
 pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
 
-pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int) }
+pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int), OwnedFromField(Int, Int) }
 
 pub type RetVia = { Direct, Variant(Int, Int) }
 
@@ -83,6 +83,9 @@ pub type Summary = .{
   params: Vector<ParamSummary>,
   ret: ReturnEffect,
   ret_paths: Vector<ReturnPathOwn>,
+  // Unlike MayAliasParams, this requires the same source lineage on every
+  // return path. COW updates preserve it; a fresh/ambiguous substitute does not.
+  ret_exact_param: Int?,
 }
 
 // A positive certificate names the concrete evidence for each obligation (design §5.1),
@@ -405,7 +408,8 @@ fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemanti
       .ARecordGet(base, f, _) => case atom_local_id(base) {
         .Some(bid) => {
           rget := inst.anf_local.id
-          if quartet_ok(blk, scan, i, rget, bid, f.id, sem) {
+          if quartet_ok(blk, scan, i, rget, bid, f.id, sem)
+            or reconstruction_projection_dead(blk, i, bid, f.id) {
             moves[rget] = true
           }
         },
@@ -415,6 +419,39 @@ fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemanti
     }
   }
   moves
+}
+
+// A reconstruction may read scalar siblings after taking an owned field. Prove
+// the old shell cannot expose that field again: until its rebind only sibling
+// projections may mention it, and the rebind must replace it with a fresh record
+// constructed in this block. Without a rebind the old shell must die here.
+// This only licenses the projection; field_own still has to prove ownership,
+// and the ordinary transfer checks every later use of the projected value.
+fn reconstruction_projection_dead(blk: CfgBlock, i: Int, base: Int, field: Int) Bool {
+  records: Vector<Int> = []
+  for j in range_from(i + 1, blk.instructions.len()) {
+    inst := blk.instructions[j]
+    case inst.op {
+      .ARecord(_, _) => records = insert_sorted(records, inst.anf_local.id),
+      .AAssign(target, value) => if target.id == base {
+        return case atom_local_id(value) {
+          .Some(id) => live_contains_int(records, id),
+          .None => false,
+        }
+      },
+      _ => {},
+    }
+    if op_mentions_local(inst.op, base) {
+      sibling := case inst.op {
+        .ARecordGet(.ALocal(b), f, _) => b.id == base and f.id != field,
+        _ => false,
+      }
+      if !sibling {
+        return false
+      }
+    }
+  }
+  !records.is_empty() and !exit_mentions_local(blk, base)
 }
 
 fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
@@ -976,6 +1013,9 @@ fn cc_ret_flows_from_param(s: Summary, i: Int) Bool {
   for rp in s.ret_paths {
     case rp.own {
       .OwnedFromParam(pi) => if pi == i {
+        return true
+      },
+      .OwnedFromField(pi, _) => if pi == i {
         return true
       },
       _ => {},
@@ -4118,6 +4158,7 @@ fn transfer_summarized_call(
   pre_own := st.own
   pre_valid := st.valid
   pre_prov := st.prov
+  pre := st
   arg_unique := call_arg_unique(pre_own, pre_valid, args, last)
 
   // 1. Escape + return handling (mutates st: publishes Retained args, sets the
@@ -4178,7 +4219,12 @@ fn transfer_summarized_call(
   result_fields := ff.empty()
   result_pp: Dict<Int, Vector<Int>> = Dict.new()
   eff_ret_paths := if in_set(suppress, callee_id) {
-    []
+    s.ret_paths.filter(fn(rp) {
+      case rp.own {
+        .OwnedFromField(_, _) => true,
+        _ => false,
+      }
+    })
   } else {
     s.ret_paths
   }
@@ -4195,11 +4241,25 @@ fn transfer_summarized_call(
         }
         false
       },
+      .OwnedFromField(k, field) => if k >= 0
+        and k < args.len() and arg_unique[k]
+        and pre.atom_field_own(args[k]).is_unique(ff.field_path(field)) {
+        true
+      } else {
+        if k >= 0 and k < args.len() {
+          st = .publish_atom(args[k])
+        }
+        false
+      },
     }
     if own_here and result_ok {
       origins := case rp.own {
         .OwnedFromParam(k) => prov_of(pre_prov, args[k]),
         .OwnedFresh => [],
+        .OwnedFromField(k, field) => case pre.atom_local_path_origins(args[k], field) {
+          .Some(origins) => origins,
+          .None => prov_of(pre_prov, args[k]),
+        },
       }
       r := record_ret_path(result_fields, result_pp, rp, origins)
       result_fields = r.fields
@@ -4222,6 +4282,7 @@ fn transfer_summarized_call(
               result_pp = graft_path_prov(result_pp, ff.PathSeg.Field(fN), st, arg)
             },
             .OwnedFresh => {},
+            .OwnedFromField(_, _) => {},
           },
           .None => {},
         },
@@ -4233,6 +4294,13 @@ fn transfer_summarized_call(
     st.set_field_own(result, result_fields).set_path_prov(result, result_pp)
   } else {
     st
+  }
+}
+
+fn atom_local_path_origins(st: ForwardState, a: Atom, field: Int) Vector<Int>? {
+  case atom_local_id(a) {
+    .Some(id) => st.path_prov_get(id).get(ff.path_key(ff.field_path(field))),
+    .None => .None,
   }
 }
 
@@ -6277,6 +6345,12 @@ fn run_fixpoint(
     changed = false
     rounds = .inc()
     for blk in blocks {
+      // Do not commit an empty field/path meet before any predecessor has
+      // contributed. Loop exits precede their break blocks in CFG order; the
+      // widening intersection cannot recover facts erased by that fake visit.
+      if blk.id.id != 0 and !blk.preds.any(fn(edge) { is_processed(processed, edge.target.id) }) {
+        continue
+      }
       do_block := all_dirty or is_dirty(dirty, blk.id.id)
       if do_block {
         dirty = .set(blk.id.id, false)
@@ -7584,11 +7658,15 @@ fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
   case a {
     .OwnedFresh => case b {
       .OwnedFresh => true,
-      .OwnedFromParam(_) => false,
+      _ => false,
     },
     .OwnedFromParam(ka) => case b {
-      .OwnedFresh => false,
       .OwnedFromParam(kb) => ka == kb,
+      _ => false,
+    },
+    .OwnedFromField(ka, fa) => case b {
+      .OwnedFromField(kb, fb) => ka == kb and fa == fb,
+      _ => false,
     },
   }
 }
@@ -7631,6 +7709,10 @@ fn drop_aliased_param_paths(rps: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
         .None => 1,
       },
       .OwnedFresh => {},
+      .OwnedFromField(k, _) => counts[k] = case counts.get(k) {
+        .Some(c) => c + 1,
+        .None => 1,
+      },
     }
   }
   out: Vector<ReturnPathOwn> = []
@@ -7641,6 +7723,10 @@ fn drop_aliased_param_paths(rps: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
         .None => true,
       },
       .OwnedFresh => true,
+      .OwnedFromField(k, _) => case counts.get(k) {
+        .Some(c) => c == 1,
+        .None => true,
+      },
     }
     if keep {
       out = .append(r)
@@ -7825,6 +7911,9 @@ fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPath
       .OwnedFromParam(j) => if j == k {
         return true
       },
+      .OwnedFromField(j, _) => if j == k {
+        return true
+      },
       _ => {},
     }
   }
@@ -7837,10 +7926,26 @@ fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPath
 // none/ambiguous) and the field paths dirtied by in-place record updates reaching
 // it. Reading the RETURNED atom's dirty set yields each param's in-place field
 // requirements — correctly ignoring an update whose result never reaches the return.
-type FlowFact = .{ origin: Int, dirty: vid.PathSet }
+type FieldOrigin = .{ param: Int, field: Int }
+
+type FlowFact = .{
+  origin: Int,
+  dirty: vid.PathSet,
+  source_field: Int?,
+  fields: Dict<Int, FieldOrigin>,
+  fields_known: Bool,
+  exact: Bool,
+}
 
 fn ff_none() FlowFact {
-  .{ origin: 0 - 1, dirty: vid.empty_set() }
+  .{
+    origin: 0 - 1,
+    dirty: vid.empty_set(),
+    source_field: .None,
+    fields: Dict.new(),
+    fields_known: false,
+    exact: false,
+  }
 }
 
 fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
@@ -7879,6 +7984,36 @@ fn call_result_fact(
   s := case table.summary_get(fid) {
     .Some(x) => x,
     .None => return ff_none(),
+  }
+  reconstructed := ff_none()
+  for rp in s.ret_paths {
+    case rp.own {
+      .OwnedFromField(k, source) => if k >= 0 and k < args.len() {
+        af := flow_get(st, args[k])
+        origin: FieldOrigin? = case af.fields.get(source) {
+          .Some(o) => .Some(o),
+          .None => if af.origin >= 0 and af.source_field == .None and af.fields_known {
+            .Some(FieldOrigin.{ param: af.origin, field: source })
+          } else {
+            .None
+          },
+        }
+        case rp.field {
+          .Some(field) => case origin {
+            .Some(o) => {
+              reconstructed.fields[field] = o
+              reconstructed.dirty = .union(af.dirty).add(vid.field(o.field))
+            },
+            .None => {},
+          },
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+  }
+  if reconstructed.fields.len() > 0 {
+    return reconstructed
   }
   carrier := 0 - 1
   count := 0
@@ -7941,7 +8076,19 @@ fn call_result_fact(
     },
     .None => {},
   }
-  .{ origin: base.origin, dirty }
+  base.dirty = dirty
+  base.exact = base.exact and s.ret_exact_param == .Some(carrier)
+  if !base.exact {
+    base.source_field = .None
+  }
+
+  // A whole-record alias summary identifies only the shell; it does not prove
+  // that a callee preserved any particular field.
+  if base.source_field == .None {
+    base.fields = Dict.new()
+    base.fields_known = false
+  }
+  base
 }
 
 fn transfer_flow(
@@ -7954,8 +8101,63 @@ fn transfer_flow(
   require: VariantRequirementResolver,
 ) Dict<Int, FlowFact> {
   case op {
-    .ARecordUpdate(base, fld, _, _, tid) => {
+    .AInit(a) => {
+      st[result] = flow_get(st, a)
+      st
+    },
+    .ARecordGet(base, fld, tid) => {
+      if sem_field_is_primitive(sem, tid, fld) {
+        st[result] = ff_none()
+        return st
+      }
       bf := flow_get(st, base)
+      rf := ff_none()
+      case bf.fields.get(fld.id) {
+        .Some(origin) => {
+          rf.origin = origin.param
+          rf.source_field = .Some(origin.field)
+          rf.exact = origin.param >= 0
+        },
+        .None => if bf.origin >= 0 and bf.source_field == .None and bf.fields_known {
+          rf.origin = bf.origin
+          rf.source_field = .Some(fld.id)
+          rf.exact = bf.exact
+        },
+      }
+      st[result] = rf
+      st
+    },
+    .ARecord(_, fields) => {
+      rf := ff_none()
+      for fa in fields {
+        vf := flow_get(st, fa.value)
+        case vf.source_field {
+          .Some(field) => if vf.origin >= 0 and vf.exact {
+            rf.fields[fa.field.id] = FieldOrigin.{ param: vf.origin, field }
+            if !vf.dirty.is_empty() {
+              rf.dirty = .add(vid.field(field))
+            }
+          },
+          .None => {},
+        }
+      }
+      st[result] = rf
+      st
+    },
+    .ARecordUpdate(base, fld, value, _, tid) => {
+      bf := flow_get(st, base)
+      vf := flow_get(st, value)
+      bf.fields[fld.id] = case vf.source_field {
+        .Some(field) => FieldOrigin.{
+          param: if vf.exact {
+            vf.origin
+          } else {
+            0 - 1
+          },
+          field,
+        },
+        .None => FieldOrigin.{ param: 0 - 1, field: 0 - 1 },
+      }
       st[result] = if bf.origin >= 0 {
         // Every returned record update consumes the record shell. Only a
         // reference-typed field backing (separate GC heap object) adds a
@@ -7971,7 +8173,8 @@ fn transfer_flow(
         if !sem_field_is_primitive(sem, tid, fld) {
           new_dirty = .add(vid.field(fld.id))
         }
-        FlowFact.{ origin: bf.origin, dirty: new_dirty }
+        bf.dirty = new_dirty
+        bf
       } else {
         ff_none()
       }
@@ -7979,6 +8182,7 @@ fn transfer_flow(
     },
     .AAssign(local, a) => {
       st[local.id] = flow_get(st, a)
+      st[result] = flow_get(st, a)
       st
     },
     .ACall(callee, args) => {
@@ -8011,7 +8215,8 @@ fn cow_update_result_fact(st: Dict<Int, FlowFact>, cs: CallSemantics, args: Vect
       .Some(k) => if k < args.len() {
         base := flow_get(st, args[k])
         if base.origin >= 0 {
-          .{ origin: base.origin, dirty: base.dirty.union(vid.shell_set()) }
+          base.dirty = .union(vid.shell_set())
+          base
         } else {
           ff_none()
         }
@@ -8030,7 +8235,32 @@ fn join_fact(a: FlowFact, b: FlowFact) FlowFact {
   } else {
     0 - 1
   }
-  .{ origin: org, dirty: a.dirty.union(b.dirty) }
+  fields: Dict<Int, FieldOrigin> = Dict.new()
+  for field, origin in a.fields {
+    case b.fields.get(field) {
+      .Some(other) => if origin == other {
+        fields[field] = origin
+      },
+      .None => {},
+    }
+  }
+  same_source := a.source_field == b.source_field
+  .{
+    origin: if same_source {
+      org
+    } else {
+      0 - 1
+    },
+    source_field: if same_source {
+      a.source_field
+    } else {
+      .None
+    },
+    dirty: a.dirty.union(b.dirty),
+    fields,
+    fields_known: a.fields_known and b.fields_known and a.fields == b.fields,
+    exact: a.exact and b.exact and org >= 0 and same_source,
+  }
 }
 
 // Join predecessors' exit facts at a block entry. Mirrors join_entry_prov EXACTLY:
@@ -8088,10 +8318,9 @@ fn flow_fact_at(m: Dict<Int, FlowFact>, k: Int) FlowFact {
 }
 
 fn flow_fact_eq(a: FlowFact, b: FlowFact) Bool {
-  if a.origin < 0 and b.origin < 0 {
-    return true
-  }
-  a.origin == b.origin and a.dirty.same(b.dirty)
+  a.origin == b.origin
+    and a.source_field == b.source_field and a.fields == b.fields
+    and a.fields_known == b.fields_known and a.exact == b.exact and a.dirty.same(b.dirty)
 }
 
 fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
@@ -8258,6 +8487,19 @@ pub fn collect_field_reqs_with_live(
   require: VariantRequirementResolver,
   live: Dict<Int, BlockLive>,
 ) Dict<Int, vid.PathSet> {
+  collect_field_flow_with_live(f, table, sem, resolve, require, live).reqs
+}
+
+type FieldFlowResult = .{ reqs: Dict<Int, vid.PathSet>, returns: Dict<Int, FlowFact> }
+
+fn collect_field_flow_with_live(
+  f: CfgFunction,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+  require: VariantRequirementResolver,
+  live: Dict<Int, BlockLive>,
+) FieldFlowResult {
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
@@ -8277,7 +8519,11 @@ pub fn collect_field_reqs_with_live(
       entry := flow_join_entry(blk, exits, processed)
       if blk.id.id == 0 {
         for p, i in f.params {
-          entry[p.id] = FlowFact.{ origin: i, dirty: vid.empty_set() }
+          fact := ff_none()
+          fact.origin = i
+          fact.fields_known = true
+          fact.exact = true
+          entry[p.id] = fact
         }
       }
       st := entry
@@ -8296,6 +8542,7 @@ pub fn collect_field_reqs_with_live(
     }
   }
   reqs: Dict<Int, vid.PathSet> = Dict.new()
+  returns: Dict<Int, FlowFact> = Dict.new()
   for blk in blocks {
     case return_atom(blk) {
       .Some(a) => {
@@ -8304,6 +8551,17 @@ pub fn collect_field_reqs_with_live(
           .None => Dict.new(),
         }
         rf := flow_get(fexit, a)
+        returns[blk.id.id] = rf
+        for _field, origin in rf.fields {
+          if origin.param < 0 {
+            continue
+          }
+          prev := case reqs.get(origin.param) {
+            .Some(paths) => paths,
+            .None => vid.empty_set(),
+          }
+          reqs[origin.param] = prev.add(vid.field(origin.field))
+        }
         if rf.origin >= 0 and !rf.dirty.is_empty() {
           prev := case reqs.get(rf.origin) {
             .Some(v) => v,
@@ -8315,7 +8573,7 @@ pub fn collect_field_reqs_with_live(
       .None => {},
     }
   }
-  reqs
+  .{ reqs, returns }
 }
 
 // Generic summary: every reference parameter enters Unknown (empty seed). This is the
@@ -8585,6 +8843,7 @@ fn summarize_seeded(
 
   done := all_processed(blocks)
   fn_params := f.params // Vector<LocalId>; capture before .Field(f) shadow
+  field_flow := collect_field_flow_with_live(f, table, sem, resolve, require, live)
   ret: ReturnEffect = .OwnedFresh
   ret_sites: Vector<RetSite> = []
   seen := false
@@ -8676,7 +8935,21 @@ fn summarize_seeded(
               case p.segs[0] {
                 // Direct field: single-segment .Field paths only.
                 .Field(fid) => if p.segs.len() == 1 {
-                  case classify_path_own(pp, k, fn_params, fm) {
+                  lineage := case field_flow.returns.get(blk.id.id) {
+                    .Some(flow) => flow.fields.get(fid),
+                    .None => .None,
+                  }
+                  own: ReturnOwn? = case lineage {
+                    .Some(origin) => cond {
+                      origin.param < 0 => classify_path_own(pp, k, fn_params, fm),
+                      fm.is_unique(ff.field_path(fid)) => .Some(
+                        ReturnOwn.OwnedFromField(origin.param, origin.field),
+                      ),
+                      _ => .None,
+                    },
+                    .None => classify_path_own(pp, k, fn_params, fm),
+                  }
+                  case own {
                     .Some(own) => rp_all = .append(
                       ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
                     ),
@@ -8720,6 +8993,21 @@ fn summarize_seeded(
   }
 
   ret_paths_final := meet_ret_paths_tagged(ret_sites)
+  ret_exact_param: Int? = .None
+  exact_seen := false
+  for _block, flow in field_flow.returns {
+    source: Int? = if flow.exact and flow.origin >= 0 and flow.source_field == .None {
+      .Some(flow.origin)
+    } else {
+      .None
+    }
+    if !exact_seen {
+      ret_exact_param = source
+      exact_seen = true
+    } else if ret_exact_param != source {
+      ret_exact_param = .None
+    }
+  }
   t_classify := if timed {
     date.now()
   } else {
@@ -8728,7 +9016,7 @@ fn summarize_seeded(
 
   // Reuse the liveness already computed above (same f.blocks) instead of letting
   // collect_field_reqs recompute it.
-  field_reqs := collect_field_reqs_with_live(f, table, sem, resolve, require, live)
+  field_reqs := field_flow.reqs
   t_field_reqs := if timed {
     date.now()
   } else {
@@ -8761,5 +9049,5 @@ fn summarize_seeded(
       )
     }
   }
-  .{ summary: .{ params, ret, ret_paths: ret_paths_final }, fx, live }
+  .{ summary: .{ params, ret, ret_paths: ret_paths_final, ret_exact_param }, fx, live }
 }
