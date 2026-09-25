@@ -18,6 +18,8 @@
 - Reuse the existing `variant_specialize` route/cap discipline and `mutvec_call_phase`; do not create a second ownership authority.
 - Keep the generic persistent function available for shared, aliased, unsupported, or over-cap callers.
 - Keep private storage flat across every accepted recursive/SCC edge. A dead vector result emits zero freezes; an observed vector result emits exactly one freeze at its publication boundary.
+- This slice accepts exactly one independently threaded scalar field in addition to the vector field. Carriers with zero or multiple threaded scalar fields remain persistent until a measured performance need justifies a different or multi-result ABI.
+- Ownership evidence for post-specialization clones must be recomputed under the clone's owned seed. Pre-clone `SpecializeResult.summary` and `pruned_view` may seed analysis but must not directly license an aggregate rewrite.
 - The implementation focus is the boot compiler. Update Rust stage0 only if bootstrap requires it.
 - Format and lint every modified `.tw` file. Never run tree-sitter tests.
 - Every behavior-changing task follows red-green-refactor and ends with a focused commit.
@@ -29,6 +31,7 @@
 - A returned vector observed after the call must freeze exactly once, never zero or once per recursion; Tasks 3 and 5 cover this.
 - Multiple callers sharing one owned clone must partition into persistent and mutable siblings without ABI crossing; Task 5 extends the existing mixed-caller test.
 - Variant-cap overflow or an unsupported carrier field type must leave byte-valid persistent code; Tasks 3 and 5 test fallback.
+- A same-family fresh vector substituted on any recursive edge must stay persistent even when its element representation agrees; Task 3 tests handle-identity rejection.
 
 ---
 
@@ -36,15 +39,62 @@
 
 - Create `boot/compiler/codegen/mutvec_aggregate_region.tw`: detect record-carried vector lineage and describe decomposed ABI requirements without rewriting code.
 - Create `boot/compiler/codegen/mutvec_aggregate_verify.tw`: validate ownership, recursive/SCC continuity, exits, aliases, and scalar-field independence.
+- Modify `boot/compiler/codegen/variant_specialize.tw`: close owned recursive routes across every member of a demanded SCC before aggregate analysis runs.
 - Modify `boot/compiler/codegen/mutvec_call_phase.tw`: merge accepted aggregate regions into S4 planning, generate mutable siblings, and apply the ANF signature/body/caller rewrite.
 - Modify `boot/compiler/codegen/mutvec_call_verify.tw`: expose the existing clone/site/representation helpers shared by aggregate verification; do not duplicate them.
 - Modify `boot/compiler/backend/mutvec_repr.tw`: consume decomposed ABI upgrades and type the new vector parameter/call arguments as `MutVec(fam)` while scalar slots retain their ordinary representations.
 - Modify `boot/compiler/codegen/codegen.tw`: thread aggregate decision/audit data through the existing S4 stage without adding a second pass ordering point.
-- Modify `boot/compiler/ir.tw` and `boot/compiler/codegen/mutable_audit.tw`: render aggregate-carrier decisions, exits, and fallback reasons under `twk ir --census --sites`.
+- Modify `boot/commands/ir.tw`, `boot/compiler/census.tw`, and `boot/compiler/codegen/mutable_audit.tw`: render aggregate-carrier decisions, exits, and fallback reasons under `twk ir --census --sites`.
 - Create fixtures under `boot/tests/fixtures/cfg/mutvec_call/`: positive dead-result Permute shape, positive observed-result shape, and negative alias/mixed-lineage/unsupported shapes.
 - Modify `boot/tests/suites/mutvec_call_suite.tw`: analysis, rewrite, WAT, fallback, and freeze-count tests.
 - Modify `examples/performance/awfy/twinkle/permute.tw` only if a benchmark correctness guard is needed; do not change its algorithm or source-level data model.
 - Modify `docs/plans/sound-uniqueness/README.md`, `docs/plans/sound-uniqueness/storage/README.md`, and `examples/performance/awfy/README.md` after the ordinary benchmark meets the gate.
+
+### Task 0: Close Owned Variant Routes Across Recursive SCCs
+
+**Files:**
+- Modify: `boot/compiler/codegen/variant_specialize.tw`
+- Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_mutual.tw`
+- Modify: `boot/tests/suites/mutvec_call_suite.tw`
+
+**Interfaces:**
+- Consumes: the existing call graph, ownership-published variants, `seed_for_variant`, `field_seed_for_variant`, and `variant_cap`.
+- Produces: a `SpecializeResult` in which a demanded owned route for one SCC member either has compatible owned clones and recursive routes for every member, or the whole SCC demand remains generic.
+
+- [ ] **Step 1: Add a mutually recursive carrier fixture and failing route test**
+
+Create two functions that alternate while threading `State.{ values: Vector<Int>, count: Int }`. Assert that an owned entry demand routes both functions to owned clones and that every in-SCC call targets the corresponding clone. Also add a cap-pressure case and assert that it leaves the entire SCC generic rather than cloning only a prefix.
+
+- [ ] **Step 2: Run the focused tests and verify RED**
+
+Run `target/twk test --filter "recursive SCC route closure"`.
+
+Expected: the entry-demanded member is cloned, but a peer demanded only from inside the SCC remains generic.
+
+- [ ] **Step 3: Form and close demanded SCC clone groups**
+
+Compute SCC membership before clone allocation. For each demanded owned variant, derive compatible owned seeds for all reachable members of the same SCC, reserve the complete clone group under the per-generic `variant_cap`, then create and route the group atomically. If any member lacks a compatible published variant, supported update, route, or cap slot, create none of the group.
+
+- [ ] **Step 4: Recompute recursive routes under each member's seed**
+
+Analyze each created clone with its whole-value and field seed, and require every in-SCC edge to resolve to the peer clone belonging to the same closed group. Record all new clones and rewritten callers in `changed_funcs` so downstream ownership production rebuilds their CFG facts.
+
+- [ ] **Step 5: Run specialization and existing MutVec tests**
+
+```bash
+target/twk test --filter "recursive SCC route closure"
+target/twk test --filter "variant specialize"
+target/twk test --filter "mutvec call"
+```
+
+Expected: mutually recursive owned routes are all-or-nothing, self-recursive behavior is unchanged, and cap overflow produces persistent code.
+
+- [ ] **Step 6: Commit the prerequisite**
+
+```bash
+git add boot/compiler/codegen/variant_specialize.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_mutual.tw boot/tests/suites/mutvec_call_suite.tw
+git commit -m "feat(variants): close owned routes across recursive SCCs"
+```
 
 ### Task 1: Pin the Ordinary Recursive-Carrier Shape
 
@@ -90,7 +140,7 @@ result := permute(State.{ values, count: 0 }, 6)
 println(result.count.to_string())
 ```
 
-Use the same definitions in `recursive_record_escape.tw`, but return the whole `State` from a public `run` and read both `count` and `values[0]` at top level so publication is observable.
+Use the same definitions in `recursive_record_escape.tw`, but return the whole `State` from a public `run` and read both `count` and `values[0]` at top level so `.PublishRecord` is observable. Add `recursive_record_field_escape.tw`, whose caller observes only the returned `values` projection, to pin `.PublishField` separately.
 
 - [ ] **Step 2: Add failing structural tests**
 
@@ -100,6 +150,7 @@ Add tests named:
 "recursive record scratch gets an aggregate MutVec route"
 "recursive record scratch emits mutvec_set_i64 with zero freezes"
 "recursive record escape emits exactly one boundary freeze"
+"recursive record field escape emits exactly one boundary freeze"
 ```
 
 The first test must inspect the S4 decision rather than grep source. The WAT tests must assert `mutvec_set_i64` is present in the private clone, `rt_arr__set` is absent from that clone, and freeze counts are zero/one respectively.
@@ -136,7 +187,8 @@ git commit -m "test(mutvec): characterize recursive aggregate carrier"
 **Files:**
 - Create: `boot/compiler/codegen/mutvec_aggregate_region.tw`
 - Modify: `boot/compiler/codegen/mutvec_call_phase.tw`
-- Modify: `boot/compiler/ir.tw`
+- Modify: `boot/commands/ir.tw`
+- Modify: `boot/compiler/census.tw`
 - Modify: `boot/compiler/codegen/mutable_audit.tw`
 - Modify: `boot/tests/suites/mutvec_call_suite.tw`
 
@@ -175,7 +227,7 @@ pub fn detect_aggregate_regions(
 
 - [ ] **Step 1: Add detector unit tests before implementation**
 
-Assert that the scratch fixture yields one region with the `values` field, `Int` family, `count` scalar field, recursive call sites, and `.DeadField` exit. Assert that the escape fixture yields `.PublishRecord` or `.PublishField` rather than `.DeadField`.
+Assert that the scratch fixture yields one region with the `values` field, `Int` family, `count` scalar field, recursive call sites, and `.DeadField` exit. Assert that the record-escape and field-escape fixtures yield `.PublishRecord` and `.PublishField` respectively. Assert that the mutually recursive fixture from Task 0 reports every in-SCC call in its closed recursive route set.
 
 - [ ] **Step 2: Run detector tests and verify RED**
 
@@ -193,7 +245,7 @@ Walk only ownership-routed clones. Identify one record parameter whose projected
 4. has no second collection field competing for the same private handle;
 5. reaches either no observed exit, one returned field, or one returned carrier.
 
-Use ownership summary/field-path evidence for lineage and liveness. Syntax matching may locate candidate record operations, but it must not license mutation by itself.
+Use ownership summary/field-path evidence for lineage and liveness. Syntax matching may locate candidate record operations, but it must not license mutation by itself. Detection may use pre-clone summaries only to find candidates; acceptance is deferred until Task 3 recomputes clone-local evidence under the routed owned seed.
 
 - [ ] **Step 4: Render decisions before enabling rewriting**
 
@@ -217,7 +269,7 @@ Expected: the fixture and ordinary AWFY Permute are detected; generated WAT is u
 - [ ] **Step 6: Commit analysis-only detection**
 
 ```bash
-git add boot/compiler/codegen/mutvec_aggregate_region.tw boot/compiler/codegen/mutvec_call_phase.tw boot/compiler/ir.tw boot/compiler/codegen/mutable_audit.tw boot/tests/suites/mutvec_call_suite.tw
+git add boot/compiler/codegen/mutvec_aggregate_region.tw boot/compiler/codegen/mutvec_call_phase.tw boot/commands/ir.tw boot/compiler/census.tw boot/compiler/codegen/mutable_audit.tw boot/tests/suites/mutvec_call_suite.tw
 git commit -m "feat(mutvec): detect recursive aggregate carriers"
 ```
 
@@ -227,7 +279,9 @@ git commit -m "feat(mutvec): detect recursive aggregate carriers"
 - Create: `boot/compiler/codegen/mutvec_aggregate_verify.tw`
 - Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_alias.tw`
 - Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_mixed_lineage.tw`
+- Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_fresh_lineage.tw`
 - Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_unsupported.tw`
+- Create: `boot/tests/fixtures/cfg/mutvec_call/recursive_record_multi_scalar.tw`
 - Modify: `boot/compiler/codegen/mutvec_call_verify.tw`
 - Modify: `boot/tests/suites/mutvec_call_suite.tw`
 
@@ -245,6 +299,7 @@ pub type AggregateRejectReason = {
   ExitUnclassified,
   ReprDisagree,
   UnsupportedScalarField,
+  UnsupportedScalarArity,
 }
 
 pub type AggregateVerdict = { Accept, Reject(AggregateRejectReason) }
@@ -258,7 +313,7 @@ pub fn verify_aggregate_region(
 
 - [ ] **Step 1: Add negative fixtures and failing verdict tests**
 
-The alias fixture saves `state.values` before recursion and reads it afterward. The mixed-lineage fixture returns a newly constructed unrelated vector on one branch. The unsupported fixture uses `Vector<String>`. Tests must assert a named rejection reason and ordinary persistent WAT.
+The alias fixture saves `state.values` before recursion and reads it afterward. The mixed-lineage fixture returns a newly constructed unrelated vector on one branch. The fresh-lineage fixture constructs a new `Vector<Int>` on one recursive edge, proving that matching element family is not handle identity. The unsupported fixture uses `Vector<String>`. The multi-scalar fixture independently updates two scalar fields. Tests must assert a named rejection reason and ordinary persistent WAT.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -268,7 +323,7 @@ Expected: compile failure because the verifier API is absent.
 
 - [ ] **Step 3: Implement the verifier using ownership facts**
 
-Require deep ownership of the vector field at entry, deadness of the old field after every replacement, consistent recursive clone routing, one supported family, no publication inside the SCC, and a classified exit. Treat scalar fields as independent only when their MonoTypes have ordinary scalar Wasm representations and their dataflow never contains the vector handle.
+Locate the route's owned seed and recompute ownership/field-path facts over the post-specialization clone body rather than trusting the pre-clone summary. Require deep ownership of the vector field at entry, deadness of the old field after every replacement, exact handle identity across every recursive edge, consistent closed-SCC clone routing, one supported family, no publication inside the SCC, and a classified exit. Accept exactly one independently threaded scalar field whose MonoType has an ordinary scalar Wasm representation and whose dataflow never contains the vector handle. Reject zero or multiple threaded scalar fields with `UnsupportedScalarArity`; the scalar may be dead at a particular caller boundary, but the private ABI remains uniform across all accepted sites.
 
 - [ ] **Step 4: Make rejection visible and leave codegen unchanged**
 
@@ -307,14 +362,14 @@ pub type AggregateMutVecAbiUpgrade = .{
   clone_func: Int,
   carrier_param: Int,
   vector_param: Int,
-  scalar_params: Vector<Int>,
-  scalar_returns: Vector<Int>,
+  scalar_param: Int,
+  scalar_return: Int,
   family: ElemRepr,
   exit: AggregateMutVecExit,
 }
 ```
 
-`MutVecCallDecision` gains `aggregate_upgrades: Vector<AggregateMutVecAbiUpgrade>`.
+`MutVecCallDecision` gains `aggregate_upgrades: Vector<AggregateMutVecAbiUpgrade>`. This slice deliberately uses the backend's existing single `phys_return`: the mutable handle remains live in the caller and the clone returns the one updated scalar. Multi-scalar returns are persistent fallback, not an implicit multi-value ABI.
 
 - [ ] **Step 1: Add failing ANF-shape tests**
 
@@ -334,21 +389,25 @@ Expected: no `aggregate_upgrades` and the existing record-shaped clone remains.
 
 - [ ] **Step 3: Generate a capped mutable sibling**
 
-Reuse `variant_specialize.variant_cap` and the existing `$mv` sibling partitioning. Create a deterministic sibling name ending in `$mvagg`. Allocate fresh parameter locals for the projected vector and scalar fields, copy their MonoTypes into `op_result_mono`, and set the sibling return type to the scalar result type for `.DeadField`.
+Reuse `variant_specialize.variant_cap` and the existing `$mv` sibling partitioning. Create a deterministic sibling name ending in `$mvagg`. Allocate fresh parameter locals for the projected vector and the single scalar field, copy their MonoTypes into `op_result_mono`, and set the sibling return type to the scalar result type.
 
 - [ ] **Step 4: Rewrite the sibling body**
 
-Replace carrier field projections with the corresponding decomposed parameter/current scalar local. Replace carrier reconstruction with local rebinding of those components. Rewrite recursive calls to pass components directly and consume direct scalar results. Retarget vector reads/writes to family `mutvec_get/set/len` operations. Reject the whole upgrade if any record operation cannot be mapped exactly; never partially rewrite a clone.
+Replace carrier field projections with the corresponding decomposed parameter/current scalar local. Replace carrier reconstruction with local rebinding of those components. Rewrite recursive calls to pass the same handle plus the current scalar and consume the direct scalar result. Retarget vector reads/writes to family `mutvec_get/set/len` operations. Reject the whole upgrade if a recursive edge substitutes any other handle or if any record operation cannot be mapped exactly; never partially rewrite a clone.
 
 - [ ] **Step 5: Rewrite accepted entry call sites**
 
 Flatten the caller-born vector producer using the existing MutVec producer rewrite. Replace `permute(State.{ values, count }, n)` with the `$mvagg(values_handle, count, n)` call. Replace the result’s scalar projection with the direct call result. For `.DeadField`, emit no freeze and remove dead carrier construction through the ordinary dead-let pass.
 
-- [ ] **Step 6: Assign physical representations**
+- [ ] **Step 6: Unify bare-vector and aggregate route partitioning**
 
-Teach `apply_mutvec_call_abi_upgrades` to mark only `vector_param` and matching call arguments as `ReprKind.MutVec(family)`. Scalar parameters/results retain `repr_assign`’s normal representation. There must be no generic `ref.cast` between `PVec` and `MutVec`.
+Build one per-route site partition before allocating any `$mv` or `$mvagg` sibling. A site may belong to at most one physical ABI class: persistent, bare MutVec, or aggregate MutVec. All-accepted sites of one class may upgrade the owned clone directly; mixed classes receive distinct capped siblings. Reserve all required siblings before rewriting, count them against the same per-generic `variant_cap`, and fall back every affected site if the complete partition cannot be allocated. Feed the final site-to-clone map to the existing all-members-of-a-region survival gate.
 
-- [ ] **Step 7: Run focused ANF and verifier tests**
+- [ ] **Step 7: Assign physical representations**
+
+Teach `apply_mutvec_call_abi_upgrades` to mark only `vector_param` and matching call arguments as `ReprKind.MutVec(family)`, and set the clone's `phys_return` to the ordinary representation of `scalar_return`. Scalar parameters/results otherwise retain `repr_assign`'s normal representation. There must be no generic `ref.cast` between `PVec` and `MutVec`.
+
+- [ ] **Step 8: Run focused ANF and verifier tests**
 
 ```bash
 target/twk test --filter "decomposed aggregate ABI"
@@ -358,7 +417,7 @@ target/twk wat boot/tests/fixtures/cfg/mutvec_call/recursive_record_scratch.tw -
 
 Expected: the private clone calls `mutvec_get_i64`/`mutvec_set_i64`, contains no persistent vector set, constructs no carrier records, and validates as Wasm-GC.
 
-- [ ] **Step 8: Commit the dead-result rewrite**
+- [ ] **Step 9: Commit the dead-result rewrite**
 
 ```bash
 git add boot/compiler/codegen/mutvec_call_phase.tw boot/compiler/backend/mutvec_repr.tw boot/compiler/codegen/codegen.tw boot/tests/suites/mutvec_call_suite.tw
@@ -378,7 +437,7 @@ git commit -m "feat(mutvec): decompose recursive aggregate ABI"
 
 - [ ] **Step 1: Add failing freeze/reconstruction tests**
 
-Assert that `recursive_record_escape` emits exactly one `mutvec_freeze_i64`, reconstructs one ordinary `State` at the boundary, and contains no freeze in the recursive clone. Add a mixed-caller test where one caller’s vector dies and another retains an alias; assert only the first routes to `$mvagg`.
+Assert that `recursive_record_escape` emits exactly one `mutvec_freeze_i64`, reconstructs one ordinary `State` at the boundary, and contains no freeze in the recursive clone. Assert that `recursive_record_field_escape` also freezes exactly once but substitutes only the published vector projection. Add a mixed-caller test where one caller’s vector dies and another retains an alias; assert only the first routes to `$mvagg`.
 
 Add a direct planning test with the generic function already at
 `variant_specialize.variant_cap`; assert no `$mvagg` sibling or aggregate ABI
@@ -392,11 +451,11 @@ Expected: dead-result path works from Task 4, but observed-result reconstruction
 
 - [ ] **Step 3: Implement boundary materialization**
 
-For `.PublishField`, freeze the handle once and substitute the frozen vector at the observed projection. For `.PublishRecord`, freeze once and reconstruct the source record from the frozen vector plus scalar outputs. Insert adapters only at the caller exit named by the verified decision.
+For `.PublishField`, freeze the handle once and substitute the frozen vector at the observed projection. For `.PublishRecord`, freeze once and reconstruct the source record from the frozen vector plus the single scalar output. Insert adapters only at the caller exit named by the verified decision.
 
-- [ ] **Step 4: Extend mixed-site sibling partitioning**
+- [ ] **Step 4: Apply the unified partition to observed and mixed callers**
 
-Count accepted aggregate sites alongside existing bare-vector sites. A strict accepted subset gets `$mvagg`; rejected sites keep the original persistent clone. Apply the existing all-members-of-a-region survival gate so no call crosses physical ABIs.
+Use Task 4's unified partition for observed aggregate sites alongside existing bare-vector sites. A strict accepted subset gets `$mvagg`; rejected sites keep the original persistent clone. Confirm the all-members-of-a-region survival gate sees the final sibling-aware targets so no call crosses physical ABIs.
 
 - [ ] **Step 5: Run all boundary and negative tests**
 
