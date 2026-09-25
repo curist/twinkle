@@ -1,8 +1,8 @@
 # AWFY-style cross-language benchmark suite
 
 An [are-we-fast-yet](https://github.com/smarr/are-we-fast-yet)-style suite that
-runs the same benchmarks in **Twinkle**, **Node/JS (V8)**, and **Go**, then
-prints a normalized timing table.
+runs the same benchmarks in **Twinkle**, **Node/JS (V8)**, **Go**, **Lua 5.4
+hosted by Redbean**, and **LuaJIT**, then prints a normalized timing table.
 
 ## Purpose: compiler perf gap-finding
 
@@ -11,7 +11,9 @@ Twinkle's Wasm-GC codegen and runtime are slow relative to fast reference
 implementations, so the gaps guide compiler optimization work. Node is the
 closest apples-to-apples answer to "why is my Wasm slower than V8" (Twinkle's
 output runs under a JS host); Go stands in for "what a decent native compiler
-achieves".
+achieves". Redbean's Lua 5.4 interpreter adds a compact dynamic-language
+baseline, while LuaJIT shows what tracing compilation can extract from the same
+Lua sources. Neither changes the suite's gap-finding purpose.
 
 **Persistent-structure peers.** Node and Go use native *mutable* arrays, so on
 the array-write-heavy benchmarks they answer a different question than "how good
@@ -37,18 +39,37 @@ before printing the table. To run a single language directly:
 target/twk run examples/performance/awfy/twinkle/main.tw
 node examples/performance/awfy/node/main.mjs
 (cd examples/performance/awfy/go && go run -gcflags=all=-d=fmahash=1111111111111111 .)
+redbean.com -i examples/performance/awfy/lua/main.lua
+AWFY_LANG=luajit luajit examples/performance/awfy/lua/main.lua
 clojure -M examples/performance/awfy/clojure/main.clj      # Sieve, Bounce, NBody only
 racket examples/performance/awfy/racket/main.rkt           # Sieve, Bounce, NBody only
 ```
 
-Clojure and Racket are **optional** — `run.sh` skips them if the `clojure` /
-`racket` commands are not on `PATH`. They cover only the write-heavy subset
-(Sieve, Bounce, NBody) in both persistent and unlocked (`*_mut`) forms, so the
-checksum diff compares each benchmark across just the languages that emit a row
-for it.
+Redbean, LuaJIT, Clojure, and Racket are **optional**. `run.sh` finds
+`redbean.com` or `redbean` on `PATH`; set `REDBEAN=/path/to/redbean.com` to
+select an explicit download. It finds `luajit` on `PATH`, with
+`LUAJIT=/path/to/luajit` as an override. It skips optional runtimes that are
+unavailable. Both Lua runtimes cover the full base suite from the same source
+files. Clojure and Racket cover only the write-heavy subset (Sieve, Bounce,
+NBody) in both persistent and unlocked (`*_mut`) forms, so the checksum diff
+compares each benchmark across just the languages that emit a row for it.
 
-There is no per-benchmark filter flag yet — to isolate one benchmark, comment
-out the others in the `main` files.
+Redbean documents `-i` as interpreter mode: it disables the web server and runs
+the first positional argument as a Lua script. The runtime currently identifies
+this bundled interpreter as Lua 5.4. See [Redbean's interpreter-mode
+documentation](https://redbean.dev/#repl). A small compatibility module selects
+Lua 5.4 native bit operations or LuaJIT's `bit` module; benchmark bodies and
+workload constants remain shared.
+
+To check only the Redbean integration smoke path:
+
+```bash
+examples/performance/awfy/test_lua.sh
+```
+
+There is no suite-wide per-benchmark filter flag yet. The Lua entry point accepts
+`AWFY_BENCH=<name>` for focused checks; for other languages, comment out the
+unwanted entries in their `main` files.
 
 ## What each row means
 
@@ -169,8 +190,8 @@ things make that hold:
   `-gcflags=all=-d=fmahash=1111111111111111`. Without it, Go fuses `a*b+c` into a
   single fused-multiply-add on arm64, which rounds differently than the separate
   multiply/add that V8 and Wasm perform, and Mandelbrot/NBody diverge by a ULP.
-  Disabling it puts all three languages on identical strict IEEE-754 arithmetic —
-  a *fairer* baseline, since none of them fuse.
+  Disabling it puts the full-suite languages on identical strict IEEE-754
+  arithmetic — a *fairer* baseline, since none of them fuse.
 - **NBody's energy** is scaled to an integer checksum by `round(energy * 1e8)`.
   The scale factor is small enough that a hypothetical last-bit energy difference
   could not flip the rounded integer, and large enough to be a meaningful check.
@@ -179,7 +200,7 @@ things make that hold:
 
 Each benchmark exposes `run(size) -> Int` (returns the checksum) plus
 `warmup`/`iters`/`size`/`expected` constants. The **same** `(warmup, iters,
-size)` triple is used in all three languages. For the recursion/simulation
+size)` triple is used in every full-suite language. For the recursion/simulation
 benchmarks, `size` is a repeat count, so it does not affect the checksum — only
 the amount of timed work.
 
@@ -212,10 +233,10 @@ PRNG (`seed = (seed*1309 + 13849) & 65535`, initial seed 74755), defined once in
 
 ## Adding a benchmark
 
-1. Add `<name>.{tw,mjs,go}` exposing `run`, `warmup`, `iters`, `size`,
+1. Add `<name>.{tw,mjs,go,lua}` exposing `run`, `warmup`, `iters`, `size`,
    `expected` (the Go file also declares a `Bench{...}` value).
-2. Register it in the three `main` files.
-3. Run one language to obtain the checksum, paste it into all three `expected`
+2. Register it in the four full-suite `main` files.
+3. Run one language to obtain the checksum, paste it into every `expected`
    (and the table above).
 4. `make awfy` — it fails if the languages disagree.
 

@@ -16,6 +16,25 @@ target/twk run examples/performance/awfy/twinkle/main.tw   >> "$raw"
 node examples/performance/awfy/node/main.mjs               >> "$raw"
 (cd examples/performance/awfy/go && go run "$GO_NOFMA" .)  >> "$raw"
 
+# Redbean exposes its bundled Lua 5.4 runtime through interpreter mode. It is
+# optional because the portable executable is not normally installed by a
+# package manager. REDBEAN can point at a downloaded redbean.com binary.
+redbean="${REDBEAN:-}"
+if [ -z "$redbean" ]; then
+  redbean="$(command -v redbean.com || command -v redbean || true)"
+fi
+if [ -n "$redbean" ]; then
+  "$redbean" -i examples/performance/awfy/lua/main.lua      >> "$raw"
+fi
+
+luajit="${LUAJIT:-}"
+if [ -z "$luajit" ]; then
+  luajit="$(command -v luajit || true)"
+fi
+if [ -n "$luajit" ]; then
+  AWFY_LANG=luajit "$luajit" examples/performance/awfy/lua/main.lua >> "$raw"
+fi
+
 # Clojure (persistent vectors) and Racket (treelists) cover only the
 # persistent-array-write subset (Sieve, Bounce, NBody) — a fairer comparison
 # for those than Node/Go's native mutable arrays. Skipped if not installed.
