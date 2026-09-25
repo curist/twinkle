@@ -1,0 +1,19 @@
+type State = .{ values: Vector<Int>, count: Int }
+
+fn permute(state: State, n: Int) State {
+  fresh: Vector<Int> = collect x in state.values {
+    x
+  }
+  next := State.{ values: fresh, count: state.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    next.permute(n - 1)
+  }
+}
+
+pub fn run() Int {
+  permute(State.{ values: [1, 2], count: 0 }, 2).count
+}
+
+println(run())

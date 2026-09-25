@@ -1,0 +1,16 @@
+type State = .{ values: Vector<String>, count: Int }
+
+fn permute(state: State, n: Int) State {
+  next := State.{ values: state.values, count: state.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    next.permute(n - 1)
+  }
+}
+
+pub fn run() Int {
+  permute(State.{ values: ["a", "b"], count: 0 }, 2).count
+}
+
+println(run())

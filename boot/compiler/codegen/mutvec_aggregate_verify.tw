@@ -1,0 +1,77 @@
+//! Aggregate-carrier acceptance gate for the recursive MutVec ABI.
+//!
+//! `variant_specialize` is the single ownership authority: a region reaches this
+//! gate only because its owned reconstruction clone already routed under the
+//! clone's own owned seed (field lineage recomputed on the clone body, not the
+//! pre-clone summary). So alias survival, mixed/fresh field lineage, and missing
+//! recursive routes never produce a region at all — the routing layer left those
+//! shapes on the persistent path (see the `recursive_record_*` negatives).
+//!
+//! What THIS gate adds is the decomposed-ABI's own preconditions, which routing
+//! does not judge: exactly one independently threaded scalar field, of an
+//! ordinary scalar Wasm representation, alongside a live recursive edge. Anything
+//! not provably in that shape rejects; reject is always safe (the carrier stays
+//! persistent, merely slower). The reason set is kept complete so a future
+//! permissive detector — one that emits candidates ahead of routing — can reuse
+//! the same verdict vocabulary without renaming.
+
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_aggregate_region.{AggregateMutVecRegion}
+use compiler.codegen.variant_specialize
+use compiler.mono_type.{MonoType}
+
+pub type AggregateRejectReason = {
+  CarrierAliasSurvives,
+  FieldAliasSurvives,
+  MixedFieldLineage,
+  RecursiveRouteMissing,
+  CalleeRepublishes,
+  ExitUnclassified,
+  ReprDisagree,
+  UnsupportedScalarField,
+  UnsupportedScalarArity,
+}
+
+pub type AggregateVerdict = { Accept, Reject(AggregateRejectReason) }
+
+// Accept iff the region matches the slice's decomposed ABI exactly: one threaded
+// scalar of ordinary scalar repr plus a live recursive edge. Ownership/lineage is
+// already discharged by the route that produced the region.
+pub fn verify_aggregate_region(
+  region: AggregateMutVecRegion,
+  _spec: variant_specialize.SpecializeResult,
+  _builtins: BuiltinRegistry,
+) AggregateVerdict {
+  // This slice threads exactly one scalar field beside the private vector. Zero
+  // or several is a different (or multi-result) ABI, so it stays persistent.
+  if region.scalar_fields.len() != 1 {
+    return .Reject(.UnsupportedScalarArity)
+  }
+
+  // The single scalar rides ordinary parameter/return slots; a reference-typed
+  // or aggregate field has no flat scalar representation to thread.
+  if !is_scalar_mono(region.scalar_fields[0].mono) {
+    return .Reject(.UnsupportedScalarField)
+  }
+
+  // A carrier with no recursive edge is not the recursive-aggregate shape this
+  // ABI exists to keep flat; nothing to decompose across.
+  if region.recursive_calls.is_empty() {
+    return .Reject(.RecursiveRouteMissing)
+  }
+
+  .Accept
+}
+
+// A field the decomposed ABI can thread as an ordinary (unboxed) scalar slot.
+// References (String/records/vectors/dicts/closures) and control types are not
+// scalar and force the persistent fallback.
+fn is_scalar_mono(m: MonoType) Bool {
+  case m {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .Byte => true,
+    _ => false,
+  }
+}

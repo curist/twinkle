@@ -38,6 +38,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutvec_aggregate_region
+use compiler.codegen.mutvec_aggregate_verify
 use compiler.codegen.mutvec_call_phase
 use compiler.codegen.mutvec_call_region
 use compiler.codegen.mutvec_call_verify
@@ -519,6 +520,20 @@ fn synth_clone_def(recv: LocalId, idx: LocalId, val: LocalId, body: AnfExpr) Anf
   }
 }
 
+fn agg_is_accept(v: mutvec_aggregate_verify.AggregateVerdict) Bool {
+  case v {
+    .Accept => true,
+    .Reject(_) => false,
+  }
+}
+
+fn agg_rejects_arity(v: mutvec_aggregate_verify.AggregateVerdict) Bool {
+  case v {
+    .Reject(.UnsupportedScalarArity) => true,
+    _ => false,
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
@@ -563,12 +578,69 @@ pub fn suite() runner.Suite {
         for route in st.spec.routes {
           for sk in route.recursive_routes {
             try assert.ok(
-              regions.any(fn(r) { r.recursive_calls.any(fn(l) {
-                vid.site_key(r.clone_func.id, l.id) == sk
-              }) }),
+              regions.any(fn(r) {
+                r.recursive_calls.any(fn(l) { vid.site_key(r.clone_func.id, l.id) == sk })
+              }),
               "every in-SCC route must appear under its caller clone",
             )
           }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate carrier verifier accepts dead and observed carrier regions",
+      fn() Result<Void, String> {
+        for name in [
+          "recursive_record_scratch",
+          "recursive_record_escape",
+          "recursive_record_field_escape",
+        ] {
+          st := mutvec_call_stage(fixture_path(name))
+          regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+          try assert.equal(regions.len(), 1)
+          try assert.ok(
+            agg_is_accept(
+              mutvec_aggregate_verify.verify_aggregate_region(regions[0], st.spec, st.builtins),
+            ),
+            "${name}: one-scalar recursive carrier must verify",
+          )
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate carrier verifier rejects multiple threaded scalar fields",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_multi_scalar"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        try assert.ok(regions[0].scalar_fields.len() > 1, "fixture threads two scalar fields")
+        try assert.ok(
+          agg_rejects_arity(
+            mutvec_aggregate_verify.verify_aggregate_region(regions[0], st.spec, st.builtins),
+          ),
+          "two scalars must reject with UnsupportedScalarArity",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate carrier verifier leaves unsupported shapes persistent",
+      fn() Result<Void, String> {
+        // The ownership route (single authority) already declined these carriers,
+        // so no region reaches the verifier and the persistent path stands: an
+        // alias survives the field, a branch substitutes a different or fresh
+        // vector, or the vector element type has no MutVec family.
+        for name in [
+          "recursive_record_alias",
+          "recursive_record_mixed_lineage",
+          "recursive_record_fresh_lineage",
+          "recursive_record_unsupported",
+        ] {
+          st := mutvec_call_stage(fixture_path(name))
+          regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+          try assert.equal(regions.len(), 0)
         }
         .Ok({})
       },
