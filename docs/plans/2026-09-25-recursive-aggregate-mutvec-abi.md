@@ -53,6 +53,18 @@ and joins the verdict into the census. Remaining: the Task 4–5 decomposed-ABI
 rewrite (the four `permute$mvagg` route/WAT tests are still tracked-red by
 design).
 
+**Task 4–5 paused for design.** Scoping surfaced that both the scratch fixture
+and the real `permute.tw` write the vector inside a `swap` helper, and no
+inliner runs before S4 — so the in-place `mutvec_set` must land *through* the
+helper, which the committed WAT test (expecting it inside `permute$mvagg`) does
+not anticipate. The decomposition design (scalar-only return, in-place mutable
+handle, control flow carries only the scalar), the recommended helper-write
+approach (compose with the existing bare-vector S4 rather than add an inliner),
+caller thaw/freeze rules, and bail conditions are captured in
+`docs/plans/2026-09-26-aggregate-abi-rewrite-design.md`. The one open question
+to resolve first: whether bare-vector S4 flattens a *param-sourced* handle
+threaded into `swap`.
+
 ## File Map
 
 - Create `boot/compiler/codegen/mutvec_aggregate_region.tw`: detect record-carried vector lineage and describe decomposed ABI requirements without rewriting code.
