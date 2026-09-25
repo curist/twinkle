@@ -37,7 +37,7 @@
 
 ## Status (2026-09-25)
 
-Tasks 0–2 landed. Task 2 required a foundation the plan under-specified: owned
+Tasks 0–3 landed. Task 2 required a foundation the plan under-specified: owned
 specialization only proved whole-record aliasing, so a reconstructed carrier
 lost its vector-field lineage. That is now a separate prerequisite commit,
 `feat(ownership): track vector field lineage through record reconstruction`
@@ -46,8 +46,12 @@ lattice, and field-tier variant validation), which makes owned reconstruction
 routes preserve the vector field. `detect_aggregate_regions` and the census
 section sit on top of it. The scratch fixture and the real AWFY Permute both
 report a `dead_field` `vec_i64` region (carrier `p0`, vector `.f0`, scalar
-`.f1`). Remaining: Task 3 verifier and the Task 4–5 decomposed-ABI rewrite
-(the four `permute$mvagg` route/WAT tests are still tracked-red by design).
+`.f1`). Task 3 adds `verify_aggregate_region` as the aggregate-ABI acceptance gate
+(single-authority: routing already discharges lineage, so alias/mixed/fresh
+shapes yield no region; the verifier judges scalar arity/type, recursion, exit)
+and joins the verdict into the census. Remaining: the Task 4–5 decomposed-ABI
+rewrite (the four `permute$mvagg` route/WAT tests are still tracked-red by
+design).
 
 ## File Map
 
@@ -325,25 +329,25 @@ pub fn verify_aggregate_region(
 ) AggregateVerdict
 ```
 
-- [ ] **Step 1: Add negative fixtures and failing verdict tests**
+- [x] **Step 1: Add negative fixtures and failing verdict tests**
 
 The alias fixture saves `state.values` before recursion and reads it afterward. The mixed-lineage fixture returns a newly constructed unrelated vector on one branch. The fresh-lineage fixture constructs a new `Vector<Int>` on one recursive edge, proving that matching element family is not handle identity. The unsupported fixture uses `Vector<String>`. The multi-scalar fixture independently updates two scalar fields. Tests must assert a named rejection reason and ordinary persistent WAT.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run `target/twk test --filter "aggregate carrier verifier"`.
 
 Expected: compile failure because the verifier API is absent.
 
-- [ ] **Step 3: Implement the verifier using ownership facts**
+- [x] **Step 3: Implement the verifier using ownership facts**
 
 Locate the route's owned seed and recompute ownership/field-path facts over the post-specialization clone body rather than trusting the pre-clone summary. Require deep ownership of the vector field at entry, deadness of the old field after every replacement, exact handle identity across every recursive edge, consistent closed-SCC clone routing, one supported family, no publication inside the SCC, and a classified exit. Accept exactly one independently threaded scalar field whose MonoType has an ordinary scalar Wasm representation and whose dataflow never contains the vector handle. Reject zero or multiple threaded scalar fields with `UnsupportedScalarArity`; the scalar may be dead at a particular caller boundary, but the private ABI remains uniform across all accepted sites.
 
-- [ ] **Step 4: Make rejection visible and leave codegen unchanged**
+- [x] **Step 4: Make rejection visible and leave codegen unchanged**
 
 Join verdicts into the census rows. Accepted rows still say `would_use=false (rewrite not landed)`; rejected rows print the exact `AggregateRejectReason`.
 
-- [ ] **Step 5: Run positive, negative, and existing S4 tests**
+- [x] **Step 5: Run positive, negative, and existing S4 tests**
 
 ```bash
 target/twk test --filter "aggregate carrier"
@@ -352,7 +356,7 @@ target/twk test --filter "mutvec call"
 
 Expected: positives accept, negatives reject with the expected reason, and existing bare-vector S4 behavior remains unchanged.
 
-- [ ] **Step 6: Commit the safety gate**
+- [x] **Step 6: Commit the safety gate**
 
 ```bash
 git add boot/compiler/codegen/mutvec_aggregate_verify.tw boot/compiler/codegen/mutvec_call_verify.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_*.tw boot/tests/suites/mutvec_call_suite.tw
