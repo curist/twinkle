@@ -1256,4 +1256,66 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    // Production behavior caught: S4 must discover and accept the owned vector
+    // nested in a recursive State carrier. Current census baseline for this
+    // fixture: set_at__Int reaches persistent vector$set_unsafe/rt_arr__set,
+    // and no aggregate MutVec region is reported.
+    .test(
+      "recursive record scratch gets an aggregate MutVec route",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
+        try assert.ok(dec.accepted.len() > 0, "recursive State must have an accepted S4 region")
+        try assert.ok(dec.abi_upgrades.len() > 0, "recursive State must upgrade a private clone")
+        .Ok({})
+      },
+    )
+    // Production behavior caught: the private Int update must use a flat
+    // MutVec and the scratch path must never freeze its temporary carrier.
+    .test(
+      "recursive record scratch emits mutvec_set_i64 with zero freezes",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_scratch")
+        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
+          .Some(b) => b,
+          .None => return .Err("private set_at__Int clone not found in WAT"),
+        }
+        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
+        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 0)
+        .Ok({})
+      },
+    )
+    // Production behavior caught: publishing the whole returned State must
+    // freeze its vector once at the run boundary, never inside each update.
+    .test(
+      "recursive record escape emits exactly one boundary freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_escape")
+        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
+          .Some(b) => b,
+          .None => return .Err("private set_at__Int clone not found in WAT"),
+        }
+        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
+        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        .Ok({})
+      },
+    )
+    // Production behavior caught: publishing only State.values must freeze
+    // that projected vector once at the run boundary.
+    .test(
+      "recursive record field escape emits exactly one boundary freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_field_escape")
+        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
+          .Some(b) => b,
+          .None => return .Err("private set_at__Int clone not found in WAT"),
+        }
+        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
+        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        .Ok({})
+      },
+    )
 }
