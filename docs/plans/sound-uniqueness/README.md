@@ -99,6 +99,59 @@ true mutable/transient dict storage all belong to the storage-representation tra
 which happens before migration cleanup and gates retiring `Buffer` as the ordinary
 local-update workaround.
 
+### New S4 evidence: recursive aggregate carrier with a dead collection result
+
+The AWFY `permute` / `permute_mut` pair is now the focused S4 customer for a
+recursive aggregate carrier whose collection field should stay in private mutable
+storage. In a same-session run, the ordinary `permute` timed batch took about
+1213 ms while the manual Buffer form took about 98 ms: roughly a 12× reduction.
+LuaJIT ranged from about 63–127 ms across the adjacent runs for the same checksum
+and workload, so private mutable storage closes the original order-of-magnitude
+gap and reaches the same performance class. Treat the remaining difference as
+noise/codegen-accessor work, not evidence for more persistent-structure tuning.
+
+The source pattern is:
+
+```tw
+type PState = .{ v: Vector<Int>, count: Int }
+
+fn permute(s: PState, n: Int) PState {
+  // update s.v, increment s.count, recursively consume and return PState
+}
+```
+
+The compiler opportunity is not merely recursive record-shell reuse. An
+owned-specialized SCC variant can carry `s.v` as `MutVec<Int>`, carry `count` as a
+scalar, and keep the mutable handle implicit in the return ABI. If the caller only
+reads the returned count and the vector dies, the region has no publication exit:
+do not freeze the vector and do not reconstruct `PState`. If a caller observes or
+publishes the returned vector, freeze once at that boundary and reconstruct the
+ordinary record there.
+
+Detection must require all of the following:
+
+- the entry call owns the aggregate shell and the collection field deeply;
+- every within-SCC recursive edge consumes the current carrier and routes to the
+  same mutable-storage variant;
+- the returned collection field has whole-return lineage from the input field,
+  with no competing alias, slice, capture, unknown call, or aggregate publication;
+- every operation on the field is supported by the selected private storage
+  family, and the old collection version is dead after each update;
+- scalar fields are independently threaded reductions or ordinary values; they
+  do not force the collection field back through the persistent ABI;
+- every exit is classified: dead field means no freeze, observed field means one
+  freeze/reconstruction, and any unproved exit falls back to the persistent
+  variant.
+
+Current diagnostics show why the optimization does not happen today. Explicit
+`.set_at(...)` in `swap` routes through `set_at__Int`; the census reports its
+update as `persistent(aliased shell)` and the mutable-decision table reports
+`absent_fallback`. Existing recursive owned variants therefore prove neither a
+private `MutVec` ABI nor elimination of the dead aggregate result. S4 should add a
+fixture matching `permute`, a negative fixture where the pre-recursion vector or
+returned vector remains observable, and a codegen gate requiring recursive
+mutable routing with zero freezes for the dead-result case.
+
 ## Standing invariants
 
 - **Performance is an end-of-track gate.** During the refactor, judge progress by

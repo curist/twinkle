@@ -1,0 +1,53 @@
+// Unlocked tier: Permute over @std.buffer with six packed i64 values mutated
+// in place. The recursive counter stays scalar instead of riding in PState.
+// Compare against the persistent `permute` to isolate recursive state
+// reconstruction from recursion and integer work.
+use @std.buffer
+
+fn swap(values: buffer.Buffer, i: Int, j: Int) {
+  i_offset := i * 8
+  j_offset := j * 8
+  a := values.get_i64(i_offset)
+  b := values.get_i64(j_offset)
+  values.set_i64(i_offset, b)
+  values.set_i64(j_offset, a)
+}
+
+fn permute(values: buffer.Buffer, n: Int, count: Int) Int {
+  // Keep arithmetic explicit in this probe: inc/dec currently remain
+  // non-inlined calls in recursive WAT and overwhelm the storage comparison.
+  count = count + 1
+  if n != 0 {
+    count = permute(values, n - 1, count)
+    i := n - 1
+    for i >= 0 {
+      swap(values, n - 1, i)
+      count = permute(values, n - 1, count)
+      swap(values, n - 1, i)
+      i = i - 1
+    }
+  }
+  count
+}
+
+pub warmup := 10
+pub iters := 20
+pub size := 300
+pub expected := 8660
+
+pub fn run(size: Int) Int {
+  values := buffer.new(6 * 8)
+  defer values.free()
+  count := 0
+  rep := 0
+  for rep < size {
+    i := 0
+    for i < 6 {
+      values.set_i64(i * 8, 0)
+      i = i + 1
+    }
+    count = permute(values, 6, 0)
+    rep = rep + 1
+  }
+  count
+}

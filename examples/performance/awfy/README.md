@@ -163,6 +163,12 @@ What the numbers show now that persistent storage is fast:
 - **NBody still gains modestly.** `nbody` ~4.3 ms → `nbody_mut` ~2.6 ms (~1.7×).
   NBody is *compute*-bound — the residual ~3× gap to Node is float codegen and
   per-access `get_f64`/`set_f64` overhead, not persistence. Kept.
+- **Permute exposes recursive aggregate threading.** `permute` ~60.6 ms/op →
+  `permute_mut` ~4.9 ms/op (~12×). The ordinary version recursively returns a
+  `PState` containing a persistently updated `Vector<Int>` and scalar count; the
+  unlocked version keeps six integers in Buffer and returns only the count. This
+  is evidence for an owned-specialized mutable ABI that carries private vector
+  storage through recursive calls and materializes only if the vector escapes.
 - **Clojure's idiomatic array ports do *not* beat its persistent vectors**
   (`bounce_mut` is actually slower). Reaching the native league needs aggressive
   primitive-type discipline (`*unchecked-math*`, `^long`/`^double`, no boxing
@@ -211,6 +217,7 @@ the amount of timed work.
 | sieve_direct | 5000 | 10 | 40 | 669 | same as `sieve` but with `flags[k] = false` rebinding sugar — confirms the sugar gets the same unboxed-MutVec treatment (Twinkle-only) |
 | queens | 1000 | 10 | 40 | 1000 | recursion + boolean guard arrays |
 | permute | 300 | 10 | 20 | 8660 | recursion + int array swaps |
+| permute_mut | 300 | 10 | 20 | 8660 | unlocked tier: recursive Buffer swaps with a separately threaded scalar count (Twinkle only) |
 | towers | 200 | 10 | 20 | 8191 | recursion + stack pegs |
 | list | 1000 | 10 | 40 | 499500 | enum cons-list build + traverse |
 | bounce | 400 | 10 | 20 | 47174 | `Int` sim + persistent ball vector + LCG |
@@ -221,11 +228,12 @@ the amount of timed work.
 | bounce_mut | 400 | 10 | 20 | 47174 | unlocked tier: native mutable storage (Twinkle `@std.buffer`) |
 | nbody_mut | 20000 | 5 | 20 | -16908926 | unlocked tier: native mutable storage (Twinkle `@std.buffer`) |
 
-The `*_mut` variants exist only for the persistent-write languages — Node/Go are
-already native, so their base `sieve`/`bounce`/`nbody` rows *are* the native-tier
-reference. Twinkle now emits `bounce_mut`/`nbody_mut` (where Buffer still wins)
-but not `sieve_mut` (where its persistent path already wins); Clojure and Racket
-still emit all three.
+The `*_mut` variants exist only where a persistent or aggregate-threaded baseline
+has a useful unlocked comparison — Node/Go/LuaJIT already use mutable arrays or
+tables, so their base rows are the native-tier reference. Twinkle emits
+`permute_mut`, `bounce_mut`, and `nbody_mut` (where Buffer wins), but not
+`sieve_mut` (where its persistent path already wins); Clojure and Racket retain
+their write-heavy unlocked rows.
 
 Determinism note: Bounce and Storage share AWFY's exact linear-congruential
 PRNG (`seed = (seed*1309 + 13849) & 65535`, initial seed 74755), defined once in

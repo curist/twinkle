@@ -8,6 +8,7 @@ use .mandelbrot
 use .nbody
 use .nbody_mut
 use .permute
+use .permute_mut
 use .queens
 use .sieve
 use .sieve_direct
@@ -63,6 +64,14 @@ harness.run_all([
     size: permute.size,
     expected: permute.expected,
     run: permute.run,
+  },
+  Benchmark.{
+    name: "permute_mut",
+    warmup: permute_mut.warmup,
+    iters: permute_mut.iters,
+    size: permute_mut.size,
+    expected: permute_mut.expected,
+    run: permute_mut.run,
   },
   Benchmark.{
     name: "towers",

@@ -1,0 +1,6 @@
+use .permute_mut
+
+actual := permute_mut.run(1)
+if actual != permute_mut.expected {
+  error("permute_mut checksum ${actual} != expected ${permute_mut.expected}")
+}
