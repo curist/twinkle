@@ -61,13 +61,19 @@ not anticipate. The decomposition design (scalar-only return, in-place mutable
 handle, control flow carries only the scalar), the recommended helper-write
 approach (compose with the existing bare-vector S4 rather than add an inliner),
 caller thaw/freeze rules, and bail conditions are captured in
-`docs/plans/2026-09-26-aggregate-abi-rewrite-design.md`. The open question was
-resolved by prototype (2026-09-26): bare-vector S4 does **not** flatten a
-param-sourced handle threaded into `swap` (it roots regions only on
-`collect`/`make` producers), so Option A does not compose for free. The design
-doc now recommends **Option B** — a narrow, self-contained `swap` beta-reduce
-inside the decomposed clone: single flat clone, matches the committed
-`permute$mvagg` WAT test verbatim, tightest hot loop.
+`docs/plans/2026-09-26-aggregate-abi-rewrite-design.md`. After a prototype
+(bare-vector S4 does **not** flatten a param-sourced handle) and two design
+reviews (generality + soundness), the shortcuts were rejected in favor of a
+general **interprocedural flat-handle propagation** architecture: flatness as a
+least fixpoint over owned call edges, keyed on `(clone, slot, access-path)`,
+re-verifying each hop with the existing HP-3 verifier, edge→dedicated clone,
+sharing one `variant_cap` partition with the bare path. Slice-1 implements
+aggregate decomposition + **one** verified hop (`permute→swap`) + freeze
+boundaries; the transitive fixpoint and all other widenings are force-persistent
+behind depth/sharing negative fixtures. The committed `permute$mvagg` WAT tests
+will be relaxed to assert `mutvec_set_i64` anywhere in the propagated flat clone
+graph (it lands in `swap$mv`), keeping the freeze-count checks. See the design
+doc's Decision block + MUST invariants.
 
 ## File Map
 

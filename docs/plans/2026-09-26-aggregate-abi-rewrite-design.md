@@ -3,9 +3,29 @@
 Design capture before implementing the decomposed-ABI rewrite in
 `docs/plans/2026-09-25-recursive-aggregate-mutvec-abi.md`. Tasks 0–3 landed
 (ownership field-lineage foundation, `detect_aggregate_regions`,
-`verify_aggregate_region`, census). This doc records the rewrite design and the
-one open decision surfaced during scoping, so Task 4–5 can be implemented in a
-focused follow-up without re-deriving it.
+`verify_aggregate_region`, census). This doc records the rewrite design so
+Task 4–5 can be implemented in a focused follow-up without re-deriving it.
+
+## Decision (2026-09-26, after two design reviews)
+
+**Architecture: interprocedural flat-handle propagation** (not the tailored
+inline/param-root shortcuts). Flatness propagates forward along
+owned-specialized call edges as a **least fixpoint**; flat roots are owned
+producers (existing) + aggregate-decomposed carrier fields (new); the flat fact
+keys on **`(clone, param-slot, access-path)`** reusing `field_facts.AccessPath`;
+freeze at publication / alias / non-flat-callee / closure-capture / two-slot
+sinks. Every promoted edge **re-invokes the existing HP-3 verifier** on the
+callee body; flatness is per edge→dedicated clone (never a shared function);
+aggregate roots feed the **same** `variant_cap` partition as the bare path.
+
+**Scope now:** slice-1 = aggregate decomposition + **one** verified propagation
+hop (`permute→swap`) + freeze boundaries, for a single-collection /
+single-scalar / `if`-carrier shape. The transitive fixpoint, multi-field,
+shared-helper, read/borrow helpers, closure-consumed handles, and `case`/`break`
+carriers are **force-persistent** until the depth/sharing negative fixtures are
+green. Two reviews concurred: *go* on this slice; *no-go* on the fixpoint until
+the MUST invariants below are honored. Inlining the helper is demoted to an
+optional post-propagation perf lever, never the correctness mechanism.
 
 ## Where the tracked-red tests stand
 
@@ -54,7 +74,15 @@ carrier-typed (`State`) local. Per op:
 | `assign LC = LX` (both carrier) | two lets: `assign vec(LC)=vec(LX)`; `assign scalar(LC)=scalar(LX)` |
 | `call permute(LC, …args)` → `LR` | `scalar(LR) = call permute$mvagg(vec(LC), scalar(LC), …args)`; `vec(LR) = init vec(LC)` (same handle, mutated in place) |
 | `if … then …Lc else …Lc` → `LR` (carrier) | if yields `scalar(Lc)` per branch; `LR` is scalar-typed; drop vector |
+| `case … { arm ⇒ …Lc }` → `LR` (carrier) | each arm yields `scalar(Lc)`; `LR` scalar-typed (Twinkle is `case`-heavy — required, not optional) |
+| `break Lc` (carrier) from a carrier-yielding loop | `break scalar(Lc)` |
 | tail `return LC` / `Atom(LC)` | `return scalar(LC)` |
+
+`AMatch`/`break` carrier forms are **required** for the explosion to fire on
+ordinary code; the intra-function scanners already walk both
+(`mutvec_call_region.tw` `AMatch`/`Break`), so this is a mapping table entry, not
+new analysis. If slice-1 ships `if`-only, scope its acceptance to `if`-carriers
+and bail (persistent) on `case`/`break` carriers — never silently miscompile.
 
 The **carrier param** `state (L5)` is replaced by two params
 `vhandle (fresh), count (fresh)`; `explode[L5] = (vhandle, count)`. Fresh locals
@@ -142,62 +170,143 @@ model below subsumes both and is the recommended direction.
 ## Recommended architecture: interprocedural flat-handle propagation
 
 Treat *flatness* as a property that propagates forward along owned-specialized
-call edges, computed as a call-graph fixpoint. This is the same mechanism the
-bare-vector S4 already applies within one function, generalized across calls.
+call edges, computed as a **least** call-graph fixpoint. This is the same
+mechanism the bare-vector S4 already applies within one function, generalized
+across calls.
 
+- **The flat fact key is `(clone, param-slot, access-path)`** — not
+  `(clone, param-slot)`. `access-path` reuses `field_facts.AccessPath` (already
+  depth-2: `[]`, `[Field(f)]`, `[Payload(t,i)]`, `[Field(f), Elem]`), the same
+  key the ownership authority already produces. `[]` is today's whole-slot
+  vector param; `[Field(vec)]` names "slot `k` is a carrier whose `.vec` field is
+  the flat handle." Without this, a carrier-by-value helper
+  `swap_state(s: State, …)` — the *common* Twinkle idiom, vs. the fixture's
+  hand-projected `swap(s.v, …)` — has no vector-typed slot to mark and stalls to
+  persistent. Slice-1 populates only `[]` and one `[Field(vec)]`; the key stays
+  general so tuple/Optional/nested-record wrapping and nested aggregates are a
+  population change, not a re-key. **Do not hard-code `vector_param: Int` /
+  `scalar_param: Int` in the Task-4 upgrade type** — use `Vector`-typed
+  `vector_fields` / `scalars` (cap 1 in slice-1) keyed by access-path, so the
+  Task-4 upgrade is not *less* general than the bare path's existing
+  `param_slots: Vector<Int>` it must unify with.
 - **Flat roots** (where a flat handle originates):
   1. a uniquely-owned producer (`collect`/`make`/array-literal) — *today's
      bare-vector S4 root*;
   2. an aggregate-decomposed carrier collection field — *the new root* this plan
      adds. Same downstream mechanism, two sources.
-- **Propagation:** if clone `F` has a flat param `H` and passes `H` to an owned
-  continuation `G`, then `G`'s corresponding param is flat and `G`'s vector ops
-  on it lower to `mutvec_*` in place. Transitive to a fixpoint — deep helper
-  chains and multiple distinct helpers fall out without new cases.
-- **Freeze sinks (reject-by-default):** freeze a flat handle to persistent PVec
-  only where it would leave flatness — a publication boundary (observed exit,
-  stored into an escaping record/global), a callee that is not flat-eligible
-  (persistent, non-owned, aliased, or over-cap), or a surviving alias.
+- **Propagation is per call *edge*, not per function.** If clone `F` has a flat
+  handle at `(slot, path)` and passes it to an owned continuation `G`, that
+  *edge* may promote `G`'s corresponding `(slot, path)` to flat **only after
+  re-invoking the existing per-callee verifier** (`verify_region` /
+  `verify_clone_continuation`, `mutvec_call_verify.tw`) against `G`'s actual
+  body — never by graph reachability alone. A callee reached by two
+  differently-keyed edges (two flat roots, or one flat + one persistent) gets a
+  **dedicated clone per edge** or falls back; a function is never shared across
+  ABI classes (that would be the forbidden "second ownership authority").
+- **Freeze sinks (reject-by-default), enumerated:** freeze a flat handle to
+  persistent PVec at any point it could leave flatness —
+  1. publication: an observed return, or stored into a record/tuple/dict/global
+     that escapes;
+  2. a callee that is not flat-eligible (persistent, non-owned, over-cap) or a
+     callee that captures it in a closure/capability record;
+  3. the same handle reaching **>1 slot of one callee** (independent-slot
+     flatness would alias one physical backing);
+  4. a surviving caller-side alias of the handle or the carrier field;
+  5. a handle escaping through a `try`/early-return or a `case`/`break` branch at
+     any hop.
+  The existing single-hop scan already catches records/tuples/closures/globals
+  via `op_references_deep` (`builder_region_detect.tw`); the fixpoint must apply
+  that same catch-all at *every* hop, not just the direct argument.
 
-Under this model `swap` becomes `swap$mv` **by propagation**, not by inlining or
-a bespoke param-root; `mutvec_set_i64` lands in `swap$mv`. Inlining is a
-separate, orthogonal perf lever (remove call overhead) that can be layered on
-later — never the correctness mechanism.
+**MUST invariants (soundness gate — see review 2026-09-26):**
+1. every promoted edge re-runs the existing HP-3 verifier on the real callee
+   body; no reachability-only flatness;
+2. one physical clone per (accepted proof, callee); never a callee shared across
+   ABI classes;
+3. least-fixpoint — start all-persistent, promote only on proof, so any early
+   truncation (cap, budget, unsupported op) leaves the frontier persistent;
+4. cap exhaustion at *any* hop fails the whole chain (reserve all siblings before
+   rewriting), sharing **one** `variant_cap` partition with the bare-vector
+   planner (`build_mutvec_call_plan`) — the aggregate roots feed the same
+   `accepted_sites` partition, they do not run a second sibling-minting pass;
+5. no new ownership authority: a node is flat-eligible only if `variant_specialize`
+   already routed it to an owned/unique clone under its own recomputed seed; the
+   mutvec pass adds root *recognition*, never an ownership decision;
+6. exhaustive reject-by-default op matching at every hop (any unlisted `AnfOp`
+   rejects, mirroring `scan_clone_op`).
+
+Under this model `swap` becomes `swap$mv` **by propagation** (one verified hop),
+not by inlining or a bespoke param-root; `mutvec_set_i64` lands in `swap$mv`.
+Inlining is a separate, orthogonal perf lever (remove call overhead) that can be
+layered on later — never the correctness mechanism.
 
 ### Adjacent cases this must capture (or defer soundly)
 
 | Case | Handled by |
 |---|---|
 | write inline in the clone | clone-body op retarget (existing) |
-| write via one helper (`swap`) | propagation, 1 level |
-| write via a **chain** of helpers | propagation fixpoint |
-| several distinct helpers | propagation per edge |
-| read-only helper (`sum(handle)`) | propagation (flat read; or read-only flat) |
+| write via one helper, projected arg `swap(s.v, …)` | propagation, 1 verified hop, path `[]` (slice-1) |
+| write via carrier-by-value helper `swap_state(s, …)` | propagation, path `[Field(vec)]` (needs the access-path key) |
+| write via a **chain** of helpers | propagation fixpoint (Staging 3, not slice-1) |
+| several distinct helpers | propagation per edge (fixpoint) |
+| read-only helper (`sum(handle)`) | **NOT handled** — needs a new borrow-only callee verdict no verifier emits today; slice-1 freezes/rejects |
 | all four element families | family-parameterized ops (existing) |
 | mutual-recursion / SCC carrier | Task 0 routing (landed) |
-| handle passed to a persistent/aliased callee | freeze sink |
+| handle passed to a persistent/aliased/over-cap callee | freeze sink |
+| handle captured by a closure / capability record | **freeze sink (always persistent)** — closure devirt is the only future lever |
+| same handle reaching >1 slot of one callee | freeze sink (aliases one backing) |
 | handle published (record/field/global) | freeze sink (Task 5 boundaries) |
-| **multiple collection fields** in carrier | future widening — must not be precluded |
-| **multiple scalar fields** | future multi-scalar ABI — must not be precluded |
-| helper that itself reconstructs a record (nested aggregate) | recursion of the aggregate transform — future |
+| carrier threaded through `case`/`break` | explosion rules for `AMatch`/`break` (below) or slice-1 = `if`-only |
+| **multiple collection fields** in carrier | future — key on access-path, `vector_fields: Vector` cap 1 |
+| **multiple scalar fields** | future — `scalars: Vector` cap 1 (single `phys_return` today) |
+| nested aggregate (helper reconstructs a record) | future — bounded by depth-1 `ReturnOwn.OwnedFromField` return lineage |
 
-The three "future" rows are out of slice-1 scope but the propagation + roots +
-sinks structure must not architecturally preclude them (e.g. the ABI-upgrade
-table should key on (clone, param-slot) so multiple flat params are expressible;
-the scalar side should be a list, capped at one for now, not hard-coded to one).
+Guardrails so the "future" rows stay open without slice-1 cost: the ABI-upgrade
+type keys on `(clone, slot, access-path)` with `Vector`-typed `vector_fields` and
+`scalars` (both cap 1 now); the landed `AggregateMutVecRegion` (`vector_field:
+FieldId`, singular) is widened to a `Vector` when Task 4 lands, not before. Known
+ceiling: `ownership.ReturnOwn.OwnedFromField(Int, Int)` and `ReturnPathOwn.field:
+Int?` are single-field / depth-1, so nested-aggregate widening will eventually
+need depth-2 return lineage — record it, don't build it.
 
 ### Staging (implement minimally, generalize by widening — not rearchitecting)
 
 1. Aggregate decomposition (record → flat collection param(s) + scalar(s)) — the
    new flat root. Reuses ownership routing.
-2. One-level propagation: a flat param threaded into a directly-called owned
-   continuation flattens that continuation. (Covers `swap`.)
-3. Transitive propagation fixpoint for deeper chains — designed in from the
-   start, enabled by widening step 2's single hop to a worklist.
+2. **One** verified propagation hop: a flat handle threaded into a directly-called
+   owned continuation promotes that continuation **by re-invoking the existing
+   HP-3 verifier on its body** (covers `swap`). Fed into the *same*
+   `build_mutvec_call_plan` partition as the bare path.
+3. Transitive propagation fixpoint (worklist) for deeper chains — **not slice-1**;
+   force-persistent beyond one hop until fixtures 1–2 below are green.
 4. Freeze-sink boundary computation (dead / publish-record / publish-field).
 
-Slice-1 turns on steps 1–2 + 4 for the single-collection, single-scalar carrier;
-steps 3 and the "future" rows are enabled later without touching the model.
+Slice-1 = steps 1, 2, 4 for the single-collection, single-scalar, `if`-carrier
+case, reusing the existing verifier at the hop. Force-persistent (do not build
+yet): the >1-hop fixpoint, multiple collection/scalar fields, a helper shared by
+more than one flat root, read-only/borrow helpers, closure-consumed handles, and
+`case`/`break`-carried carriers (unless the explosion `AMatch`/`break` rules land
+— the intra-function scanners already handle these forms at
+`mutvec_call_region.tw`).
+
+### Negative fixtures to land (red) before enabling propagation
+
+Depth/sharing/escape trip-wires, so Staging 3 cannot silently over-reach:
+
+1. two-hop chain (`permute$mvagg → swap$mv → helper2`) stays fully persistent;
+2. shared helper: two aggregate roots call one `swap`-shape → two distinct
+   siblings or full fallback, never one physical clone for both;
+3. helper stores the handle into a record/tuple field and returns it → reject
+   (`CalleeRepublishes`);
+4. helper captures the handle in a closure/capability record → reject;
+5. helper touches the handle inside a `try`/early-return or `case` arm → reject;
+6. `variant_cap` exhausted at the second hop → the *whole* region falls back;
+7. loop where a per-iteration accumulator also captures the handle
+   (`history.append(handle)`) before the freeze → reject;
+8. caller holds a pre-call alias of the *carrier field* surviving the hop →
+   reject (extends `FieldAliasSurvives` through `swap`);
+9. carrier-by-value helper `swap_state(s: State, …)` → **accepted** via the
+   `[Field(vec)]` access-path key (proves the key is exercised, not just `[]`).
 
 ### On the two shortcuts (for the record)
 
