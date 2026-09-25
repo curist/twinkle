@@ -123,10 +123,6 @@ tests pass verbatim.
   remapping, all-or-nothing bail), more moving parts, higher risk. Larger than
   the decomposition itself.
 
-**Recommendation (revised after prototype): Option B.** See the prototype
-result below — Option A does *not* compose for free, so its "reuse the verified
-path" advantage largely evaporates.
-
 ### Prototype result (2026-09-26)
 
 A minimal fixture (`scratchpad/param_thread_probe.tw`) threads a `Vector<Int>`
@@ -138,22 +134,87 @@ Result: `swap`'s WAT still calls `set_at__Int` → `rt_arr__set` (persistent), n
 (`mutvec_call_region.tw:159`) roots a region only on a `collect`/`make`/array
 producer op, and a param has no defining op.
 
-So Option A requires a genuinely new pass — recognize a MutVec-typed **param**
-as a region root and thread it cross-function into `swap`, flattening `swap` to
-a second in-place clone with coordinated repr. That is at least as much new code
-as Option B, plus a second flat clone and cross-function repr coordination, and
-it leaves a `swap` call in the hot loop (call overhead against the 1.25×/1.5×
-gate).
+So neither shortcut is the right foundation: Option A as first framed is a
+one-level param-root hack, and Option B (inline) is a straight-line-helper
+special case. Both are tailored to the `permute`+`swap` example. The general
+model below subsumes both and is the recommended direction.
 
-Option B's inliner is narrow and self-contained: at each
-`L = call swap(vec(carrier), i, j)` whose result feeds the carrier's vector
-field, beta-reduce `swap` (straight-line owned `Vector→Vector` helper) into the
-decomposed clone with `v ↦ handle`; its `set_at` then retargets to
-`mutvec_set_i64(handle, …)` in place (plan Task 4 Step 4, unchanged), and the
-handle identity is preserved. Bail (persistent fallback) if the helper is not
-straight-line, has control flow/multiple returns, or its vector arg is not the
-carrier handle. Single clone, matches the committed test verbatim, tightest
-code.
+## Recommended architecture: interprocedural flat-handle propagation
+
+Treat *flatness* as a property that propagates forward along owned-specialized
+call edges, computed as a call-graph fixpoint. This is the same mechanism the
+bare-vector S4 already applies within one function, generalized across calls.
+
+- **Flat roots** (where a flat handle originates):
+  1. a uniquely-owned producer (`collect`/`make`/array-literal) — *today's
+     bare-vector S4 root*;
+  2. an aggregate-decomposed carrier collection field — *the new root* this plan
+     adds. Same downstream mechanism, two sources.
+- **Propagation:** if clone `F` has a flat param `H` and passes `H` to an owned
+  continuation `G`, then `G`'s corresponding param is flat and `G`'s vector ops
+  on it lower to `mutvec_*` in place. Transitive to a fixpoint — deep helper
+  chains and multiple distinct helpers fall out without new cases.
+- **Freeze sinks (reject-by-default):** freeze a flat handle to persistent PVec
+  only where it would leave flatness — a publication boundary (observed exit,
+  stored into an escaping record/global), a callee that is not flat-eligible
+  (persistent, non-owned, aliased, or over-cap), or a surviving alias.
+
+Under this model `swap` becomes `swap$mv` **by propagation**, not by inlining or
+a bespoke param-root; `mutvec_set_i64` lands in `swap$mv`. Inlining is a
+separate, orthogonal perf lever (remove call overhead) that can be layered on
+later — never the correctness mechanism.
+
+### Adjacent cases this must capture (or defer soundly)
+
+| Case | Handled by |
+|---|---|
+| write inline in the clone | clone-body op retarget (existing) |
+| write via one helper (`swap`) | propagation, 1 level |
+| write via a **chain** of helpers | propagation fixpoint |
+| several distinct helpers | propagation per edge |
+| read-only helper (`sum(handle)`) | propagation (flat read; or read-only flat) |
+| all four element families | family-parameterized ops (existing) |
+| mutual-recursion / SCC carrier | Task 0 routing (landed) |
+| handle passed to a persistent/aliased callee | freeze sink |
+| handle published (record/field/global) | freeze sink (Task 5 boundaries) |
+| **multiple collection fields** in carrier | future widening — must not be precluded |
+| **multiple scalar fields** | future multi-scalar ABI — must not be precluded |
+| helper that itself reconstructs a record (nested aggregate) | recursion of the aggregate transform — future |
+
+The three "future" rows are out of slice-1 scope but the propagation + roots +
+sinks structure must not architecturally preclude them (e.g. the ABI-upgrade
+table should key on (clone, param-slot) so multiple flat params are expressible;
+the scalar side should be a list, capped at one for now, not hard-coded to one).
+
+### Staging (implement minimally, generalize by widening — not rearchitecting)
+
+1. Aggregate decomposition (record → flat collection param(s) + scalar(s)) — the
+   new flat root. Reuses ownership routing.
+2. One-level propagation: a flat param threaded into a directly-called owned
+   continuation flattens that continuation. (Covers `swap`.)
+3. Transitive propagation fixpoint for deeper chains — designed in from the
+   start, enabled by widening step 2's single hop to a worklist.
+4. Freeze-sink boundary computation (dead / publish-record / publish-field).
+
+Slice-1 turns on steps 1–2 + 4 for the single-collection, single-scalar carrier;
+steps 3 and the "future" rows are enabled later without touching the model.
+
+### On the two shortcuts (for the record)
+
+- **Inline (old Option B)** does not generalize: control-flow helpers, deep
+  chains, large helpers, and read helpers all break beta-reduce. Keep it only as
+  an optional post-propagation perf lever.
+- **Param-root hack (old Option A)** is the degenerate one-level case of
+  propagation; build the fixpoint form instead so chains are free.
+
+### Test implication
+
+The committed WAT tests assert `mutvec_set_i64` inside `permute$mvagg`. Under
+propagation the write lands in `swap$mv`, so those assertions must be relaxed to
+"a flat clone in the propagated call graph contains `mutvec_set_i64`, no
+`rt_arr__set` remains in the hot path" — plus the unchanged freeze-count checks
+(0 dead / 1 observed). This is a truer statement of the property than pinning
+the op to one function.
 
 ## Caller boundary rules (thaw + freeze)
 
