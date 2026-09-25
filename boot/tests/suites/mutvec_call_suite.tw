@@ -133,6 +133,37 @@ pub fn count_op_calls(wat: String, marker: String, op_name: String) Int {
   }
 }
 
+// Count actual call instructions throughout emitted WAT, including recursive
+// clones and helpers. A scoped caller count alone can miss per-edge freezes.
+fn count_all_op_calls(wat: String, op_name: String) Int {
+  n := 0
+  for line in wat.split("\n") {
+    t := line.trim()
+    if t.starts_with("call ") and t.contains(op_name) {
+      n = .inc()
+    }
+  }
+  n
+}
+
+// Task 4 adds `aggregate_upgrades` to MutVecCallDecision. Until that field
+// exists, the emitted `$mvagg` sibling is the phase's concrete aggregate-route
+// witness; update this predicate to inspect the upgrade record when it lands.
+fn has_aggregate_permute_route(dec: mutvec_call_phase.MutVecCallDecision) Bool {
+  run_fn := find_func(dec.module, "run")
+  dec.module.functions.any(fn(f) { f.name.contains("permute")
+    and f.name.ends_with("$mvagg") and func_calls(dec.module, run_fn.func_id.id, f.func_id.id) })
+}
+
+// The `$mvagg` suffix mangles to `_mvagg` in WAT. Require this exact private
+// aggregate clone so a persistent `permute` or `set_at__Int` cannot satisfy it.
+fn aggregate_permute_wat_body(wat: String) Result<String, String> {
+  case wat_func_body_where(wat, "permute", "_mvagg", true) {
+    .Some(body) => .Ok(body),
+    .None => .Err("private permute$mvagg clone not found in WAT"),
+  }
+}
+
 // The reproduced pre-S4 insertion point: post-mutvec_region (S2), post-
 // builder_region, post-variant_specialize (8G) — the exact ANF' shape any
 // future S4 phase would consume. Fields named to match the brief: `prime` is
@@ -1265,8 +1296,10 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
         dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
-        try assert.ok(dec.accepted.len() > 0, "recursive State must have an accepted S4 region")
-        try assert.ok(dec.abi_upgrades.len() > 0, "recursive State must upgrade a private clone")
+        try assert.ok(
+          has_aggregate_permute_route(dec),
+          "recursive State must select an aggregate permute upgrade",
+        )
         .Ok({})
       },
     )
@@ -1276,13 +1309,14 @@ pub fn suite() runner.Suite {
       "recursive record scratch emits mutvec_set_i64 with zero freezes",
       fn() Result<Void, String> {
         wat := try compile_fixture_wat("recursive_record_scratch")
-        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
-          .Some(b) => b,
-          .None => return .Err("private set_at__Int clone not found in WAT"),
+        clone := try aggregate_permute_wat_body(wat)
+        _run := case wat_func_body(wat, "_run") {
+          .Some(body) => body,
+          .None => return .Err("run function not found in WAT"),
         }
         try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
         try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
-        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 0)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 0)
         .Ok({})
       },
     )
@@ -1292,13 +1326,15 @@ pub fn suite() runner.Suite {
       "recursive record escape emits exactly one boundary freeze",
       fn() Result<Void, String> {
         wat := try compile_fixture_wat("recursive_record_escape")
-        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
-          .Some(b) => b,
-          .None => return .Err("private set_at__Int clone not found in WAT"),
+        clone := try aggregate_permute_wat_body(wat)
+        _run := case wat_func_body(wat, "_run") {
+          .Some(body) => body,
+          .None => return .Err("run function not found in WAT"),
         }
         try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
         try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
-        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
         .Ok({})
       },
     )
@@ -1308,13 +1344,15 @@ pub fn suite() runner.Suite {
       "recursive record field escape emits exactly one boundary freeze",
       fn() Result<Void, String> {
         wat := try compile_fixture_wat("recursive_record_field_escape")
-        clone := case wat_func_body_where(wat, "set_at__Int", "_v", true) {
-          .Some(b) => b,
-          .None => return .Err("private set_at__Int clone not found in WAT"),
+        clone := try aggregate_permute_wat_body(wat)
+        _run := case wat_func_body(wat, "_run") {
+          .Some(body) => body,
+          .None => return .Err("run function not found in WAT"),
         }
         try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
         try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
-        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
         .Ok({})
       },
     )
