@@ -3,16 +3,11 @@
 //! An ANF->ANF pass, run in `link_program` between the builder-region rewrite
 //! and closure conversion. It:
 //!   1. builds the summary + variant tables and finds published owned variants,
-//!   2. scans callers of published callees (`call_uniques_sited`) and, where a
-//!      site's argument uniqueness satisfies a published variant, physically
-//!      clones the callee under an owned entry seed,
-//!   3. keeps clones whose callee has a supported update site (a cheap AST-level
-//!      structural filter — see `updatable_funcs`), and
-//!   4. routes satisfying caller sites and each clone's in-SCC recursive calls to
-//!      a peer clone that was independently cloned (self, for a single recursive
-//!      function). A peer demanded ONLY from inside another clone is not created
-//!      on demand — its recursive call stays generic (sound, just not specialized);
-//!      full SCC closure of mutual recursion is a follow-up.
+//!   2. scans callers of published callees (`call_uniques_sited`) for owned entry
+//!      demands and filters callees without a supported update site,
+//!   3. closes each demand over its recursive SCC and reserves every compatible
+//!      peer variant under the per-generic cap before allocating clones, and
+//!   4. seeds the clones and routes each in-SCC call to its owned peer clone.
 //!
 //! Recursive-route seeding is field-aware: `recursive_routes_for` re-analyzes the
 //! clone under both `seed_for_variant` (whole-value uniqueness) and
@@ -113,36 +108,16 @@ fn spec_phase(label: String) {
 
 pub variant_cap: Int = 4
 
-type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }
-
-// Keep at most `cap` groups per generic callee, preferring the ones with the most
-// routed caller sites (then, deterministically, the earlier callee id). Overflow
-// groups are returned separately: their callers stay on the generic function and
-// they are recorded as `OverCap` routes for inspection.
-fn apply_cap(groups: Vector<Group>, cap: Int) CapResult {
-  seen: Dict<Int, Int> = Dict.new()
-  kept: Vector<Group> = []
-  overflow: Vector<Group> = []
-  ranked := groups.sort_by(fn(a, b) {
+// Prefer externally demanded variants with the most routed caller sites, then
+// the earlier callee id. SCC peers are reserved together after this ordering.
+fn rank_groups(groups: Vector<Group>) Vector<Group> {
+  groups.sort_by(fn(a, b) {
     c := b.route_sites.len().compare(a.route_sites.len())
     case c {
       .Eq => a.callee.compare(b.callee),
       _ => c,
     }
   })
-  for g in ranked {
-    n := case seen.get(g.callee) {
-      .Some(x) => x,
-      .None => 0,
-    }
-    if n < cap {
-      seen[g.callee] = n + 1
-      kept = .append(g)
-    } else {
-      overflow = .append(g)
-    }
-  }
-  .{ kept, overflow }
 }
 
 // A candidate specialization: one published variant of one callee, plus the
@@ -154,6 +129,157 @@ type Group = .{
   route_sites: Vector<Int>,
   clone_id: Int,
   clone_name: String,
+}
+
+type SccDemand = .{ site_local: Int, variant: vid.VariantId }
+
+type SccDemands = .{ valid: Bool, demands: Vector<SccDemand> }
+
+type ClosedGroup = .{ valid: Bool, members: Vector<Group> }
+
+fn scc_ids_for(view: cfg.CfgView) Dict<Int, Int> {
+  index: Dict<Int, cfg.CfgFunction> = Dict.new()
+  user_ids: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    index[f.func_id] = f
+    user_ids[f.func_id] = true
+  }
+  ids: Dict<Int, Int> = Dict.new()
+  for component, sid in summary.order_sccs(view, index, user_ids) {
+    for member in component {
+      ids[member] = sid
+    }
+  }
+  ids
+}
+
+fn same_scc(ids: Dict<Int, Int>, a: Int, b: Int) Bool {
+  case ids.get(a) {
+    .Some(a_id) => case ids.get(b) {
+      .Some(b_id) => a_id == b_id,
+      .None => false,
+    },
+    .None => false,
+  }
+}
+
+// Analyze the generic body under the candidate clone's whole-value and field
+// seeds. Every in-SCC call must prove a published, updatable owned variant.
+fn scc_demands_for(
+  g: Group,
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
+  vt: summary.VariantSummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  scc_ids: Dict<Int, Int>,
+  updatable: Dict<Int, Bool>,
+  live_cache: ownership.LiveCache,
+) SccDemands {
+  ccfg := case cfg_func_of(view, g.callee) {
+    .Some(cf) => cf,
+    .None => return .{ valid: false, demands: [] },
+  }
+  seed := summary.seed_for_variant(ccfg, g.variant)
+  field_seed := summary.field_seed_for_variant(ccfg, g.variant)
+  sited := ownership.call_uniques_sited_with_field_seed_cached(
+    ccfg,
+    live_cache,
+    table,
+    b,
+    sem,
+    Dict.new(),
+    seed,
+    field_seed,
+    vt.make_variant_resolver_for_render(),
+  )
+  demands: Vector<SccDemand> = []
+  for s in sited {
+    if same_scc(scc_ids, g.callee, s.callee) {
+      case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
+        .Some(variant) => {
+          if variant.unique.len() == 0 or !in_set(updatable, s.callee) {
+            return .{ valid: false, demands: [] }
+          }
+          demands = .append(.{ site_local: s.site_local, variant })
+        },
+        .None => return .{ valid: false, demands: [] },
+      }
+    }
+  }
+  .{ valid: true, demands }
+}
+
+// Follow seeded recursive calls until the complete compatible variant group is
+// known. No clone is allocated here, so an unsupported edge rejects the group.
+fn close_group(
+  root: Group,
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
+  vt: summary.VariantSummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  scc_ids: Dict<Int, Int>,
+  updatable: Dict<Int, Bool>,
+  live_cache: ownership.LiveCache,
+) ClosedGroup {
+  pending: Vector<Group> = [root]
+  seen: Dict<String, Bool> = Dict.new()
+  members: Vector<Group> = []
+  i := 0
+  for i < pending.len() {
+    g := pending[i]
+    i = .inc()
+    key := g.variant.variant_canonical_string()
+    if !seen.has(key) {
+      seen[key] = true
+      demands := g.scc_demands_for(view, table, vt, b, sem, scc_ids, updatable, live_cache)
+      if !demands.valid {
+        return .{ valid: false, members: [] }
+      }
+      members = .append(g)
+      for d in demands.demands {
+        pending = .append(
+          Group.{
+            callee: d.variant.func,
+            variant: d.variant,
+            route_sites: [],
+            clone_id: 0 - 1,
+            clone_name: "",
+          },
+        )
+      }
+    }
+  }
+  .{ valid: true, members }
+}
+
+fn group_fits_cap(
+  members: Vector<Group>,
+  accepted: Dict<String, Group>,
+  counts: Dict<Int, Int>,
+  cap: Int,
+) Bool {
+  needed: Dict<Int, Int> = Dict.new()
+  for g in members {
+    if !accepted.has(g.variant.variant_canonical_string()) {
+      n := case needed.get(g.callee) {
+        .Some(x) => x,
+        .None => 0,
+      }
+      needed[g.callee] = n + 1
+    }
+  }
+  for callee, n in needed {
+    used := case counts.get(callee) {
+      .Some(x) => x,
+      .None => 0,
+    }
+    if used + n > cap {
+      return false
+    }
+  }
+  true
 }
 
 fn max_func_id(anf: AnfModule) Int {
@@ -371,8 +497,53 @@ pub fn specialize_module_with_cap_sem(
   groups0 := collect_groups(view, table, b, sem, vt, published, live_cache)
   t3 := date.now()
   spec_phase("begin updatable_filter")
-  capped := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), cap)
-  groups_up := capped.kept
+  scc_ids := scc_ids_for(view)
+  accepted: Dict<String, Group> = Dict.new()
+  accepted_order: Vector<String> = []
+  counts: Dict<Int, Int> = Dict.new()
+  fallback: Vector<variant_route.VariantRoute> = []
+  for root in rank_groups(groups0.filter(fn(g) { in_set(updatable, g.callee) })) {
+    closed := root.close_group(view, table, vt, b, sem, scc_ids, updatable, live_cache)
+    if !closed.valid {
+      fallback = .append(root.fallback_route(.Unsupported))
+    } else {
+      if !group_fits_cap(closed.members, accepted, counts, cap) {
+        fallback = .append(root.fallback_route(.OverCap))
+      } else {
+        // Reserve every missing member before clone allocation. An existing peer
+        // can serve another entry demand, and only its external routes grow.
+        for member in closed.members {
+          key := member.variant.variant_canonical_string()
+          case accepted.get(key) {
+            .Some(old) => if key == root.variant.variant_canonical_string() {
+              accepted[key] = Group.{
+                callee: old.callee,
+                variant: old.variant,
+                route_sites: old.route_sites.concat(root.route_sites),
+                clone_id: old.clone_id,
+                clone_name: old.clone_name,
+              }
+            },
+            .None => {
+              accepted[key] = member
+              accepted_order = .append(key)
+              n := case counts.get(member.callee) {
+                .Some(x) => x,
+                .None => 0,
+              }
+              counts[member.callee] = n + 1
+            },
+          }
+        }
+      }
+    }
+  }
+  groups_up := collect key in accepted_order {
+    case accepted.get(key) {
+      .Some(g) => g,
+      .None => error("variant_specialize: accepted group vanished"),
+    }
+  }
   t4 := date.now()
   if timed {
     eprintln(
@@ -383,7 +554,7 @@ pub fn specialize_module_with_cap_sem(
     return .{
       anf,
       seeds: variant_route.empty_seed_table(),
-      routes: overcap_routes(capped.overflow),
+      routes: fallback,
       summary: table,
       pruned_view: view,
       changed_funcs: Dict.new(),
@@ -471,7 +642,7 @@ pub fn specialize_module_with_cap_sem(
   spec_phase("begin recursive_routes survivors=${survivors.len()}")
   routes: Vector<variant_route.VariantRoute> = []
   for g in survivors {
-    rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone, live_cache)
+    rec := g.recursive_routes_for(view, table, vt, b, sem, scc_ids, variant_to_clone, live_cache)
     rec_keys: Vector<Int> = []
     for r in rec {
       site_to_clone[r.site_key] = r.target
@@ -490,7 +661,7 @@ pub fn specialize_module_with_cap_sem(
       },
     )
   }
-  for r in overcap_routes(capped.overflow) {
+  for r in fallback {
     routes = .append(r)
   }
 
@@ -537,11 +708,10 @@ pub fn specialize_module_with_cap_sem(
 
 type RecRoute = .{ site_key: Int, target: Int }
 
-// Recursive in-SCC routes for a surviving clone: analyze the generic callee under
-// the clone's owned seed (its body is a verbatim copy, so locals line up), and
-// for each call whose seeded argument uniqueness satisfies a variant that has a
-// surviving clone, retarget it — keyed in the CLONE's site-key space. For a single
-// recursive function this retargets the self-call to the clone itself.
+// Analyze the generic callee under the clone's owned seed (its body is a verbatim
+// copy, so locals line up). Every in-SCC call must target a reserved peer clone;
+// calls outside the SCC retain the existing opportunistic routing to any clone
+// already allocated for their selected variant.
 fn recursive_routes_for(
   g: Group,
   view: cfg.CfgView,
@@ -549,6 +719,7 @@ fn recursive_routes_for(
   vt: summary.VariantSummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  scc_ids: Dict<Int, Int>,
   variant_to_clone: Dict<String, Int>,
   live_cache: ownership.LiveCache,
 ) Vector<RecRoute> {
@@ -567,7 +738,7 @@ fn recursive_routes_for(
     Dict.new(),
     seed,
     field_seed,
-    ownership.generic_only_resolver,
+    vt.make_variant_resolver_for_render(),
   )
   out: Vector<RecRoute> = []
   for s in sited {
@@ -576,28 +747,29 @@ fn recursive_routes_for(
         .Some(target) => out = .append(
           RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
         ),
-        .None => {},
+        .None => if same_scc(scc_ids, g.callee, s.callee) {
+          error("variant_specialize: closed SCC peer clone vanished")
+        },
       },
-      .None => {},
+      .None => if same_scc(scc_ids, g.callee, s.callee) {
+        error("variant_specialize: closed SCC peer route vanished")
+      },
     }
   }
   out
 }
 
-// Overflow groups (beyond the per-callee cap) as inspection-only routes: no clone
-// is built, so callers stay on the generic function.
-fn overcap_routes(overflow: Vector<Group>) Vector<variant_route.VariantRoute> {
-  collect g in overflow {
-    variant_route.VariantRoute.{
-      generic_func: g.callee,
-      variant: g.variant,
-      clone_func: 0 - 1,
-      clone_name: "",
-      route_sites: g.route_sites,
-      recursive_routes: [],
-      fallback_reason: .Some(.OverCap),
-      proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
-    }
+// An inspection-only rejected root: no clone is built for this demand.
+fn fallback_route(g: Group, reason: variant_route.FallbackReason) variant_route.VariantRoute {
+  .{
+    generic_func: g.callee,
+    variant: g.variant,
+    clone_func: 0 - 1,
+    clone_name: "",
+    route_sites: g.route_sites,
+    recursive_routes: [],
+    fallback_reason: .Some(reason),
+    proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
   }
 }
 

@@ -191,6 +191,31 @@ fn find_func(anf: AnfModule, name: String) AnfFunctionDef {
   error("function not found: ${name}")
 }
 
+fn body_calls_func(e: AnfExpr, target: Int) Bool {
+  case e {
+    .Let(_, op, _, body) => {
+      found := case op {
+        .ACall(.AGlobalFunc(id), _) => id.id == target,
+        .AIf(_, then_e, else_e) => body_calls_func(then_e, target)
+          or body_calls_func(else_e, target),
+        .AMatch(_, arms) => arms.any(fn(a) { body_calls_func(a.body, target) }),
+        .ALoop(loop_body) => body_calls_func(loop_body, target),
+        .ADefer(defer_body) => body_calls_func(defer_body, target),
+        _ => false,
+      }
+      found or body_calls_func(body, target)
+    },
+    _ => false,
+  }
+}
+
+fn func_calls(anf: AnfModule, caller: Int, target: Int) Bool {
+  case anf.functions.find(fn(f) { f.func_id.id == caller }) {
+    .Some(f) => body_calls_func(f.body, target),
+    .None => false,
+  }
+}
+
 // The local bound to `flags` in `run`, found structurally rather than by a
 // magic local id: `flags` is the only vector indexed in the fixture
 // (`flags[i]`), so the base of the first array-index read identifies it,
@@ -465,6 +490,92 @@ fn synth_clone_def(recv: LocalId, idx: LocalId, val: LocalId, body: AnfExpr) Anf
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
+    .test(
+      "recursive SCC route closure clones both owned record carriers",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_mutual"))
+        even_route := st.spec.routes.find(fn(r) { r.fallback_reason == .None
+          and r.clone_name.contains("even$v") })
+        odd_route := st.spec.routes.find(fn(r) { r.fallback_reason == .None
+          and r.clone_name.contains("odd$v") })
+        try assert.ok(even_route.is_some(), "owned entry must clone even")
+        try assert.ok(odd_route.is_some(), "owned demand must also clone SCC peer odd")
+        even_clone := even_route.unwrap().clone_func
+        odd_clone := odd_route.unwrap().clone_func
+        try assert.ok(
+          func_calls(st.spec.anf, even_clone, odd_clone),
+          "even clone must call odd clone",
+        )
+        even_id := find_func(st.prime, "even").func_id.id
+        odd_id := find_func(st.prime, "odd").func_id.id
+        for route in st.spec.routes {
+          if route.fallback_reason == .None
+            and (route.generic_func == even_id or route.generic_func == odd_id) {
+            peer_id := if route.generic_func == even_id {
+              odd_id
+            } else {
+              even_id
+            }
+            peer_routes := st.spec.routes.filter(fn(r) { r.fallback_reason == .None
+              and r.generic_func == peer_id })
+            try assert.ok(
+              peer_routes.any(fn(r) { func_calls(st.spec.anf, route.clone_func, r.clone_func) }),
+              "each SCC clone must call a compatible owned peer clone",
+            )
+            try assert.ok(
+              !func_calls(st.spec.anf, route.clone_func, peer_id),
+              "no SCC clone may call the generic peer",
+            )
+          }
+        }
+        try assert.ok(
+          func_calls(st.spec.anf, find_func(st.prime, "go").func_id.id, even_clone),
+          "owned entry must route to even clone",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive SCC route closure leaves every member generic under cap pressure",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_mutual"))
+
+        // The closed cycle requires two compatible even variants and one odd
+        // variant. One slot per generic cannot admit that group.
+        capped := variant_specialize.specialize_module_with_cap_sem(
+          st.prime,
+          st.builtins,
+          st.sem,
+          1,
+        )
+        even_id := find_func(st.prime, "even").func_id.id
+        odd_id := find_func(st.prime, "odd").func_id.id
+        go_id := find_func(st.prime, "go").func_id.id
+        try assert.equal(capped.anf.functions.len(), st.prime.functions.len())
+        try assert.ok(func_calls(capped.anf, go_id, even_id), "entry must keep generic even")
+        try assert.ok(func_calls(capped.anf, even_id, odd_id), "even must keep generic odd")
+        try assert.ok(func_calls(capped.anf, odd_id, even_id), "odd must keep generic even")
+        try assert.ok(
+          capped.routes.any(fn(r) { r.generic_func == even_id
+            and r.fallback_reason == .Some(.OverCap) }),
+          "closed group must report cap overflow on the owned entry demand",
+        )
+        produced := mutable_produce.produce_mutable_decisions_seeded(
+          capped.anf,
+          st.builtins,
+          capped.seeds,
+        )
+        for _site, decisions in produced.table.by_site {
+          for decision in decisions {
+            try assert.ok(
+              decision.site.func.id != even_id and decision.site.func.id != odd_id,
+              "cap overflow must leave both generic carrier updates persistent",
+            )
+          }
+        }
+        .Ok({})
+      },
+    )
     .test(
       "classify_producer_prime recognizes a post-builder_region collect",
       fn() Result<Void, String> {
