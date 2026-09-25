@@ -35,6 +35,20 @@
 
 ---
 
+## Status (2026-09-25)
+
+Tasks 0–2 landed. Task 2 required a foundation the plan under-specified: owned
+specialization only proved whole-record aliasing, so a reconstructed carrier
+lost its vector-field lineage. That is now a separate prerequisite commit,
+`feat(ownership): track vector field lineage through record reconstruction`
+(`ReturnOwn.OwnedFromField`, `Summary.ret_exact_param`, a per-field flow
+lattice, and field-tier variant validation), which makes owned reconstruction
+routes preserve the vector field. `detect_aggregate_regions` and the census
+section sit on top of it. The scratch fixture and the real AWFY Permute both
+report a `dead_field` `vec_i64` region (carrier `p0`, vector `.f0`, scalar
+`.f1`). Remaining: Task 3 verifier and the Task 4–5 decomposed-ABI rewrite
+(the four `permute$mvagg` route/WAT tests are still tracked-red by design).
+
 ## File Map
 
 - Create `boot/compiler/codegen/mutvec_aggregate_region.tw`: detect record-carried vector lineage and describe decomposed ABI requirements without rewriting code.
@@ -61,25 +75,25 @@
 - Consumes: the existing call graph, ownership-published variants, `seed_for_variant`, `field_seed_for_variant`, and `variant_cap`.
 - Produces: a `SpecializeResult` in which a demanded owned route for one SCC member either has compatible owned clones and recursive routes for every member, or the whole SCC demand remains generic.
 
-- [ ] **Step 1: Add a mutually recursive carrier fixture and failing route test**
+- [x] **Step 1: Add a mutually recursive carrier fixture and failing route test**
 
 Create two functions that alternate while threading `State.{ values: Vector<Int>, count: Int }`. Assert that an owned entry demand routes both functions to owned clones and that every in-SCC call targets the corresponding clone. Also add a cap-pressure case and assert that it leaves the entire SCC generic rather than cloning only a prefix.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run `target/twk test --filter "recursive SCC route closure"`.
 
 Expected: the entry-demanded member is cloned, but a peer demanded only from inside the SCC remains generic.
 
-- [ ] **Step 3: Form and close demanded SCC clone groups**
+- [x] **Step 3: Form and close demanded SCC clone groups**
 
 Compute SCC membership before clone allocation. For each demanded owned variant, derive compatible owned seeds for all reachable members of the same SCC, reserve the complete clone group under the per-generic `variant_cap`, then create and route the group atomically. If any member lacks a compatible published variant, supported update, route, or cap slot, create none of the group.
 
-- [ ] **Step 4: Recompute recursive routes under each member's seed**
+- [x] **Step 4: Recompute recursive routes under each member's seed**
 
 Analyze each created clone with its whole-value and field seed, and require every in-SCC edge to resolve to the peer clone belonging to the same closed group. Record all new clones and rewritten callers in `changed_funcs` so downstream ownership production rebuilds their CFG facts.
 
-- [ ] **Step 5: Run specialization and existing MutVec tests**
+- [x] **Step 5: Run specialization and existing MutVec tests**
 
 ```bash
 target/twk test --filter "recursive SCC route closure"
@@ -89,7 +103,7 @@ target/twk test --filter "mutvec call"
 
 Expected: mutually recursive owned routes are all-or-nothing, self-recursive behavior is unchanged, and cap overflow produces persistent code.
 
-- [ ] **Step 6: Commit the prerequisite**
+- [x] **Step 6: Commit the prerequisite**
 
 ```bash
 git add boot/compiler/codegen/variant_specialize.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_mutual.tw boot/tests/suites/mutvec_call_suite.tw
@@ -107,7 +121,7 @@ git commit -m "feat(variants): close owned routes across recursive SCCs"
 - Consumes: existing `mutvec_call_stage`, `compile_fixture_wat`, `wat_func_body`, and `count_op_calls` test helpers.
 - Produces: stable positive fixtures whose carrier is `State.{ values: Vector<Int>, count: Int }`; the scratch fixture returns only `count`, while the escape fixture returns `State` and observes `values`.
 
-- [ ] **Step 1: Add the scratch fixture using normal immutable Twinkle**
+- [x] **Step 1: Add the scratch fixture using normal immutable Twinkle**
 
 ```tw
 type State = .{ values: Vector<Int>, count: Int }
@@ -142,7 +156,7 @@ println(result.count.to_string())
 
 Use the same definitions in `recursive_record_escape.tw`, but return the whole `State` from a public `run` and read both `count` and `values[0]` at top level so `.PublishRecord` is observable. Add `recursive_record_field_escape.tw`, whose caller observes only the returned `values` projection, to pin `.PublishField` separately.
 
-- [ ] **Step 2: Add failing structural tests**
+- [x] **Step 2: Add failing structural tests**
 
 Add tests named:
 
@@ -155,7 +169,7 @@ Add tests named:
 
 The first test must inspect the S4 decision rather than grep source. The WAT tests must assert `mutvec_set_i64` is present in the private clone, `rt_arr__set` is absent from that clone, and freeze counts are zero/one respectively.
 
-- [ ] **Step 3: Run the tests and verify RED**
+- [x] **Step 3: Run the tests and verify RED**
 
 Run:
 
@@ -165,7 +179,7 @@ target/twk test --filter "recursive record"
 
 Expected: the fixtures compile and return the correct checksum, but the decision/WAT assertions fail because current S4 only recognizes a bare vector continuation.
 
-- [ ] **Step 4: Capture the current diagnostic baseline**
+- [x] **Step 4: Capture the current diagnostic baseline**
 
 Run:
 
@@ -175,7 +189,7 @@ target/twk ir boot/tests/fixtures/cfg/mutvec_call/recursive_record_scratch.tw --
 
 Record in the test comment that the current update reaches persistent `set_at__Int`/`rt_arr__set` and no aggregate MutVec region is reported.
 
-- [ ] **Step 5: Commit the red characterization**
+- [x] **Step 5: Commit the red characterization**
 
 ```bash
 git add boot/tests/fixtures/cfg/mutvec_call/recursive_record_*.tw boot/tests/suites/mutvec_call_suite.tw
@@ -225,17 +239,17 @@ pub fn detect_aggregate_regions(
 ) Vector<AggregateMutVecRegion>
 ```
 
-- [ ] **Step 1: Add detector unit tests before implementation**
+- [x] **Step 1: Add detector unit tests before implementation**
 
 Assert that the scratch fixture yields one region with the `values` field, `Int` family, `count` scalar field, recursive call sites, and `.DeadField` exit. Assert that the record-escape and field-escape fixtures yield `.PublishRecord` and `.PublishField` respectively. Assert that the mutually recursive fixture from Task 0 reports every in-SCC call in its closed recursive route set.
 
-- [ ] **Step 2: Run detector tests and verify RED**
+- [x] **Step 2: Run detector tests and verify RED**
 
 Run `target/twk test --filter "aggregate carrier detector"`.
 
 Expected: compile failure because `mutvec_aggregate_region` and its public API do not exist.
 
-- [ ] **Step 3: Implement sound-by-rejection lineage discovery**
+- [x] **Step 3: Implement sound-by-rejection lineage discovery**
 
 Walk only ownership-routed clones. Identify one record parameter whose projected vector field:
 
@@ -247,7 +261,7 @@ Walk only ownership-routed clones. Identify one record parameter whose projected
 
 Use ownership summary/field-path evidence for lineage and liveness. Syntax matching may locate candidate record operations, but it must not license mutation by itself. Detection may use pre-clone summaries only to find candidates; acceptance is deferred until Task 3 recomputes clone-local evidence under the routed owned seed.
 
-- [ ] **Step 4: Render decisions before enabling rewriting**
+- [x] **Step 4: Render decisions before enabling rewriting**
 
 Add a `mutvec aggregate regions:` census section with columns:
 
@@ -257,7 +271,7 @@ func clone carrier vector_field family scalars recursion exit would_use reason p
 
 At this task, `would_use` remains `false` and reason is `analysis-only`.
 
-- [ ] **Step 5: Run focused tests and inspect the real Permute report**
+- [x] **Step 5: Run focused tests and inspect the real Permute report**
 
 ```bash
 target/twk test --filter "aggregate carrier detector"
@@ -266,7 +280,7 @@ target/twk ir examples/performance/awfy/twinkle/main.tw --census --sites | rg -C
 
 Expected: the fixture and ordinary AWFY Permute are detected; generated WAT is unchanged.
 
-- [ ] **Step 6: Commit analysis-only detection**
+- [x] **Step 6: Commit analysis-only detection**
 
 ```bash
 git add boot/compiler/codegen/mutvec_aggregate_region.tw boot/compiler/codegen/mutvec_call_phase.tw boot/commands/ir.tw boot/compiler/census.tw boot/compiler/codegen/mutable_audit.tw boot/tests/suites/mutvec_call_suite.tw
