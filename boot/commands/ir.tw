@@ -13,6 +13,7 @@ use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutvec_aggregate_region
+use compiler.codegen.mutvec_aggregate_verify
 use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_specialize
@@ -184,7 +185,24 @@ fn aggregate_exit_name(e: mutvec_aggregate_region.AggregateMutVecExit) String {
   }
 }
 
-fn render_aggregate_region_row(r: mutvec_aggregate_region.AggregateMutVecRegion) String {
+fn aggregate_verdict_reason(v: mutvec_aggregate_verify.AggregateVerdict) String {
+  case v {
+    .Accept => "accept",
+    .Reject(reason) => case reason {
+      .CarrierAliasSurvives => "carrier-alias-survives",
+      .FieldAliasSurvives => "field-alias-survives",
+      .MixedFieldLineage => "mixed-field-lineage",
+      .RecursiveRouteMissing => "recursive-route-missing",
+      .CalleeRepublishes => "callee-republishes",
+      .ExitUnclassified => "exit-unclassified",
+      .ReprDisagree => "repr-disagree",
+      .UnsupportedScalarField => "unsupported-scalar-field",
+      .UnsupportedScalarArity => "unsupported-scalar-arity",
+    },
+  }
+}
+
+fn render_aggregate_region_row(r: mutvec_aggregate_region.AggregateMutVecRegion, reason: String) String {
   scalar_ids := collect s in r.scalar_fields {
     ".f${s.field.id}"
   }
@@ -195,7 +213,7 @@ fn render_aggregate_region_row(r: mutvec_aggregate_region.AggregateMutVecRegion)
   }
   "f${r.generic_func.id}\tf${r.clone_func.id}\tp${r.carrier_param}\t.f${r.vector_field.id}\t${r.family}\t${scalars}\t${r.recursive_calls.len()}\t${aggregate_exit_name(
     r.exit,
-  )}\tfalse\tanalysis-only\t${r.proof_id}\n"
+  )}\tfalse\t${reason}\t${r.proof_id}\n"
 }
 
 /// Render the MutVec region-audit table: one additive row per claimed
@@ -280,9 +298,10 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
       out = .concat("\n")
     }
 
-    // Recursive aggregate MutVec carriers (analysis-only): one row per detected
-    // record-carried vector lineage. `would_use` stays false until the decomposed
-    // ABI rewrite lands; the row documents the shape the verifier will judge.
+    // Recursive aggregate MutVec carriers: one row per detected record-carried
+    // vector lineage, joined with the verifier verdict. `would_use` stays false
+    // until the decomposed ABI rewrite lands; `reason` is `accept` for a region
+    // the gate would upgrade, else the exact rejection reason.
     agg := mutvec_aggregate_region.detect_aggregate_regions(spec, artifacts.builtins)
     if agg.len() > 0 {
       out = .concat("\nmutvec aggregate regions\n")
@@ -290,7 +309,8 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
         "func\tclone\tcarrier\tvector_field\tfamily\tscalars\trecursion\texit\twould_use\treason\tproof\n",
       )
       for r in agg {
-        out = .concat(render_aggregate_region_row(r))
+        verdict := mutvec_aggregate_verify.verify_aggregate_region(r, spec, artifacts.builtins)
+        out = .concat(render_aggregate_region_row(r, aggregate_verdict_reason(verdict)))
       }
     }
 
