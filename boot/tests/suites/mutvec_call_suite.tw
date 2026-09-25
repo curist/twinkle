@@ -37,6 +37,7 @@ use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutable_produce
+use compiler.codegen.mutvec_aggregate_region
 use compiler.codegen.mutvec_call_phase
 use compiler.codegen.mutvec_call_region
 use compiler.codegen.mutvec_call_verify
@@ -521,6 +522,57 @@ fn synth_clone_def(recv: LocalId, idx: LocalId, val: LocalId, body: AnfExpr) Anf
 pub fn suite() runner.Suite {
   runner
     .suite("s4 mutvec harness")
+    .test(
+      "aggregate carrier detector finds scratch field lineage",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        r := regions[0]
+        try assert.equal(r.vector_field.id, 0)
+        try assert.equal(r.family, "vec_i64")
+        try assert.equal(r.carrier_param, 0)
+        try assert.equal(r.scalar_fields.len(), 1)
+        try assert.equal(r.scalar_fields[0].field.id, 1)
+        try assert.ok(r.scalar_fields[0].mono == .Int, "count remains scalar Int")
+        try assert.equal(r.recursive_calls.len(), 2)
+        try assert.ok(r.exit == .DeadField, "scratch only observes count")
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate carrier detector distinguishes record and field publication",
+      fn() Result<Void, String> {
+        record := mutvec_call_stage(fixture_path("recursive_record_escape"))
+        rr := mutvec_aggregate_region.detect_aggregate_regions(record.spec, record.builtins)
+        try assert.equal(rr.len(), 1)
+        try assert.ok(rr[0].exit == .PublishRecord, "returned State publishes carrier")
+        field := mutvec_call_stage(fixture_path("recursive_record_field_escape"))
+        fr := mutvec_aggregate_region.detect_aggregate_regions(field.spec, field.builtins)
+        try assert.equal(fr.len(), 1)
+        try assert.ok(fr[0].exit == .PublishField, "returned values publishes vector field")
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate carrier detector covers every mutually recursive routed call",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_mutual"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        try assert.ok(regions.len() > 0, "closed owned SCC must be detected")
+        for route in st.spec.routes {
+          for sk in route.recursive_routes {
+            try assert.ok(
+              regions.any(fn(r) { r.recursive_calls.any(fn(l) {
+                vid.site_key(r.clone_func.id, l.id) == sk
+              }) }),
+              "every in-SCC route must appear under its caller clone",
+            )
+          }
+        }
+        .Ok({})
+      },
+    )
     .test(
       "recursive SCC route closure clones both owned record carriers",
       fn() Result<Void, String> {

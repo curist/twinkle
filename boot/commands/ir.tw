@@ -12,6 +12,7 @@ use compiler.codegen.codegen
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
+use compiler.codegen.mutvec_aggregate_region
 use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_specialize
@@ -175,6 +176,28 @@ fn mutvec_proof_present(rs: Vector<mutvec_region.MutVecRegion>, proof_id: String
   false
 }
 
+fn aggregate_exit_name(e: mutvec_aggregate_region.AggregateMutVecExit) String {
+  case e {
+    .DeadField => "dead_field",
+    .PublishRecord => "publish_record",
+    .PublishField => "publish_field",
+  }
+}
+
+fn render_aggregate_region_row(r: mutvec_aggregate_region.AggregateMutVecRegion) String {
+  scalar_ids := collect s in r.scalar_fields {
+    ".f${s.field.id}"
+  }
+  scalars := if scalar_ids.len() > 0 {
+    scalar_ids.join(",")
+  } else {
+    "-"
+  }
+  "f${r.generic_func.id}\tf${r.clone_func.id}\tp${r.carrier_param}\t.f${r.vector_field.id}\t${r.family}\t${scalars}\t${r.recursive_calls.len()}\t${aggregate_exit_name(
+    r.exit,
+  )}\tfalse\tanalysis-only\t${r.proof_id}\n"
+}
+
 /// Render the MutVec region-audit table: one additive row per claimed
 /// `MutVec(I64)` region, sourced from `mutvec_region.detect_regions`. `consumed`
 /// reports whether `rewrite_module` ACTUALLY lowered the region — a consumed
@@ -255,6 +278,20 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
       out = .concat("\nvariant routes\n")
       out = .concat(routes_txt)
       out = .concat("\n")
+    }
+
+    // Recursive aggregate MutVec carriers (analysis-only): one row per detected
+    // record-carried vector lineage. `would_use` stays false until the decomposed
+    // ABI rewrite lands; the row documents the shape the verifier will judge.
+    agg := mutvec_aggregate_region.detect_aggregate_regions(spec, artifacts.builtins)
+    if agg.len() > 0 {
+      out = .concat("\nmutvec aggregate regions\n")
+      out = .concat(
+        "func\tclone\tcarrier\tvector_field\tfamily\tscalars\trecursion\texit\twould_use\treason\tproof\n",
+      )
+      for r in agg {
+        out = .concat(render_aggregate_region_row(r))
+      }
     }
 
     // Phase 8H field-backed producer rows (accept/reject reasons for each quartet),

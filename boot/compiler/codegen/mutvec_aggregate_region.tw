@@ -1,0 +1,410 @@
+//! Analysis-only candidates for a vector threaded through a recursive record.
+//! These pre-clone summary/seed observations are NOT a mutation certificate.
+//! Clone-local ownership recomputation must precede any future ABI rewrite.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.variant_route
+use compiler.codegen.variant_specialize
+use compiler.core_ir.{FieldId, FuncId, LocalId}
+use compiler.elem_family
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.variant_id as vid
+
+pub type AggregateMutVecExit = { DeadField, PublishRecord, PublishField }
+
+pub type AggregateScalarField = .{ field: FieldId, mono: MonoType }
+
+pub type AggregateMutVecRegion = .{
+  caller_func: FuncId,
+  generic_func: FuncId,
+  clone_func: FuncId,
+  carrier_param: Int,
+  carrier_type: TypeId,
+  vector_field: FieldId,
+  family: String,
+  scalar_fields: Vector<AggregateScalarField>,
+  entry_call: LocalId,
+  recursive_calls: Vector<LocalId>,
+  exit: AggregateMutVecExit,
+  proof_id: String,
+}
+
+// One candidate region per accepted owned reconstruction clone. Detection is
+// sound-by-rejection at Task 3: a region here only NAMES a shape (which param
+// carries the record, which field is the private vector, how it recurses, how
+// the entry caller observes the result). It licenses no mutation on its own.
+pub fn detect_aggregate_regions(
+  spec: variant_specialize.SpecializeResult,
+  _builtins: BuiltinRegistry,
+) Vector<AggregateMutVecRegion> {
+  out: Vector<AggregateMutVecRegion> = []
+  for r in spec.routes {
+    case r.fallback_reason {
+      .Some(_) => continue,
+      .None => {},
+    }
+    if r.clone_func < 0 {
+      continue
+    }
+    clone := case find_func(spec.anf, r.clone_func) {
+      .Some(f) => f,
+      .None => continue,
+    }
+    case build_region(spec, clone, r) {
+      .Some(region) => out = .append(region),
+      .None => {},
+    }
+  }
+  out
+}
+
+fn build_region(
+  spec: variant_specialize.SpecializeResult,
+  clone: AnfFunctionDef,
+  r: variant_route.VariantRoute,
+) AggregateMutVecRegion? {
+  owned := owned_params(r.variant)
+  for k in 0..clone.params.len() {
+    if !int_has(owned, k) {
+      continue
+    }
+    tid := case clone.params[k].ty {
+      .Named(t, _) => t,
+      _ => continue,
+    }
+    field_monos := collect_field_monos(clone, tid)
+    vec := single_vector_field(field_monos)
+    case vec {
+      .Some(vf) => return .Some(assemble_region(spec, clone, r, k, tid, vf, field_monos)),
+      .None => {},
+    }
+  }
+  .None
+}
+
+type VecField = .{ field: Int, family: String }
+
+// Exactly one collection field may claim the private handle. Zero or several
+// leaves the carrier persistent (the plan's single-vector constraint).
+fn single_vector_field(field_monos: Dict<Int, MonoType>) VecField? {
+  found: VecField? = .None
+  for field, mono in field_monos {
+    case elem_family.elem_family_suffix(mono) {
+      .Some(_) => case elem_family.elem_family_of(mono) {
+        .Some(fam) => case found {
+          .Some(_) => return .None,
+          .None => found = .Some(VecField.{ field, family: fam.mono_key }),
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  found
+}
+
+fn assemble_region(
+  spec: variant_specialize.SpecializeResult,
+  clone: AnfFunctionDef,
+  r: variant_route.VariantRoute,
+  carrier_param: Int,
+  tid: TypeId,
+  vec: VecField,
+  field_monos: Dict<Int, MonoType>,
+) AggregateMutVecRegion {
+  scalars: Vector<AggregateScalarField> = []
+  for field in sorted_int_keys(field_monos) {
+    if field == vec.field {
+      continue
+    }
+    case field_monos.get(field) {
+      .Some(mono) => scalars = .append(AggregateScalarField.{ field: .{ id: field }, mono }),
+      .None => {},
+    }
+  }
+
+  rec_set := int_set(r.recursive_routes)
+  recursive_calls: Vector<LocalId> = []
+  for e in collect_ops(clone.body) {
+    if is_call(e.op) and int_has(rec_set, vid.site_key(r.clone_func, e.local)) {
+      recursive_calls = .append(LocalId.{ id: e.local })
+    }
+  }
+
+  entry := find_entry(spec.anf, r.route_sites)
+  case entry {
+    .Some(en) => .{
+      caller_func: en.func,
+      generic_func: .{ id: r.generic_func },
+      clone_func: .{ id: r.clone_func },
+      carrier_param,
+      carrier_type: tid,
+      vector_field: .{ id: vec.field },
+      family: vec.family,
+      scalar_fields: scalars,
+      entry_call: en.local,
+      recursive_calls,
+      exit: classify_exit(en.caller, en.local, vec.field),
+      proof_id: r.proof_debug_id,
+    },
+    // A non-entry SCC member is reached only through a peer clone; its result is
+    // threaded onward, never published here, so it is dead at this level.
+    .None => .{
+      caller_func: .{ id: 0 - 1 },
+      generic_func: .{ id: r.generic_func },
+      clone_func: .{ id: r.clone_func },
+      carrier_param,
+      carrier_type: tid,
+      vector_field: .{ id: vec.field },
+      family: vec.family,
+      scalar_fields: scalars,
+      entry_call: .{ id: 0 - 1 },
+      recursive_calls,
+      exit: .DeadField,
+      proof_id: r.proof_debug_id,
+    },
+  }
+}
+
+type EntrySite = .{ func: FuncId, caller: AnfFunctionDef, local: LocalId }
+
+// The routed caller sites live in `site_key(caller_func, call_result_local)`
+// space. Recover the concrete (function, local) by re-pairing every call binder.
+fn find_entry(anf: AnfModule, route_sites: Vector<Int>) EntrySite? {
+  set := int_set(route_sites)
+  for f in anf.functions {
+    for e in collect_ops(f.body) {
+      if is_call(e.op) and int_has(set, vid.site_key(f.func_id.id, e.local)) {
+        return .Some(EntrySite.{ func: f.func_id, caller: f, local: .{ id: e.local } })
+      }
+    }
+  }
+  .None
+}
+
+// How the entry caller observes the returned carrier:
+//   - the whole record reaches a result position      -> PublishRecord
+//   - only its vector projection reaches a result      -> PublishField
+//   - neither (scalar reads only, record dies)         -> DeadField
+fn classify_exit(caller: AnfFunctionDef, entry_local: LocalId, vector_field: Int) AggregateMutVecExit {
+  carrier := int_set([entry_local.id])
+  projections: Vector<Int> = []
+  for e in collect_ops(caller.body) {
+    case e.op {
+      .AInit(a) => case atom_local(a) {
+        .Some(id) => if int_has(carrier, id) {
+          carrier[e.local] = true
+        },
+        .None => {},
+      },
+      .ARecordGet(base, field, _) => case atom_local(base) {
+        .Some(id) => if int_has(carrier, id) and field.id == vector_field {
+          projections = .append(e.local)
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  record_returned := false
+  field_returned := false
+  for a in result_atoms(caller.body) {
+    case atom_local(a) {
+      .Some(id) => {
+        if int_has(carrier, id) {
+          record_returned = true
+        }
+        if int_contains(projections, id) {
+          field_returned = true
+        }
+      },
+      .None => {},
+    }
+  }
+  cond {
+    record_returned => .PublishRecord,
+    field_returned => .PublishField,
+    _ => .DeadField,
+  }
+}
+
+// ── ANF traversal helpers ───────────────────────────────────────────
+type OpEntry = .{ local: Int, op: AnfOp }
+
+fn collect_ops(e: AnfExpr) Vector<OpEntry> {
+  case e {
+    .Let(l, op, _, body) => {
+      out: Vector<OpEntry> = [OpEntry.{ local: l.id, op }]
+      out = .concat(ops_in_op(op))
+      out.concat(collect_ops(body))
+    },
+    _ => [],
+  }
+}
+
+fn ops_in_op(op: AnfOp) Vector<OpEntry> {
+  case op {
+    .AIf(_, t, e) => collect_ops(t).concat(collect_ops(e)),
+    .AMatch(_, arms) => {
+      out: Vector<OpEntry> = []
+      for arm in arms {
+        out = .concat(collect_ops(arm.body))
+      }
+      out
+    },
+    .ALoop(body) => collect_ops(body),
+    .ADefer(body) => collect_ops(body),
+    _ => [],
+  }
+}
+
+// Atoms in a result position: the tail atom, and every explicit Return/Break,
+// recursing into nested control so a branch-local return is not missed.
+fn result_atoms(e: AnfExpr) Vector<Atom> {
+  case e {
+    .Let(_, op, _, body) => result_atoms_in_op(op).concat(result_atoms(body)),
+    .Atom(a) => [a],
+    .Return(ma) => case ma {
+      .Some(a) => [a],
+      .None => [],
+    },
+    .Break(ma) => case ma {
+      .Some(a) => [a],
+      .None => [],
+    },
+    .Continue => [],
+  }
+}
+
+fn result_atoms_in_op(op: AnfOp) Vector<Atom> {
+  case op {
+    .AIf(_, t, e) => result_atoms(t).concat(result_atoms(e)),
+    .AMatch(_, arms) => {
+      out: Vector<Atom> = []
+      for arm in arms {
+        out = .concat(result_atoms(arm.body))
+      }
+      out
+    },
+    .ALoop(body) => result_atoms(body),
+    .ADefer(body) => result_atoms(body),
+    _ => [],
+  }
+}
+
+fn collect_field_monos(f: AnfFunctionDef, tid: TypeId) Dict<Int, MonoType> {
+  out: Dict<Int, MonoType> = Dict.new()
+  for e in collect_ops(f.body) {
+    case e.op {
+      .ARecordGet(_, field, t) => if t.id == tid.id {
+        case f.op_result_mono.get(e.local) {
+          .Some(m) => out[field.id] = m,
+          .None => {},
+        }
+      },
+      .ARecordUpdate(_, field, value, _, t) => if t.id == tid.id {
+        case atom_mono(f, value) {
+          .Some(m) => out[field.id] = m,
+          .None => {},
+        }
+      },
+      .ARecord(t, fields) => if t.id == tid.id {
+        for fa in fields {
+          case atom_mono(f, fa.value) {
+            .Some(m) => out[fa.field.id] = m,
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+fn atom_mono(f: AnfFunctionDef, a: Atom) MonoType? {
+  case a {
+    .ALocal(l) => case f.op_result_mono.get(l.id) {
+      .Some(m) => .Some(m),
+      .None => param_mono(f, l.id),
+    },
+    .ALitInt(_) => .Some(.Int),
+    .ALitFloat(_) => .Some(.Float),
+    .ALitBool(_) => .Some(.Bool),
+    _ => .None,
+  }
+}
+
+fn param_mono(f: AnfFunctionDef, id: Int) MonoType? {
+  for p in f.params {
+    if p.local.id == id {
+      return .Some(p.ty)
+    }
+  }
+  .None
+}
+
+fn find_func(anf: AnfModule, id: Int) AnfFunctionDef? {
+  for f in anf.functions {
+    if f.func_id.id == id {
+      return .Some(f)
+    }
+  }
+  .None
+}
+
+fn is_call(op: AnfOp) Bool {
+  case op {
+    .ACall(_, _) => true,
+    _ => false,
+  }
+}
+
+fn atom_local(a: Atom) Int? {
+  case a {
+    .ALocal(l) => .Some(l.id),
+    _ => .None,
+  }
+}
+
+fn owned_params(v: vid.VariantId) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for req in v.unique {
+    out[req.param] = true
+  }
+  out
+}
+
+// ── small int-set / int-key helpers ─────────────────────────────────
+fn int_set(xs: Vector<Int>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for x in xs {
+    out[x] = true
+  }
+  out
+}
+
+fn int_has(m: Dict<Int, Bool>, k: Int) Bool {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn int_contains(xs: Vector<Int>, k: Int) Bool {
+  for x in xs {
+    if x == k {
+      return true
+    }
+  }
+  false
+}
+
+fn sorted_int_keys(m: Dict<Int, MonoType>) Vector<Int> {
+  keys: Vector<Int> = []
+  for k, _v in m {
+    keys = .append(k)
+  }
+  keys.sort_by(fn(a, b) { a.compare(b) })
+}
