@@ -1,0 +1,597 @@
+//! Aggregate MutVec ABI orchestration (recursive carrier → flat handle).
+//!
+//! Given an accepted `AggregateMutVecRegion` (a record carrier whose vector field
+//! is threaded through a recursion, e.g. `permute(State{values,count})`), this
+//! builds the decomposed private clone graph and rewrites the entry caller:
+//!   1. `decompose_clone` (draft, no retarget) exposes the flat `vhandle` param
+//!      and reveals which helper it is passed to (`swap`);
+//!   2. `mutvec_propagate.flatten_helper` flattens that helper and everything it
+//!      threads the handle into (`swap → set_at`) to `$mv` siblings, verifying
+//!      each callee body — a least fixpoint over the helper DAG;
+//!   3. `decompose_clone` (final) rebuilds `permute$mvagg` retargeting the helper
+//!      call to its flat sibling;
+//!   4. the entry caller (`run`) thaws its `collect` producer to a flat handle
+//!      (reusing `mutvec_region`'s builder lowering), retargets the call to
+//!      `permute$mvagg`, and applies the freeze boundary: none for a dead field,
+//!      exactly one `mutvec_freeze` + record reconstruction for an observed exit.
+//!
+//! Pure orchestration (no dependency on `mutvec_call_phase`'s decision types, to
+//! stay out of its import cycle): returns the produced sibling defs, the caller
+//! rewrite, and the per-sibling handle/return ABI facts for the backend repr.
+//! Runs unconditionally; a shape it cannot prove flat yields `ok=false` and the
+//! carrier stays persistent (byte-identical for source with no such shape).
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom}
+use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
+use compiler.builder_region_detect.{atom_is_local}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_aggregate_region.{AggregateMutVecExit, AggregateMutVecRegion}
+use compiler.codegen.mutvec_aggregate_rewrite
+use compiler.codegen.mutvec_propagate
+use compiler.codegen.mutvec_propagate.{PropAcc}
+use compiler.codegen.mutvec_region
+use compiler.codegen.mutvec_region.{MutVecRegion}
+use compiler.codegen.variant_specialize.{SpecializeResult}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
+use lib.source.span
+
+// ABI fact for one produced flat clone: its receiver handle param and whether it
+// returns the MutVec handle (helpers) or a scalar (`permute$mvagg`).
+pub type HandleUpgrade = .{ clone_func: Int, handle_param: Int, return_mutvec: Bool, fam: ElemRepr }
+
+pub type AggBuildResult = .{
+  siblings: Vector<AnfFunctionDef>,
+  upgrades: Vector<HandleUpgrade>,
+  caller_func: FuncId,
+  caller_rewrite: AnfFunctionDef,
+  ok: Bool,
+  next_id: Int,
+}
+
+fn build_fail(next_id: Int) AggBuildResult {
+  .{
+    siblings: [],
+    upgrades: [],
+    caller_func: .{ id: 0 - 1 },
+    caller_rewrite: dummy_func(),
+    ok: false,
+    next_id,
+  }
+}
+
+fn dummy_func() AnfFunctionDef {
+  .{
+    func_id: .{ id: 0 - 1 },
+    name: "",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body: .Return(.None),
+    return_ty: .Void,
+  }
+}
+
+// Build the decomposed clone graph + caller rewrite for one accepted region.
+// `next_id` is the first free function id; the result reports the next free id
+// after the produced siblings. `ok=false` leaves everything persistent.
+pub fn build_aggregate(
+  region: AggregateMutVecRegion,
+  spec: SpecializeResult,
+  module: AnfModule,
+  b: BuiltinRegistry,
+  next_id: Int,
+) AggBuildResult {
+  permute_clone := case module.functions.find(fn(f) { f.func_id.id == region.clone_func.id }) {
+    .Some(f) => f,
+    .None => return build_fail(next_id),
+  }
+  caller := case module.functions.find(fn(f) { f.func_id.id == region.caller_func.id }) {
+    .Some(f) => f,
+    .None => return build_fail(next_id),
+  }
+
+  // The entry caller's producer must be a thaw-able collect/make builder; if not,
+  // the handle cannot become flat at the caller and the whole region bails.
+  handle_info := case entry_handle(caller, region, b) {
+    .Some(h) => h,
+    .None => return build_fail(next_id),
+  }
+
+  // (1) Draft decompose to expose the vhandle param + the helper call it feeds.
+  draft_id := 999999999
+  draft := case mutvec_aggregate_rewrite.decompose_clone(
+    permute_clone,
+    region,
+    draft_id,
+    Dict.new(),
+  ) {
+    .Some(d) => d,
+    .None => return build_fail(next_id),
+  }
+  vhandle := draft.params[region.carrier_param].local.id
+  edges := helper_edges(draft.body, vhandle_lineage(draft.body, vhandle), draft_id)
+
+  // (2) Flatten every helper the vhandle is threaded into (least fixpoint).
+  acc: PropAcc = .{
+    memo: Dict.new(),
+    next_id,
+    retarget: Dict.new(),
+    siblings: [],
+    ok: true,
+    reason: .None,
+  }
+  for e in edges {
+    callee := case spec.anf.functions.find(fn(f) { f.func_id.id == e.callee }) {
+      .Some(f) => f,
+      .None => return build_fail(next_id),
+    }
+    acc = mutvec_propagate.flatten_helper(callee, callee.params[e.arg_pos].local.id, spec, b, acc)
+    if !acc.ok {
+      return build_fail(next_id)
+    }
+  }
+
+  // (3) Final decompose retargeting the helper call to its flat sibling.
+  mvagg_id := acc.next_id
+  final_mvagg := case mutvec_aggregate_rewrite.decompose_clone(
+    permute_clone,
+    region,
+    mvagg_id,
+    acc.retarget,
+  ) {
+    .Some(m) => m,
+    .None => return build_fail(next_id),
+  }
+  fam := case elem_repr_of_mono_key(region.family) {
+    .Some(f) => f,
+    .None => return build_fail(next_id),
+  }
+
+  // (4) Caller rewrite: thaw producer + retarget call + freeze boundary.
+  caller_rw := rewrite_caller(caller, region, mvagg_id, handle_info, b)
+
+  siblings: Vector<AnfFunctionDef> = []
+  upgrades: Vector<HandleUpgrade> = []
+  for s in acc.siblings {
+    siblings = .append(s.def)
+    upgrades = .append(
+      HandleUpgrade.{
+        clone_func: s.def.func_id.id,
+        handle_param: s.handle_param,
+        return_mutvec: true,
+        fam: s.fam,
+      },
+    )
+  }
+  siblings = .append(final_mvagg)
+  upgrades = .append(
+    HandleUpgrade.{ clone_func: mvagg_id, handle_param: vhandle, return_mutvec: false, fam },
+  )
+
+  .{
+    siblings,
+    upgrades,
+    caller_func: region.caller_func,
+    caller_rewrite: caller_rw,
+    ok: true,
+    next_id: mvagg_id + 1,
+  }
+}
+
+// ── entry caller producer/record discovery ──────────────────────────────────
+type EntryHandle = .{
+  rec_local: Int, // the ARecord(carrier) binder feeding the entry call
+  handle_local: Int, // the vector-field atom local (the collect producer result)
+  scalar_atom: Atom, // the scalar-field atom
+  tail_args: Vector<Atom>, // the entry call args after the carrier (e.g. n)
+  suffix: String, // element family suffix, e.g. "_i64"
+}
+
+fn entry_handle(caller: AnfFunctionDef, region: AggregateMutVecRegion, b: BuiltinRegistry) EntryHandle? {
+  defs := mutvec_region.collect_defs(caller.body, Dict.new())
+  call_op := case defs.get(region.entry_call.id) {
+    .Some(op) => op,
+    .None => return .None,
+  }
+  parts := case call_op {
+    .ACall(_, args) => if args.len() >= 1 {
+      case args[0] {
+        .ALocal(rec) => CallParts.{ rec_local: rec.id, tail: tail_of(args) },
+        _ => return .None,
+      }
+    } else {
+      return .None
+    },
+    _ => return .None,
+  }
+  rec_op := case defs.get(parts.rec_local) {
+    .Some(op) => op,
+    .None => return .None,
+  }
+  case rec_op {
+    .ARecord(tid, fields) => if tid.id == region.carrier_type.id {
+      hv := try field_atom(fields, region.vector_field.id)
+      sf := region.scalar_fields[0].field.id
+      sv := try field_atom(fields, sf)
+      hl := case hv {
+        .ALocal(l) => l.id,
+        _ => return .None,
+      }
+
+      // Producer must be a thaw-able collect/make builder.
+      if !producer_thawable(hl, defs, b) {
+        return .None
+      }
+      suffix := family_to_suffix(region.family)
+      .Some(
+        EntryHandle.{
+          rec_local: parts.rec_local,
+          handle_local: hl,
+          scalar_atom: sv,
+          tail_args: parts.tail,
+          suffix,
+        },
+      )
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+type CallParts = .{ rec_local: Int, tail: Vector<Atom> }
+
+fn tail_of(args: Vector<Atom>) Vector<Atom> {
+  out: Vector<Atom> = []
+  for a, i in args {
+    if i >= 1 {
+      out = .append(a)
+    }
+  }
+  out
+}
+
+fn field_atom(fields: Vector<FieldAtom>, fid: Int) Atom? {
+  for fa in fields {
+    if fa.field.id == fid {
+      return .Some(fa.value)
+    }
+  }
+  .None
+}
+
+fn producer_thawable(h: Int, defs: Dict<Int, AnfOp>, b: BuiltinRegistry) Bool {
+  freeze_id := builtins.id(b, "vector$builder_freeze").id
+  make_id := builtins.id(b, "vector$make").id
+  is_prod := fn(op: AnfOp) Bool {
+    case op {
+      .ACall(.AGlobalFunc(g), _) => g.id == freeze_id or g.id == make_id,
+      _ => false,
+    }
+  }
+  case defs.get(h) {
+    // The record field uses the producer result directly (opt inlined the alias).
+    .Some(.ACall(.AGlobalFunc(g), _)) => g.id == freeze_id or g.id == make_id,
+    // Or via an `init` alias of it.
+    .Some(.AInit(.ALocal(src))) => case defs.get(src.id) {
+      .Some(op) => is_prod(op),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// ── vhandle lineage + helper edges in the decomposed draft ───────────────────
+fn vhandle_lineage(body: AnfExpr, vhandle: Int) Dict<Int, Bool> {
+  seed: Dict<Int, Bool> = Dict.new()
+  seed[vhandle] = true
+  changed := true
+  for changed {
+    changed = false
+    r := lineage_pass(body, seed, false)
+    seed = r.set
+    changed = r.changed
+  }
+  seed
+}
+
+type LinPass = .{ set: Dict<Int, Bool>, changed: Bool }
+
+fn lineage_pass(e: AnfExpr, set: Dict<Int, Bool>, changed: Bool) LinPass {
+  case e {
+    .Let(binder, op, _, rest) => {
+      st := lineage_op(binder.id, op, set, changed)
+      lineage_pass(rest, st.set, st.changed)
+    },
+    _ => .{ set, changed },
+  }
+}
+
+fn lineage_op(binder: Int, op: AnfOp, set: Dict<Int, Bool>, changed: Bool) LinPass {
+  case op {
+    .AInit(.ALocal(src)) => if set.has(src.id) and !set.has(binder) {
+      set[binder] = true
+      .{ set, changed: true }
+    } else {
+      .{ set, changed }
+    },
+    .AAssign(target, .ALocal(src)) => if set.has(src.id) and !set.has(target.id) {
+      set[target.id] = true
+      .{ set, changed: true }
+    } else {
+      .{ set, changed }
+    },
+    .AIf(_, t, e) => {
+      a := lineage_pass(t, set, changed)
+      lineage_pass(e, a.set, a.changed)
+    },
+    .AMatch(_, arms) => {
+      cur: LinPass = .{ set, changed }
+      for arm in arms {
+        cur = lineage_pass(arm.body, cur.set, cur.changed)
+      }
+      cur
+    },
+    .ALoop(inner) => lineage_pass(inner, set, changed),
+    .ADefer(inner) => lineage_pass(inner, set, changed),
+    _ => .{ set, changed },
+  }
+}
+
+fn helper_edges(body: AnfExpr, lineage: Dict<Int, Bool>, skip_id: Int) Vector<
+  mutvec_propagate.FlatCallEdge,
+> {
+  seen: Dict<Int, Bool> = Dict.new()
+  collect_edges(body, lineage, skip_id, seen, [])
+}
+
+fn collect_edges(
+  e: AnfExpr,
+  lineage: Dict<Int, Bool>,
+  skip_id: Int,
+  seen: Dict<Int, Bool>,
+  acc: Vector<mutvec_propagate.FlatCallEdge>,
+) Vector<mutvec_propagate.FlatCallEdge> {
+  case e {
+    .Let(binder, op, _, rest) => {
+      acc2 := edges_in_op(binder.id, op, lineage, skip_id, seen, acc)
+      collect_edges(rest, lineage, skip_id, seen, acc2)
+    },
+    _ => acc,
+  }
+}
+
+fn edges_in_op(
+  binder: Int,
+  op: AnfOp,
+  lineage: Dict<Int, Bool>,
+  skip_id: Int,
+  seen: Dict<Int, Bool>,
+  acc: Vector<mutvec_propagate.FlatCallEdge>,
+) Vector<mutvec_propagate.FlatCallEdge> {
+  case op {
+    .ACall(.AGlobalFunc(g), args) => if g.id != skip_id and !seen.has(g.id) {
+      pos := lineage_arg_index(args, lineage)
+      case pos {
+        .Some(p) => {
+          seen[g.id] = true
+          acc.append(mutvec_propagate.FlatCallEdge.{ call_local: binder, callee: g.id, arg_pos: p })
+        },
+        .None => acc,
+      }
+    } else {
+      acc
+    },
+    .AIf(_, t, e) => {
+      a := collect_edges(t, lineage, skip_id, seen, acc)
+      collect_edges(e, lineage, skip_id, seen, a)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+      for arm in arms {
+        cur = collect_edges(arm.body, lineage, skip_id, seen, cur)
+      }
+      cur
+    },
+    .ALoop(inner) => collect_edges(inner, lineage, skip_id, seen, acc),
+    .ADefer(inner) => collect_edges(inner, lineage, skip_id, seen, acc),
+    _ => acc,
+  }
+}
+
+fn lineage_arg_index(args: Vector<Atom>, lineage: Dict<Int, Bool>) Int? {
+  for a, i in args {
+    case a {
+      .ALocal(l) => if lineage.has(l.id) {
+        return .Some(i)
+      },
+      _ => {},
+    }
+  }
+  .None
+}
+
+// ── caller rewrite ───────────────────────────────────────────────────────────
+type CallerCtx = .{
+  entry_call: Int,
+  rec_local: Int,
+  carrier_tid: Int,
+  vector_field: Int,
+  scalar_field: Int,
+  mvagg_id: Int,
+  handle: EntryHandle,
+  exit: AggregateMutVecExit,
+  scalar_mono: MonoType,
+  vec_mono: MonoType,
+  freeze_id: Int,
+  // fresh locals for the Publish path
+  scalar_local: Int,
+  frozen_local: Int,
+}
+
+fn rewrite_caller(
+  caller: AnfFunctionDef,
+  region: AggregateMutVecRegion,
+  mvagg_id: Int,
+  handle: EntryHandle,
+  b: BuiltinRegistry,
+) AnfFunctionDef {
+  // Thaw the collect producer to a flat MutVec handle (never escaping at the
+  // caller — the handle is threaded into the call, not returned).
+  producer := MutVecRegion.{
+    func_id: caller.func_id,
+    func: caller.name,
+    proof_id: "s4agg:${caller.func_id.id.to_string()}:${handle.handle_local.to_string()}",
+    handle: .{ id: handle.handle_local },
+    producer: .CollectSeed,
+    op_sites: [],
+    escapes: false,
+    family: handle.suffix,
+  }
+  thawed := mutvec_region.rewrite_regions_in_func(caller, [producer], b)
+
+  base := next_local(thawed) + 1
+  ctx := CallerCtx.{
+    entry_call: region.entry_call.id,
+    rec_local: handle.rec_local,
+    carrier_tid: region.carrier_type.id,
+    vector_field: region.vector_field.id,
+    scalar_field: region.scalar_fields[0].field.id,
+    mvagg_id,
+    handle,
+    exit: region.exit,
+    scalar_mono: region.scalar_fields[0].mono,
+    vec_mono: .Vector(elem_of_suffix(handle.suffix)),
+    freeze_id: builtins.id(b, "vector$__mutvec_freeze${handle.suffix}").id,
+    scalar_local: base,
+    frozen_local: base + 1,
+  }
+  monos := thawed.op_result_mono
+  case ctx.exit {
+    .DeadField => monos[ctx.entry_call] = ctx.scalar_mono,
+    .PublishRecord => {
+      monos[ctx.scalar_local] = ctx.scalar_mono
+      monos[ctx.frozen_local] = ctx.vec_mono
+    },
+    .PublishField => {
+      monos[ctx.scalar_local] = ctx.scalar_mono
+      monos[ctx.frozen_local] = ctx.vec_mono
+    },
+  }
+  thawed.op_result_mono = monos
+  thawed.body = rewrite_caller_expr(thawed.body, ctx)
+  thawed
+}
+
+fn rewrite_caller_expr(e: AnfExpr, ctx: CallerCtx) AnfExpr {
+  case e {
+    .Let(binder, op, sp, rest) => cond {
+      // Drop the carrier record construction — its components go straight to the
+      // decomposed call.
+      binder.id == ctx.rec_local => rewrite_caller_expr(rest, ctx),
+      binder.id == ctx.entry_call => emit_entry_call(
+        binder,
+        sp,
+        ctx,
+        rewrite_caller_expr(rest, ctx),
+      ),
+      _ => .Let(binder, rewrite_caller_op(op, ctx), sp, rewrite_caller_expr(rest, ctx)),
+    },
+    _ => e,
+  }
+}
+
+// Replace `result = permute(rec, n)` with the decomposed call and (for observed
+// exits) the single boundary freeze + record reconstruction.
+fn emit_entry_call(binder: LocalId, sp: span.Span, ctx: CallerCtx, cont: AnfExpr) AnfExpr {
+  args: Vector<Atom> = [.ALocal(.{ id: ctx.handle.handle_local }), ctx.handle.scalar_atom]
+  for a in ctx.handle.tail_args {
+    args = .append(a)
+  }
+  mvcall: AnfOp = .ACall(.AGlobalFunc(.{ id: ctx.mvagg_id }), args)
+  case ctx.exit {
+    .DeadField => .Let(binder, mvcall, sp, cont),
+    _ => {
+      // scalar_local = mvagg(...); frozen = freeze(handle); binder = State{v:frozen, count:scalar}
+      recon: AnfOp = .ARecord(
+        .{ id: ctx.carrier_tid },
+        [
+          FieldAtom.{ field: .{ id: ctx.vector_field }, value: .ALocal(.{ id: ctx.frozen_local }) },
+          FieldAtom.{ field: .{ id: ctx.scalar_field }, value: .ALocal(.{ id: ctx.scalar_local }) },
+        ],
+      )
+      freeze: AnfOp = .ACall(
+        .AGlobalFunc(.{ id: ctx.freeze_id }),
+        [.ALocal(.{ id: ctx.handle.handle_local })],
+      )
+      .Let(
+        .{ id: ctx.scalar_local },
+        mvcall,
+        sp,
+        .Let(.{ id: ctx.frozen_local }, freeze, sp, .Let(binder, recon, sp, cont)),
+      )
+    },
+  }
+}
+
+fn rewrite_caller_op(op: AnfOp, ctx: CallerCtx) AnfOp {
+  case op {
+    // For DeadField, `result.count` becomes the scalar call result directly.
+    .ARecordGet(base, field, tid) => case ctx.exit {
+      .DeadField => if atom_is_local(base, .{ id: ctx.entry_call }) and field.id == ctx.scalar_field {
+        .AInit(.ALocal(.{ id: ctx.entry_call }))
+      } else {
+        op
+      },
+      _ => op,
+    },
+    .AIf(c, t, e) => .AIf(c, rewrite_caller_expr(t, ctx), rewrite_caller_expr(e, ctx)),
+    .AMatch(scrut, arms) => .AMatch(
+      scrut,
+      collect arm in arms {
+        AnfMatchArm.{ pattern: arm.pattern, body: rewrite_caller_expr(arm.body, ctx) }
+      },
+    ),
+    .ALoop(body) => .ALoop(rewrite_caller_expr(body, ctx)),
+    .ADefer(body) => .ADefer(rewrite_caller_expr(body, ctx)),
+    _ => op,
+  }
+}
+
+// ── small helpers ────────────────────────────────────────────────────────────
+fn next_local(f: AnfFunctionDef) Int {
+  m := 0
+  for p in f.params {
+    if p.local.id > m {
+      m = p.local.id
+    }
+  }
+  for k, _v in f.op_result_mono {
+    if k > m {
+      m = k
+    }
+  }
+  m
+}
+
+fn family_to_suffix(family: String) String {
+  case family {
+    "vec_i64" => "_i64",
+    "vec_bool" => "_bool",
+    "vec_f64" => "_f64",
+    "vec_byte" => "_byte",
+    _ => "_i64",
+  }
+}
+
+fn elem_of_suffix(suffix: String) MonoType {
+  case suffix {
+    "_i64" => .Int,
+    "_bool" => .Bool,
+    "_f64" => .Float,
+    "_byte" => .Byte,
+    _ => .Int,
+  }
+}

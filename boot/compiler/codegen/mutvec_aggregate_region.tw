@@ -30,14 +30,90 @@ pub type AggregateMutVecRegion = .{
   proof_id: String,
 }
 
-// One candidate region per accepted owned reconstruction clone. Detection is
-// sound-by-rejection at Task 3: a region here only NAMES a shape (which param
-// carries the record, which field is the private vector, how it recurses, how
-// the entry caller observes the result). It licenses no mutation on its own.
+// Per-detection lookup tables, built ONCE (one module pass) and threaded through
+// so no candidate re-scans the module. Without this, the clone lookup (per route)
+// and `find_entry` (per candidate) each walk every function — turning detection
+// into O(routes × functions × body), catastrophic once detection runs on every
+// compile (`mutvec_call_phase.run_aggregate`) rather than only in `--census`.
+type DetectCtx = .{ funcs: Dict<Int, AnfFunctionDef>, entries: Dict<Int, EntrySite> }
+
+fn build_detect_ctx(anf: AnfModule) DetectCtx {
+  funcs: Dict<Int, AnfFunctionDef> = Dict.new()
+  entries: Dict<Int, EntrySite> = Dict.new()
+  for f in anf.functions {
+    funcs[f.func_id.id] = f
+
+    // Direct O(body) walk — NOT `collect_ops`, whose repeated `.concat` down the
+    // let-chain is O(body²) per function (→ O(functions × body²) here, the hot
+    // per-compile cost that made the bundle hang under stage1-under-deno).
+    entries = index_call_sites(f.func_id, f, f.body, entries)
+  }
+  .{ funcs, entries }
+}
+
+fn index_call_sites(
+  func_id: FuncId,
+  caller: AnfFunctionDef,
+  e: AnfExpr,
+  entries: Dict<Int, EntrySite>,
+) Dict<Int, EntrySite> {
+  case e {
+    .Let(l, op, _, body) => {
+      after := if is_call(op) {
+        sk := vid.site_key(func_id.id, l.id)
+
+        // First writer wins, matching the old first-match `find_entry` scan.
+        case entries.get(sk) {
+          .Some(_) => entries,
+          .None => {
+            entries[sk] = EntrySite.{ func: func_id, caller, local: .{ id: l.id } }
+            entries
+          },
+        }
+      } else {
+        entries
+      }
+      index_call_sites(func_id, caller, body, index_call_sites_in_op(func_id, caller, op, after))
+    },
+    _ => entries,
+  }
+}
+
+fn index_call_sites_in_op(
+  func_id: FuncId,
+  caller: AnfFunctionDef,
+  op: AnfOp,
+  entries: Dict<Int, EntrySite>,
+) Dict<Int, EntrySite> {
+  case op {
+    .AIf(_, t, e) => index_call_sites(
+      func_id,
+      caller,
+      e,
+      index_call_sites(func_id, caller, t, entries),
+    ),
+    .AMatch(_, arms) => {
+      cur := entries
+      for arm in arms {
+        cur = index_call_sites(func_id, caller, arm.body, cur)
+      }
+      cur
+    },
+    .ALoop(b) => index_call_sites(func_id, caller, b, entries),
+    .ADefer(b) => index_call_sites(func_id, caller, b, entries),
+    _ => entries,
+  }
+}
+
+// One candidate region per routed owned reconstruction clone whose carrier has a
+// single collection field. Sound-by-rejection: a region only NAMES a shape (which
+// param carries the record, which field is the private vector, how it recurses,
+// how the entry caller observes the result); it licenses no mutation on its own.
 pub fn detect_aggregate_regions(
   spec: variant_specialize.SpecializeResult,
   _builtins: BuiltinRegistry,
 ) Vector<AggregateMutVecRegion> {
+  ctx := build_detect_ctx(spec.anf)
   out: Vector<AggregateMutVecRegion> = []
   for r in spec.routes {
     case r.fallback_reason {
@@ -47,11 +123,11 @@ pub fn detect_aggregate_regions(
     if r.clone_func < 0 {
       continue
     }
-    clone := case find_func(spec.anf, r.clone_func) {
+    clone := case ctx.funcs.get(r.clone_func) {
       .Some(f) => f,
       .None => continue,
     }
-    case build_region(spec, clone, r) {
+    case ctx.build_region(spec, clone, r) {
       .Some(region) => out = .append(region),
       .None => {},
     }
@@ -60,6 +136,7 @@ pub fn detect_aggregate_regions(
 }
 
 fn build_region(
+  ctx: DetectCtx,
   spec: variant_specialize.SpecializeResult,
   clone: AnfFunctionDef,
   r: variant_route.VariantRoute,
@@ -76,7 +153,7 @@ fn build_region(
     field_monos := collect_field_monos(clone, tid)
     vec := single_vector_field(field_monos)
     case vec {
-      .Some(vf) => return .Some(assemble_region(spec, clone, r, k, tid, vf, field_monos)),
+      .Some(vf) => return .Some(ctx.assemble_region(spec, clone, r, k, tid, vf, field_monos)),
       .None => {},
     }
   }
@@ -105,6 +182,7 @@ fn single_vector_field(field_monos: Dict<Int, MonoType>) VecField? {
 }
 
 fn assemble_region(
+  ctx: DetectCtx,
   spec: variant_specialize.SpecializeResult,
   clone: AnfFunctionDef,
   r: variant_route.VariantRoute,
@@ -132,7 +210,7 @@ fn assemble_region(
     }
   }
 
-  entry := find_entry(spec.anf, r.route_sites)
+  entry := find_entry(ctx.entries, r.route_sites)
   case entry {
     .Some(en) => .{
       caller_func: en.func,
@@ -170,14 +248,13 @@ fn assemble_region(
 type EntrySite = .{ func: FuncId, caller: AnfFunctionDef, local: LocalId }
 
 // The routed caller sites live in `site_key(caller_func, call_result_local)`
-// space. Recover the concrete (function, local) by re-pairing every call binder.
-fn find_entry(anf: AnfModule, route_sites: Vector<Int>) EntrySite? {
-  set := int_set(route_sites)
-  for f in anf.functions {
-    for e in collect_ops(f.body) {
-      if is_call(e.op) and int_has(set, vid.site_key(f.func_id.id, e.local)) {
-        return .Some(EntrySite.{ func: f.func_id, caller: f, local: .{ id: e.local } })
-      }
+// space; `entries` is the precomputed site_key → EntrySite map (one module pass),
+// so this is a lookup per route site rather than a full-module scan per candidate.
+fn find_entry(entries: Dict<Int, EntrySite>, route_sites: Vector<Int>) EntrySite? {
+  for sk in route_sites {
+    case entries.get(sk) {
+      .Some(en) => return .Some(en),
+      .None => {},
     }
   }
   .None
@@ -340,15 +417,6 @@ fn param_mono(f: AnfFunctionDef, id: Int) MonoType? {
   for p in f.params {
     if p.local.id == id {
       return .Some(p.ty)
-    }
-  }
-  .None
-}
-
-fn find_func(anf: AnfModule, id: Int) AnfFunctionDef? {
-  for f in anf.functions {
-    if f.func_id.id == id {
-      return .Some(f)
     }
   }
   .None

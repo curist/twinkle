@@ -348,41 +348,69 @@ fn recv_local_of(u: MutVecCallAbiUpgrade, local_id: Int) Bool {
 }
 
 fn upgrade_func(pf: PreparedFunc, upgrades: Vector<MutVecCallAbiUpgrade>, env: ResolvedEnv) PreparedFunc {
-  // (a) An upgraded clone: type its receiver param slot(s) MutVec(fam) and expose
-  //     the MutVec return ABI. The receiver param's SlotInfo.source_local is the
-  //     ANF receiver local `param_slots` records.
-  cur := case find_clone_upgrade(upgrades, pf.func_id.id) {
+  clone_u := find_clone_upgrade(upgrades, pf.func_id.id)
+
+  // (a) Seed the slots MutVec-by-ABI: an upgraded clone's receiver param(s), and
+  //     every call-result slot whose callee returns the MutVec handle. Also expose
+  //     the clone's MutVec return ABI when it returns the handle (`return_mutvec`);
+  //     an aggregate `$mvagg` returns a scalar, so it keeps its param MutVec but
+  //     its `phys_return` scalar.
+  seed: Dict<Int, Bool> = Dict.new()
+  clone_fam: ElemRepr = .I64
+  has_clone_fam := false
+  cur := case clone_u {
     .Some(u) => {
-      wt := mutvec_wasm_type(u.fam)
-      new_slots: Dict<Int, SlotInfo> = pf.slots
       for sid, info in pf.slots {
         if recv_local_of(u, info.source_local.id) {
-          new_slots[sid] = override_slot(info, .MutVec(u.fam), env)
+          seed[info.slot.id] = true
         }
       }
-      pf.slots = new_slots
-      pf.phys_return = .Some(wt)
+      clone_fam = u.fam
+      has_clone_fam = true
+      if u.return_mutvec {
+        pf.phys_return = .Some(mutvec_wasm_type(u.fam))
+      }
       pf
     },
     .None => pf,
   }
+  results := collect_call_result_fams(cur.body, upgrades, Dict.new())
+  for rid, f in results {
+    seed[rid] = true
+    if !has_clone_fam {
+      clone_fam = f
+      has_clone_fam = true
+    }
+  }
+  if seed.keys().len() == 0 {
+    return cur
+  }
 
-  // (b) Every routed caller call-result slot: `flags = <upgraded-clone call>` —
-  //     type it MutVec(fam) so the boundary is MutVec→MutVec (no coercion).
-  targets := collect_call_result_fams(cur.body, upgrades, Dict.new())
-  if targets.keys().len() == 0 {
-    cur
-  } else {
-    new_slots: Dict<Int, SlotInfo> = cur.slots
-    for sid, info in cur.slots {
-      case targets.get(info.slot.id) {
-        .Some(fam) => new_slots[sid] = override_slot(info, .MutVec(fam), env),
-        .None => {},
+  // (b) Propagate MutVec-ness through the `init`/`assign` alias chains (an
+  //     aggregate clone threads the handle through many `init vec(carrier)` copies
+  //     that no `mutvec_*` op touches, so `assign_mutvec_reprs`' op-seed misses
+  //     them). Then override every handle slot, using each call-result slot's own
+  //     callee family and the clone family elsewhere; a route-owned TypedVec slot
+  //     (the materialized freeze result) is left to `route_typed_vec`.
+  handle := propagate_fixpoint(cur.body, seed)
+  new_slots: Dict<Int, SlotInfo> = cur.slots
+  for sid, info in cur.slots {
+    if handle.has(info.slot.id) {
+      route_typed := case info.repr {
+        .TypedVec(_) => true,
+        _ => false,
+      }
+      if !route_typed {
+        f := case results.get(info.slot.id) {
+          .Some(rf) => rf,
+          .None => clone_fam,
+        }
+        new_slots[sid] = override_slot(info, .MutVec(f), env)
       }
     }
-    cur.slots = new_slots
-    cur
   }
+  cur.slots = new_slots
+  cur
 }
 
 // Map each call-result slot id whose op is a call to an upgraded clone to that
@@ -411,8 +439,12 @@ fn call_result_fams_op(
 ) Dict<Int, ElemRepr> {
   case op {
     .ACall(.AGlobalFunc(f), _) => case find_clone_upgrade(upgrades, f.id) {
-      .Some(u) => {
+      // Only a handle-returning callee makes its caller's result slot a MutVec; an
+      // aggregate `$mvagg` returns a scalar, so its result slot keeps its repr.
+      .Some(u) => if u.return_mutvec {
         acc[rid] = u.fam
+        acc
+      } else {
         acc
       },
       .None => acc,

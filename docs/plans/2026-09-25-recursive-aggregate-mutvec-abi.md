@@ -75,6 +75,73 @@ will be relaxed to assert `mutvec_set_i64` anywhere in the propagated flat clone
 graph (it lands in `swap$mv`), keeping the freeze-count checks. See the design
 doc's Decision block + MUST invariants.
 
+## Status (2026-09-26, session 2) — mechanism corrected, engine landed, no flag
+
+Implementing the hop surfaced two facts the earlier framing glossed, both
+resolved with the user:
+
+1. **`swap$mv` cannot reuse `rewrite_clone_body` as written.** That path (and the
+   HP-3 verifier) key on the builtin `vector$set_unsafe`-reclaim-**return-receiver**
+   shape, which only the `xs[i]=v` index-write sugar produces inline. `swap`/
+   `set_at` use functional `.set_at()` *wrapper calls* — a COW chain returning a
+   *fresh* vector. On-demand owned specialization can't help either: clone bodies
+   are copied verbatim and the in-place conversion is `produce_mutable`, which
+   runs *after* `run_mutvec_call`.
+2. **The real write is TWO hops: `permute → swap → set_at`.** `mutvec_set` lands
+   in `set_at` (whose body *is* the `set_unsafe`-reclaim continuation). **User
+   chose genuine multi-hop propagation** (the design's Staging step 3 fixpoint,
+   previously deferred) over treating `set_at` as a leaf primitive. Consequence:
+   the "two-hop stays persistent" trip-wire is re-cast to reject only *unsound*
+   hops (leak/republish/alias/capture), and `recursive_record_two_hop`
+   (`work→swap→inner`, a legit flat chain) moves from the persistent guard to an
+   ACCEPT case.
+
+**No feature flag** (user decision): the aggregate pass runs unconditionally and
+is a structural no-op when zero aggregate regions are accepted (boot source), so
+the stage2 self-host fixed point holds automatically — same discipline as the
+bare-vector S4. The decompose + propagate + caller-rewrite + repr changes are
+coupled (decomposed ANF without repr fails the backend verifier), so they land
+as one change, committed only when green.
+
+**LANDED (uncommitted):** `boot/compiler/codegen/mutvec_propagate.tw` — the
+propagation engine. `analyze_flat_continuation` is a unified linear-token
+verifier that subsumes HP-3 (its `flat_callees={}` case); `flatten_helper` is the
+recursive least-fixpoint over the helper DAG, producing a `$mv` sibling per clone
+(reads/writes → `mutvec_*`, helper calls → their siblings). Unit-tested green on
+the real `swap→set_at` clones; no regressions; the 4 route/WAT tests remain red
+until wired.
+
+**Carry-through sequence (replaces Tasks 4–5 detail below):**
+- **A. Orchestration** — `mutvec_aggregate_phase.tw`, called at the end of
+  `run_mutvec_call`. Detect+verify regions; per accepted region: draft-decompose
+  (empty retarget) to find vhandle-lineage helper calls in `permute$mvagg` →
+  `flatten_helper` each → real `decompose_clone` with the resulting
+  `helper_retarget` → append `swap$mv`/`set_at$mv`/`permute$mvagg` siblings +
+  `MutVecCallAbiUpgrade`s → rewrite the caller. Zero accepted → return the bare
+  decision unchanged.
+- **B. Caller rewrite** — DE-RISK FIRST with a throwaway probe: does
+  `mutvec_region.rewrite_regions_in_func` flatten an `op_sites=[]` `CollectSeed`
+  region (thaw the builder, drop the freeze) on `run`? If yes, reuse it for the
+  producer thaw; if no, write a minimal thaw. Then a linear record-explosion
+  around the entry call (`record State{values=H,count=C}` → `permute(rec,n)` →
+  `rec.count`  ⇒  `permute$mvagg(H,C,n)` scalar; drop record + record_get) plus
+  the freeze boundary (DeadField 0, Publish 1 + reconstruct).
+- **C. Backend repr** — make `apply_mutvec_call_abi_upgrades` *respect*
+  `return_mutvec` (it currently always forces a MutVec `phys_return` and MutVec-
+  types every caller call-result). `set_at$mv`/`swap$mv` reuse
+  `MutVecCallAbiUpgrade{return_mutvec:true}`; `permute$mvagg` uses
+  `{param_slots:[vhandle], return_mutvec:false}` so its vhandle param types MutVec
+  while `phys_return` stays the scalar. No separate `aggregate_upgrades` type.
+- **D. Fixtures** — recast `recursive_record_two_hop` to ACCEPT (+ a positive
+  multi-hop assertion); keep `shared_helper` (aliased root → ownership rejects),
+  `helper_closure`/`field_alias_hop` (freeze sinks), `by_value_helper` (needs the
+  `[Field(vec)]` access-path key — future) persistent.
+- **E. Green** the 4 tracked tests + the full `mutvec` suite + `boot-test`, then
+  commit.
+- **F. Self-host + perf gate** — `make bundle-cli`; shasum; `make stage2`; shasum
+  (must match); `make boot-test && make rust-test`; AWFY ×3 median; gate ≤ 1.25×
+  `permute_mut`, ≤ 1.50× LuaJIT.
+
 ## File Map
 
 - Create `boot/compiler/codegen/mutvec_aggregate_region.tw`: detect record-carried vector lineage and describe decomposed ABI requirements without rewriting code.

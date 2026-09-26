@@ -43,6 +43,7 @@ use compiler.codegen.mutvec_aggregate_verify
 use compiler.codegen.mutvec_call_phase
 use compiler.codegen.mutvec_call_region
 use compiler.codegen.mutvec_call_verify
+use compiler.codegen.mutvec_propagate
 use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_specialize
@@ -248,6 +249,29 @@ fn find_func(anf: AnfModule, name: String) AnfFunctionDef {
     }
   }
   error("function not found: ${name}")
+}
+
+fn max_fid(anf: AnfModule) Int {
+  m := 0
+  for f in anf.functions {
+    if f.func_id.id > m {
+      m = f.func_id.id
+    }
+  }
+  m
+}
+
+fn body_has_mutvec_set(e: AnfExpr, set_id: Int) Bool {
+  case e {
+    .Let(_, op, _, rest) => {
+      here := case op {
+        .ACall(.AGlobalFunc(f), _) => f.id == set_id,
+        _ => false,
+      }
+      here or body_has_mutvec_set(rest, set_id)
+    },
+    _ => false,
+  }
 }
 
 fn body_calls_func(e: AnfExpr, target: Int) Bool {
@@ -706,16 +730,67 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "aggregate propagation boundary shapes stay persistent",
+      "flatten_helper flattens the swap->set_at chain to mutvec ops",
       fn() Result<Void, String> {
-        // Slice-1 propagates flatness ONE verified hop for a single-collection,
-        // single-scalar carrier. These shapes must never yield an aggregate flat
-        // clone: a two-hop write, a helper shared by two roots, a helper that
-        // aliases the handle in a closure, a caller-side surviving field alias,
-        // and the carrier-by-value helper (a future access-path-keyed accept).
-        // A regression trip-wire if the fixpoint or a hop ever over-reaches.
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        swap := case st.spec.anf.functions.find(fn(f) { f.name.contains("swap") }) {
+          .Some(f) => f,
+          .None => return .Err("no swap clone in module"),
+        }
+        seed := mutvec_propagate.PropAcc.{
+          memo: Dict.new(),
+          next_id: max_fid(st.spec.anf) + 1,
+          retarget: Dict.new(),
+          siblings: [],
+          ok: true,
+          reason: .None,
+        }
+        acc := mutvec_propagate.flatten_helper(
+          swap,
+          swap.params[0].local.id,
+          st.spec,
+          st.builtins,
+          seed,
+        )
+        reason := case acc.reason {
+          .Some(m) => m,
+          .None => "",
+        }
+        try assert.ok(acc.ok, "flatten_helper accepted the swap chain: ${reason}")
+
+        // Two hops: swap$mv + set_at$mv.
+        try assert.ok(acc.siblings.len() >= 2, "produced swap$mv and set_at$mv siblings")
+        try assert.ok(acc.retarget.get(swap.func_id.id).is_some(), "swap got a flat sibling")
+
+        // Every sibling reads/writes via mutvec ops, and set_at$mv writes mutvec_set.
+        set_i64 := builtins.id(st.builtins, "vector$__mutvec_set_i64").id
+        wrote := acc.siblings.any(fn(s) { body_has_mutvec_set(s.def.body, set_i64) })
+        try assert.ok(wrote, "a flat sibling writes via mutvec_set_i64")
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate propagation flattens a multi-hop write chain",
+      fn() Result<Void, String> {
+        // Flatness propagates transitively along verified owned call edges, so a
+        // legitimate multi-hop chain (`work -> swap -> inner -> set_at`) that
+        // threads the handle soundly and returns it flattens end to end. The write
+        // lands `mutvec_set` somewhere in the propagated flat clone graph.
+        st := mutvec_call_stage(fixture_path("recursive_record_two_hop"))
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
+        try assert.ok(has_any_mvagg_clone(dec), "two-hop chain flattens to an aggregate clone")
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate propagation leaves unsound/unsupported shapes persistent",
+      fn() Result<Void, String> {
+        // Reject-by-default trip-wire: a helper shared by two aggregate roots (the
+        // shared collection root is not uniquely owned), a helper that captures the
+        // handle in a closure, a caller-side surviving field alias, and the
+        // carrier-by-value helper (a future access-path-keyed accept) must all stay
+        // persistent — no aggregate flat clone, no unsound in-place mutation.
         for name in [
-          "recursive_record_two_hop",
           "recursive_record_shared_helper",
           "recursive_record_helper_closure",
           "recursive_record_field_alias_hop",

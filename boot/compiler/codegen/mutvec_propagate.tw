@@ -1,0 +1,499 @@
+//! Interprocedural flat-handle propagation for the aggregate MutVec ABI.
+//!
+//! A flat MutVec handle produced by an aggregate carrier decomposition (see
+//! `mutvec_aggregate_rewrite.decompose_clone`) is threaded into owned helper
+//! continuations (`swap`, then `set_at`). This module propagates flatness FORWARD
+//! along those owned call edges as a least fixpoint: starting from a flat handle
+//! parameter, it verifies each reachable helper clone is a sound flat continuation
+//! for its receiver, and produces a dedicated `$mv` sibling per edge whose vector
+//! ops become `mutvec_*`. Every promoted edge re-verifies the actual callee body
+//! (reject-by-default), never graph reachability.
+//!
+//! The verifier is a UNIFIED linear-token scan that subsumes the bare-vector HP-3
+//! continuation verifier (`mutvec_call_verify.verify_clone_continuation`, the
+//! `flat_callees = {}` special case). It tracks a single live handle token through
+//! a straight-line helper body:
+//!   - reads (`vector$get`/`vector$len`/`AIndex` on the token) do not advance it;
+//!   - the token ADVANCES via an in-place builtin write (`vector$set_unsafe`) or a
+//!     call to another flat-eligible continuation (recorded as an edge to
+//!     flatten), and the old alias becomes dead;
+//!   - a reclaiming `assign name = token` / `init name = token` renames the token;
+//!   - the tail must return a token member; ANY other use of the token or a dead
+//!     alias is a leak and rejects.
+//! This handles both the reclaim pattern (`set_at`: `set_unsafe(recv)`, reclaim,
+//! return recv) and the moving-token pattern (`swap`: `L=set_at(v)`, return L)
+//! with one model. Control flow carrying the token in a helper rejects (slice-1
+//! helpers are straight-line functional bodies).
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp, Atom}
+use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
+use compiler.builder_region_detect.{atom_is_local, op_references_deep}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_call_verify.{func_def_of}
+use compiler.codegen.variant_specialize.{SpecializeResult}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.elem_family.{elem_family_of, elem_family_suffix}
+use compiler.mono_type.{MonoType}
+
+// A helper call inside a verified continuation that carries the token forward and
+// must itself be flattened: `call_local = callee(... token@arg_pos ...)`.
+pub type FlatCallEdge = .{ call_local: Int, callee: Int, arg_pos: Int }
+
+// Accept carries the token lineage (every local that held the handle) and the
+// forward helper edges; the body rewrite retargets ops on the lineage and the
+// calls named by the edges.
+pub type FlatVerdict = { Accept(Vector<Int>, Vector<FlatCallEdge>), Reject(String) }
+
+type VIds = .{ set_unsafe: Int, get: Int, len: Int }
+
+fn vids(b: BuiltinRegistry) VIds {
+  .{
+    set_unsafe: builtins.id(b, "vector$set_unsafe").id,
+    get: builtins.id(b, "vector$get").id,
+    len: builtins.id(b, "vector$len").id,
+  }
+}
+
+// Linear-token scan state threaded through the straight-line walk.
+type LScan = .{
+  token: Int,
+  dead: Dict<Int, Bool>,
+  lineage: Vector<Int>,
+  edges: Vector<FlatCallEdge>,
+  reason: String?,
+  returned: Bool,
+}
+
+fn lreject(s: LScan, msg: String) LScan {
+  case s.reason {
+    .Some(_) => s,
+    .None => {
+      s.reason = .Some(msg)
+      s
+    },
+  }
+}
+
+// Advance the token to `nt`: the old token becomes dead, `nt` joins the lineage.
+// A reclaiming `assign`/`init` alias is the same operation (rename the live token
+// to a new backing-identical name), so it shares this.
+fn ladvance(s: LScan, nt: Int) LScan {
+  s.dead[s.token] = true
+  s.lineage = .append(nt)
+  s.token = nt
+  s
+}
+
+fn references_dead(op: AnfOp, dead: Dict<Int, Bool>) Bool {
+  for k, _v in dead {
+    if op_references_deep(op, LocalId.{ id: k }) {
+      return true
+    }
+  }
+  false
+}
+
+// Verify `clone` is a sound flat continuation for its receiver param `token_param`.
+// Straight-line only: a control-flow op carrying the token rejects.
+pub fn analyze_flat_continuation(clone: AnfFunctionDef, token_param: Int, b: BuiltinRegistry) FlatVerdict {
+  ids := vids(b)
+  s := scan_expr(
+    clone.body,
+    ids,
+    LScan.{
+      token: token_param,
+      dead: Dict.new(),
+      lineage: [token_param],
+      edges: [],
+      reason: .None,
+      returned: false,
+    },
+  )
+  case s.reason {
+    .Some(msg) => .Reject(msg),
+    .None => if s.returned {
+      .Accept(s.lineage, s.edges)
+    } else {
+      .Reject("no tail return of the handle token")
+    },
+  }
+}
+
+fn scan_expr(e: AnfExpr, ids: VIds, s: LScan) LScan {
+  case s.reason {
+    .Some(_) => s,
+    .None => scan_expr_live(e, ids, s),
+  }
+}
+
+fn scan_expr_live(e: AnfExpr, ids: VIds, s: LScan) LScan {
+  case e {
+    .Let(binder, op, _, rest) => scan_expr(rest, ids, scan_op(op, binder.id, ids, s)),
+    .Atom(a) => scan_tail(a, s),
+    .Return(.Some(a)) => scan_tail(a, s),
+    .Return(.None) => s.lreject("void return in a flat continuation"),
+    .Break(_) => s.lreject("break in a flat continuation"),
+    .Continue => s.lreject("continue in a flat continuation"),
+  }
+}
+
+fn scan_tail(a: Atom, s: LScan) LScan {
+  if atom_is_local(a, LocalId.{ id: s.token }) {
+    if s.returned {
+      s.lreject("multiple handle exits")
+    } else {
+      s.returned = true
+      s
+    }
+  } else {
+    s.lreject("tail returns a non-handle value")
+  }
+}
+
+fn scan_op(op: AnfOp, binder: Int, ids: VIds, s: LScan) LScan {
+  tok := LocalId.{ id: s.token }
+  case op {
+    .ACall(.AGlobalFunc(g), args) => scan_call(g, args, binder, ids, s),
+    // Read `token[idx]` (idx != token) — token unchanged, binder is a scalar.
+    .AIndex(base, idx, .Array, _) => cond {
+      atom_is_local(base, tok) => if atom_is_local(idx, tok) {
+        s.lreject("handle used as its own index")
+      } else {
+        s
+      },
+      references_dead(op, s.dead) => s.lreject("use of a dead handle alias"),
+      _ => s,
+    },
+    // Reclaim / forward-alias of the token.
+    .AAssign(target, value) => cond {
+      atom_is_local(value, tok) => s.ladvance(target.id),
+      op_references_deep(op, tok) or references_dead(op, s.dead) => s.lreject(
+        "handle assigned into a surviving alias",
+      ),
+      _ => s,
+    },
+    .AInit(value) => cond {
+      atom_is_local(value, tok) => s.ladvance(binder),
+      references_dead(op, s.dead) => s.lreject("use of a dead handle alias"),
+      _ => s,
+    },
+    // Any control flow carrying the token is out of slice-1 (helpers are
+    // straight-line). If it doesn't touch the token/dead set, it's inert.
+    _ => if op_references_deep(op, tok) or references_dead(op, s.dead) {
+      s.lreject("handle escapes into an unsupported op")
+    } else {
+      s
+    },
+  }
+}
+
+fn scan_call(g: FuncId, args: Vector<Atom>, binder: Int, ids: VIds, s: LScan) LScan {
+  tok := LocalId.{ id: s.token }
+
+  // Pure reads keep the token where it is.
+  if g.id == ids.get
+    and args.len() == 2 and atom_is_local(args[0], tok) and !atom_is_local(args[1], tok) {
+    return s
+  }
+  if g.id == ids.len and args.len() == 1 and atom_is_local(args[0], tok) {
+    return s
+  }
+
+  // In-place builtin write — advances the token to its result.
+  if g.id == ids.set_unsafe
+    and args.len() == 3 and atom_is_local(args[0], tok) and !atom_is_local(args[1], tok)
+    and !atom_is_local(args[2], tok) {
+    return s.ladvance(binder)
+  }
+
+  // Otherwise: a forward call carrying the token is a flat-callee edge, iff the
+  // token appears exactly once and no OTHER arg references the token or a dead
+  // alias. The callee's own flat-eligibility is proven later by the fixpoint.
+  pos := sole_token_index(args, s.token)
+  case pos {
+    .Some(p) => if other_arg_references(args, p, s.token, s.dead) {
+      s.lreject("handle passed alongside another handle reference")
+    } else {
+      s.edges = .append(FlatCallEdge.{ call_local: binder, callee: g.id, arg_pos: p })
+      s.ladvance(binder)
+    },
+    .None => if references_dead_atoms(args, s.dead) {
+      s.lreject("use of a dead handle alias in a call")
+    } else {
+      s
+    },
+  }
+}
+
+fn sole_token_index(args: Vector<Atom>, token: Int) Int? {
+  found: Int? = .None
+  for a, i in args {
+    if atom_is_local(a, LocalId.{ id: token }) {
+      found = case found {
+        .Some(_) => return .None,
+        .None => .Some(i),
+      }
+    }
+  }
+  found
+}
+
+fn other_arg_references(args: Vector<Atom>, keep: Int, token: Int, dead: Dict<Int, Bool>) Bool {
+  for a, i in args {
+    if i != keep {
+      if atom_is_local(a, LocalId.{ id: token }) {
+        return true
+      }
+      for k, _v in dead {
+        if atom_is_local(a, LocalId.{ id: k }) {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+fn references_dead_atoms(args: Vector<Atom>, dead: Dict<Int, Bool>) Bool {
+  for a in args {
+    for k, _v in dead {
+      if atom_is_local(a, LocalId.{ id: k }) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// ── recursive flatten (least fixpoint over the helper DAG) ──────────────────
+// One produced flat sibling plus the ABI facts the repr pass needs.
+pub type FlatSibling = .{ def: AnfFunctionDef, handle_param: Int, fam: ElemRepr }
+
+// Accumulator threaded through the recursion: `memo` dedupes per (callee,arg_pos)
+// so a helper reached twice yields one sibling; `next_id` allocates sibling ids;
+// `retarget` maps each original clone id to its flat sibling; `siblings` collects
+// the produced defs.
+pub type PropAcc = .{
+  memo: Dict<Int, Int>,
+  next_id: Int,
+  retarget: Dict<Int, Int>,
+  siblings: Vector<FlatSibling>,
+  ok: Bool,
+  reason: String?,
+}
+
+fn memo_key(callee: Int, arg_pos: Int) Int {
+  callee * 16 + arg_pos
+}
+
+fn pfail(acc: PropAcc, msg: String) PropAcc {
+  .{
+    memo: acc.memo,
+    next_id: acc.next_id,
+    retarget: acc.retarget,
+    siblings: acc.siblings,
+    ok: false,
+    reason: .Some(msg),
+  }
+}
+
+// Flatten `clone`'s receiver param at `token_param`, recursively flattening every
+// forward helper edge first (bottom-up). Returns the accumulator carrying the new
+// sibling id in `retarget[clone.func_id]`. `ok=false` on any rejection — the whole
+// chain then stays persistent.
+pub fn flatten_helper(
+  clone: AnfFunctionDef,
+  token_param: Int,
+  spec: SpecializeResult,
+  b: BuiltinRegistry,
+  acc: PropAcc,
+) PropAcc {
+  // `memo` doubles as a cycle guard: a `-1` sentinel means "this edge is being
+  // flattened right now". Re-entering it (a self-recursive or mutually recursive
+  // helper) would otherwise recurse forever — slice-1 helpers are acyclic, so a
+  // cycle bails the whole chain (reject → the carrier stays persistent, sound).
+  key := memo_key(clone.func_id.id, token_param)
+  case acc.memo.get(key) {
+    .Some(v) => if v == 0 - 1 {
+      return acc.pfail("recursive/cyclic flat helper unsupported (slice-1)")
+    } else {
+      return acc // already flattened this edge
+    },
+    .None => {},
+  }
+  verdict := analyze_flat_continuation(clone, token_param, b)
+  case verdict {
+    .Reject(msg) => acc.pfail("flat continuation rejected: ${msg}"),
+    .Accept(lineage, edges) => {
+      // Mark in-progress BEFORE recursing so a cyclic edge is detected, not looped.
+      acc.memo[key] = 0 - 1
+
+      // Recurse into every forward edge first so the retarget map is complete
+      // before we rewrite this body.
+      cur := acc
+      callee_map: Dict<Int, Int> = Dict.new()
+      for edge in edges {
+        callee_def := case func_def_of(spec, edge.callee) {
+          .Some(f) => f,
+          .None => return cur.pfail("flat callee ${edge.callee.to_string()} has no def"),
+        }
+        cur = flatten_helper(callee_def, callee_arg_local(callee_def, edge.arg_pos), spec, b, cur)
+        if !cur.ok {
+          return cur
+        }
+        case cur.retarget.get(edge.callee) {
+          .Some(sib) => callee_map[edge.callee] = sib,
+          .None => return cur.pfail("flat callee sibling missing after recursion"),
+        }
+      }
+
+      fam := case handle_fam(clone, token_param) {
+        .Some(f) => f,
+        .None => return cur.pfail("handle param has no registered element family"),
+      }
+      suffix := case fam_suffix_of(clone, token_param) {
+        .Some(sfx) => sfx,
+        .None => return cur.pfail("handle param has no family suffix"),
+      }
+      sib_id := cur.next_id
+      body := flatten_body(clone.body, lineage_set(lineage), suffix, callee_map, b)
+      sib := AnfFunctionDef.{
+        func_id: .{ id: sib_id },
+        name: "${clone.name}$mv",
+        is_init: false,
+        params: clone.params,
+        op_result_mono: clone.op_result_mono,
+        body,
+        return_ty: clone.return_ty,
+      }
+      new_memo := cur.memo
+      new_memo[key] = sib_id
+      new_retarget := cur.retarget
+      new_retarget[clone.func_id.id] = sib_id
+      .{
+        memo: new_memo,
+        next_id: sib_id + 1,
+        retarget: new_retarget,
+        siblings: cur.siblings.append(FlatSibling.{ def: sib, handle_param: token_param, fam }),
+        ok: true,
+        reason: .None,
+      }
+    },
+  }
+}
+
+fn callee_arg_local(callee: AnfFunctionDef, arg_pos: Int) Int {
+  if arg_pos >= 0 and arg_pos < callee.params.len() {
+    callee.params[arg_pos].local.id
+  } else {
+    0 - 1
+  }
+}
+
+fn lineage_set(lineage: Vector<Int>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for l in lineage {
+    out[l] = true
+  }
+  out
+}
+
+fn handle_fam(clone: AnfFunctionDef, token_param: Int) ElemRepr? {
+  ty: MonoType? = .None
+  for p in clone.params {
+    if p.local.id == token_param {
+      ty = .Some(p.ty)
+    }
+  }
+  case ty {
+    .Some(t) => case elem_family_of(t) {
+      .Some(fam) => elem_repr_of_mono_key(fam.mono_key),
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+fn fam_suffix_of(clone: AnfFunctionDef, token_param: Int) String? {
+  for p in clone.params {
+    if p.local.id == token_param {
+      return elem_family_suffix(p.ty)
+    }
+  }
+  .None
+}
+
+// ── flat body rewrite ───────────────────────────────────────────────────────
+type FlatIds = .{ set_unsafe: Int, get: Int, len: Int, mset: FuncId, mget: FuncId, mlen: FuncId }
+
+// Retarget every token-lineage read/write to the family's `mutvec_*` op, and every
+// forward helper call to its flat sibling. `lineage` names every local that held
+// the handle (a set), so a moving token (`v -> L7 -> L8`) has its ops retargeted
+// at each alias, not just the param.
+fn flatten_body(
+  body: AnfExpr,
+  lineage: Dict<Int, Bool>,
+  suffix: String,
+  callee_map: Dict<Int, Int>,
+  b: BuiltinRegistry,
+) AnfExpr {
+  ids: FlatIds = .{
+    set_unsafe: builtins.id(b, "vector$set_unsafe").id,
+    get: builtins.id(b, "vector$get").id,
+    len: builtins.id(b, "vector$len").id,
+    mset: builtins.id(b, "vector$__mutvec_set${suffix}"),
+    mget: builtins.id(b, "vector$__mutvec_get${suffix}"),
+    mlen: builtins.id(b, "vector$__mutvec_len${suffix}"),
+  }
+  rewrite_flat_expr(body, lineage, callee_map, ids)
+}
+
+fn in_lineage(a: Atom, lineage: Dict<Int, Bool>) Bool {
+  case a {
+    .ALocal(l) => lineage.has(l.id),
+    _ => false,
+  }
+}
+
+fn rewrite_flat_expr(e: AnfExpr, lineage: Dict<Int, Bool>, callee_map: Dict<Int, Int>, ids: FlatIds) AnfExpr {
+  case e {
+    .Let(binder, op, sp, rest) => .Let(
+      binder,
+      rewrite_flat_op(op, lineage, callee_map, ids),
+      sp,
+      rewrite_flat_expr(rest, lineage, callee_map, ids),
+    ),
+    _ => e,
+  }
+}
+
+fn rewrite_flat_op(op: AnfOp, lineage: Dict<Int, Bool>, callee_map: Dict<Int, Int>, ids: FlatIds) AnfOp {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => cond {
+      f.id == ids.set_unsafe and args.len() == 3 and in_lineage(args[0], lineage) => .ACall(
+        .AGlobalFunc(ids.mset),
+        args,
+      ),
+      f.id == ids.get and args.len() == 2 and in_lineage(args[0], lineage) => .ACall(
+        .AGlobalFunc(ids.mget),
+        args,
+      ),
+      f.id == ids.len and args.len() == 1 and in_lineage(args[0], lineage) => .ACall(
+        .AGlobalFunc(ids.mlen),
+        args,
+      ),
+      callee_map.get(f.id).is_some() => .ACall(
+        .AGlobalFunc(.{ id: callee_map.get(f.id).unwrap() }),
+        args,
+      ),
+      _ => op,
+    },
+    .AIndex(base, idx, .Array, ty) => if in_lineage(base, lineage) and !in_lineage(idx, lineage) {
+      .ACall(.AGlobalFunc(ids.mget), [base, idx])
+    } else {
+      op
+    },
+    _ => op,
+  }
+}

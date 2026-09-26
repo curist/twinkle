@@ -43,6 +43,9 @@ use compiler.backend.repr_policy.{ElemRepr, elem_repr_of_mono_key}
 use compiler.builder_region_detect.{atom_is_local}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutvec_aggregate_phase
+use compiler.codegen.mutvec_aggregate_region
+use compiler.codegen.mutvec_aggregate_verify
 use compiler.codegen.mutvec_call_region
 use compiler.codegen.mutvec_call_region.{MutVecCallExit, MutVecCallRegion}
 use compiler.codegen.mutvec_call_verify.{
@@ -163,12 +166,76 @@ pub fn run_mutvec_call(spec: SpecializeResult, b: BuiltinRegistry) MutVecCallDec
   )
   final := finalize_plan(spec, plan, keep)
 
-  .{
-    accepted,
-    module: apply_mutvec_call_rewrite(spec, final, accepted_by_func, b),
-    spec,
-    abi_upgrades: final.upgrades,
+  // Bare-vector S4 rewrite, then the aggregate-carrier pass (a structural no-op
+  // when no aggregate region is accepted — e.g. all of boot's own source — so the
+  // self-host fixed point is preserved without a flag).
+  base_module := apply_mutvec_call_rewrite(spec, final, accepted_by_func, b)
+  agg := run_aggregate(spec, base_module, final.upgrades, b)
+
+  .{ accepted, module: agg.module, spec, abi_upgrades: agg.upgrades }
+}
+
+type AggMerged = .{ module: AnfModule, upgrades: Vector<MutVecCallAbiUpgrade> }
+
+// Detect + verify recursive aggregate carriers, and for each accepted region
+// build its decomposed clone graph (`permute$mvagg` + flat helper siblings) and
+// rewrite the entry caller. Reject/bail leaves the carrier persistent. Zero
+// accepted+built regions returns the input module + upgrades unchanged. The
+// caller rewrites + sibling appends are batched into ONE module rebuild (not one
+// per region) so the pass stays linear in module size.
+fn run_aggregate(
+  spec: SpecializeResult,
+  module: AnfModule,
+  upgrades: Vector<MutVecCallAbiUpgrade>,
+  b: BuiltinRegistry,
+) AggMerged {
+  regions := mutvec_aggregate_region.detect_aggregate_regions(spec, b)
+  if regions.len() == 0 {
+    return .{ module, upgrades }
   }
+  cur_upgrades := upgrades
+  new_siblings: Vector<AnfFunctionDef> = []
+  caller_rewrites: Dict<Int, AnfFunctionDef> = Dict.new()
+  next_id := max_func_id(module) + 1
+  for region in regions {
+    case mutvec_aggregate_verify.verify_aggregate_region(region, spec, b) {
+      .Accept => {
+        res := mutvec_aggregate_phase.build_aggregate(region, spec, module, b, next_id)
+        if res.ok {
+          for s in res.siblings {
+            new_siblings = .append(s)
+          }
+          caller_rewrites[res.caller_func.id] = res.caller_rewrite
+          for u in res.upgrades {
+            cur_upgrades = .append(
+              MutVecCallAbiUpgrade.{
+                clone_func: u.clone_func,
+                param_slots: [u.handle_param],
+                return_mutvec: u.return_mutvec,
+                fam: u.fam,
+              },
+            )
+          }
+          next_id = res.next_id
+        }
+      },
+      .Reject(_) => {},
+    }
+  }
+  if caller_rewrites.keys().len() == 0 and new_siblings.len() == 0 {
+    return .{ module, upgrades }
+  }
+  m := module
+  m.functions = collect f in m.functions {
+    case caller_rewrites.get(f.func_id.id) {
+      .Some(rw) => rw,
+      .None => f,
+    }
+  }
+  for s in new_siblings {
+    m.functions = .append(s)
+  }
+  .{ module: m, upgrades: cur_upgrades }
 }
 
 // The partition plan produced by `build_mutvec_call_plan`: which clones/siblings adopt

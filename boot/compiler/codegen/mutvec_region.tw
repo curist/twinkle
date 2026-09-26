@@ -507,6 +507,28 @@ fn producer_source(h: LocalId, defs: Dict<Int, AnfOp>) LocalId? {
   }
 }
 
+// The builder_freeze result local reachable from `h`: `h` itself when its def IS
+// the freeze (opt inlined the `init` alias), else the `init` source when that is
+// the freeze. `.None` when neither is a freeze.
+fn collect_freeze_temp(h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) LocalId? {
+  case defs.get(h.id) {
+    .Some(.ACall(.AGlobalFunc(g), _)) => if g.id == ids.freeze_box.id {
+      .Some(h)
+    } else {
+      .None
+    },
+    .Some(.AInit(.ALocal(src))) => case defs.get(src.id) {
+      .Some(.ACall(.AGlobalFunc(g), _)) => if g.id == ids.freeze_box.id {
+        .Some(src)
+      } else {
+        .None
+      },
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
 // Region info threaded through the rewrite walk (ctx-first so the walk reads as
 // inherent-method steps). Exactly one producer field is populated per region:
 // `make_src` for MakeSeed; `builder_new_local` + `builder_aliases` + `freeze_temp`
@@ -676,6 +698,11 @@ fn collect_push_results_op(local: LocalId, op: AnfOp, mids: MutVecIds, acc: Dict
 type BuilderTrace = .{ aliases: Dict<Int, Bool>, new_local: Int }
 
 fn trace_builder(cur: Int, defs: Dict<Int, AnfOp>, ids: OpIds, aliases: Dict<Int, Bool>) BuilderTrace? {
+  // Cycle guard: a malformed/looping `init` alias chain would otherwise recurse
+  // forever. Re-entry means the chain is not a clean builder lineage — bail.
+  if aliases.has(cur) {
+    return .None
+  }
   aliases[cur] = true
   case defs.get(cur) {
     .Some(op) => case op {
@@ -719,7 +746,10 @@ fn build_ctx(r: MutVecRegion, defs: Dict<Int, AnfOp>, ids: OpIds, mids: MutVecId
       .Some(empty)
     },
     .CollectSeed => {
-      freeze_temp := case producer_source(r.handle, defs) {
+      // The freeze result is either the handle itself (opt copy-propagated the
+      // `init` alias away, so the record/threaded value uses the freeze directly)
+      // or its `init` source. Both flatten identically.
+      freeze_temp := case collect_freeze_temp(r.handle, defs, ids) {
         .Some(s) => s,
         .None => return .None,
       }
