@@ -35,6 +35,112 @@
 
 ---
 
+## Status (2026-09-26, session 3) — slice-1 COMMITTED + green; remaining = perf gate
+
+> **READ THIS FIRST.** This block is the authoritative current state. The
+> `Status (2026-09-25)` and `Status (2026-09-26, session 2)` blocks below, and the
+> per-step checkboxes in Tasks 4–5, are historical: their work is now done and
+> committed via the propagation carry-through (A–E), not the original
+> decompose-per-task structure. Do not re-do them.
+
+**Slice-1 of the aggregate MutVec ABI is functionally complete, committed, and
+self-host green.** Ordinary immutable `permute.tw`-shaped code (record carrier
+`State.{ values: Vector<Int>, count }` threaded through recursion) now auto-stays
+in flat MutVec storage across the whole `permute → swap → set_at` call chain, no
+`@std.buffer`.
+
+**Committed on branch `recursive-mutvec-abi`:**
+- `feat(mutvec): flatten recursive aggregate carriers via flat-handle propagation`
+  — the engine (`mutvec_propagate.tw`), orchestration (`mutvec_aggregate_phase.tw`),
+  backend repr, and recast boundary fixtures.
+- `fix(ownership): bound the field-flow fixpoint to stop a stage1 compile hang`
+  — see "Key finding" #1 below.
+- Foundation already committed earlier: `feat(variants): close owned routes across
+  recursive SCCs` (Task 0), `feat(ownership): track vector field lineage through
+  record reconstruction` (Task 2 prerequisite), `feat(mutvec): detect…` /
+  `verify recursive aggregate carriers` (Tasks 2–3), `feat(mutvec):
+  record-explosion transform for the aggregate ABI` (`decompose_clone`).
+
+**Verified green:** `make bundle-cli` completes in ~1m35s; `make stage2` reaches a
+self-host fixed point (stage3 == stage4, byte-identical); 3736/3736 boot tests
+pass; fmt + lint clean. Runtime correctness via `target/twk run boot/main.tw --
+run <fixture>`: scratch → 8660 (== AWFY permute expected), escape → 8660/0,
+field_escape → 0.
+
+**What the carry-through achieved (supersedes Tasks 4–5):**
+- **A. Orchestration** — `mutvec_aggregate_phase.tw` wired unconditionally into
+  `run_mutvec_call` (`run_aggregate`); a structural no-op when zero regions are
+  accepted (boot source), so the self-host fixed point holds with no flag.
+- **B. Caller rewrite** — producer thaw (reusing `mutvec_region` region rewrite) +
+  linear record-explosion around the entry call + freeze boundary (DeadField 0,
+  Publish 1).
+- **C. Backend repr** — `apply_mutvec_call_abi_upgrades` now respects
+  `return_mutvec` and propagates MutVec-ness through init/assign alias chains
+  (fixed the "physical vector repr mismatch at AInit" backend-verifier error).
+- **D. Fixtures** — `recursive_record_two_hop` ACCEPTs (legit multi-hop
+  `work→swap→inner→set_at`); `shared_helper` / `helper_closure` /
+  `field_alias_hop` / `by_value_helper` stay persistent (trip-wire guards).
+- **E.** All tests green; committed.
+
+**REMAINING WORK:**
+1. **Task 6 — the performance gate (the only thing gating "slice landed").** NOT
+   YET MEASURED. Run the AWFY samples and apply the gate (commands in Task 6
+   below): ordinary `permute` median ≤ 1.25× `permute_mut` and ≤ 1.50× LuaJIT. If
+   it fails, profile the residual, open a follow-up plan, and leave this plan
+   incomplete — do NOT weaken the gate or recommend `permute_mut` source style.
+   Then update docs (Task 6 Step 6) and do the Task 7 branch review.
+2. **Broader feature (beyond slice-1, currently force-persistent by design):** the
+   transitive multi-hop depth widening past one verified hop, the
+   `by_value_helper` access-path key (`[Field(vec)]`), and multi-scalar carriers.
+   Each has a red trip-wire fixture already. Only pursue when a measured need
+   justifies it.
+3. **Latent follow-up (low priority):** make the field-flow lattice properly
+   monotone (Key finding #1) so the optimization is never silently dropped on a
+   non-converging function.
+
+**Key findings / gotchas (carry forward):**
+1. **The bundle hang was the field-flow fixpoint, not the aggregate code.**
+   `collect_field_flow_with_live` in `boot/compiler/ownership.tw` runs an
+   *uncapped* `for changed { … }` dataflow fixpoint. The field-lineage enrichment
+   made `join_fact` compute
+   `fields_known = a.fields_known and b.fields_known and a.fields == b.fields`;
+   that equality is not a monotone meet, so on a self-looping block the fact
+   oscillates and the loop spins forever (hit on gen_bridge's `export`, a single
+   self-looping block). Fixed with a cap + `conservative_field_flow` fallback,
+   mirroring the SCC summary fixpoint. The real monotone fix is the low-priority
+   follow-up above (needs explicit-ambiguous-entry normalization, because a
+   reconstructed field's origin can differ from its own field id).
+2. **stage1-under-deno amplifies superlinear/non-terminating compile work ~30–60×;
+   native stage0 build (~4s) and `target/twk test` do NOT catch it** (they never
+   compile gen_bridge). Any new per-module analysis in `run_mutvec_call` /
+   `run_aggregate` MUST be linear in module size (past regressions: per-route
+   full-module scans, O(body²) `collect_ops`). Reproduce a suspected compile hang
+   natively in seconds:
+   ```bash
+   ./target/release/twk build boot/main.tw -o target/boot-stage1.wasm
+   TWINKLE_TIMINGS=1 BOOT_WASM=target/boot-stage1.wasm deno run \
+     --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs \
+     build boot/tests/gen_bridge_wasm.tw -o /tmp/gb.wasm > /tmp/gb.log 2>&1; echo "exit=$?"
+   grep -a '\[time' /tmp/gb.log   # last phase before the hang = culprit
+   ```
+   Capture exit WITHOUT a pipe (a `| tail` masks timeout 124 as 0).
+3. **`target/twk wat/run/build/ir <x>` uses the PREBUILT binary** (no source
+   edits). To exercise edits without a full bundle: `target/twk run boot/main.tw
+   -- run|wat|ir <fixture>` (interpreted current source), or `target/twk test`
+   (compiles fixtures through current source).
+4. **No feature flag** (user decision): the aggregate pass runs unconditionally
+   and is a no-op when zero regions are accepted, preserving the self-host fixed
+   point automatically.
+
+**Slice-1 files:** new `boot/compiler/codegen/mutvec_propagate.tw`,
+`boot/compiler/codegen/mutvec_aggregate_phase.tw`; modified
+`boot/compiler/codegen/mutvec_call_phase.tw`, `…/mutvec_region.tw`,
+`…/mutvec_aggregate_region.tw`, `boot/compiler/backend/mutvec_repr.tw`,
+`boot/compiler/ownership.tw`; tests in
+`boot/tests/suites/mutvec_call_suite.tw`. Test loop: `target/twk test --filter
+"aggregate"` (also `"recursive record"`, `"mutvec call"`). Related dig note (the
+hang investigation, archived): `docs/plans/archive/2026-09-26-aggregate-mutvec-bundle-hang-dignote.md`.
+
 ## Status (2026-09-25)
 
 Tasks 0–3 landed. Task 2 required a foundation the plan under-specified: owned
@@ -454,6 +560,11 @@ git commit -m "feat(mutvec): verify recursive aggregate carriers"
 
 ### Task 4: Rewrite the Private Clone to a Decomposed ABI
 
+> **DONE / SUPERSEDED (see session-3 Status).** Realized via the flat-handle
+> propagation carry-through (engine + orchestration), not this per-step decompose
+> structure. Committed and green. The steps below are historical reference for the
+> intent; do not execute them.
+
 **Files:**
 - Modify: `boot/compiler/codegen/mutvec_call_phase.tw`
 - Modify: `boot/compiler/backend/mutvec_repr.tw`
@@ -533,6 +644,11 @@ git commit -m "feat(mutvec): decompose recursive aggregate ABI"
 
 ### Task 5: Materialize Observed Results and Partition Mixed Callers
 
+> **DONE / SUPERSEDED (see session-3 Status).** Freeze boundaries (0 dead / 1
+> published) and persistent-vs-flat partitioning are implemented via the
+> carry-through and covered by the recast boundary fixtures. Committed and green.
+> Historical reference only; do not execute the steps below.
+
 **Files:**
 - Modify: `boot/compiler/codegen/mutvec_call_phase.tw`
 - Modify: `boot/compiler/backend/mutvec_repr.tw`
@@ -582,6 +698,10 @@ git commit -m "feat(mutvec): materialize recursive carrier boundaries"
 ```
 
 ### Task 6: Make Ordinary AWFY Permute the Performance Gate
+
+> **← START HERE (next session).** This is the remaining gate. Tasks 0–5 are done
+> and committed; the self-host fixed point (Step 1) already holds. Run Steps 2–7 to
+> measure the AWFY gate and, if it passes, mark the slice landed and update docs.
 
 **Files:**
 - Modify: `examples/performance/awfy/README.md`
