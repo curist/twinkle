@@ -38,6 +38,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutvec_aggregate_region
+use compiler.codegen.mutvec_aggregate_rewrite
 use compiler.codegen.mutvec_aggregate_verify
 use compiler.codegen.mutvec_call_phase
 use compiler.codegen.mutvec_call_region
@@ -155,6 +156,24 @@ fn has_aggregate_permute_route(dec: mutvec_call_phase.MutVecCallDecision) Bool {
   run_fn := find_func(dec.module, "run")
   dec.module.functions.any(fn(f) { f.name.contains("permute")
     and f.name.ends_with("$mvagg") and func_calls(dec.module, run_fn.func_id.id, f.func_id.id) })
+}
+
+fn body_builds_record(e: AnfExpr, tid: Int) Bool {
+  case e {
+    .Let(_, op, _, rest) => op_builds_record(op, tid) or body_builds_record(rest, tid),
+    _ => false,
+  }
+}
+
+fn op_builds_record(op: AnfOp, tid: Int) Bool {
+  case op {
+    .ARecord(t, _) => t.id == tid,
+    .AIf(_, t, e) => body_builds_record(t, tid) or body_builds_record(e, tid),
+    .AMatch(_, arms) => arms.any(fn(a) { body_builds_record(a.body, tid) }),
+    .ALoop(b) => body_builds_record(b, tid),
+    .ADefer(b) => body_builds_record(b, tid),
+    _ => false,
+  }
 }
 
 // Any decomposed aggregate flat clone at all — the boundary guard for shapes the
@@ -649,6 +668,40 @@ pub fn suite() runner.Suite {
           regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
           try assert.equal(regions.len(), 0)
         }
+        .Ok({})
+      },
+    )
+    .test(
+      "decompose_clone builds a scalar-returning vhandle sibling",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        r := regions[0]
+        clone := case st.spec.anf.functions.find(fn(f) { f.func_id.id == r.clone_func.id }) {
+          .Some(f) => f,
+          .None => return .Err("clone function not found in module"),
+        }
+        sib := case mutvec_aggregate_rewrite.decompose_clone(clone, r, 999999, Dict.new()) {
+          .Some(s) => s,
+          .None => return .Err("decompose_clone bailed on the scratch clone"),
+        }
+
+        // carrier param (1) replaced by vhandle + scalar → one extra param
+        try assert.equal(sib.params.len(), clone.params.len() + 1)
+        try assert.ok(sib.return_ty == .Int, "sibling returns the scalar Int, not the record")
+        try assert.ok(sib.name.ends_with("$mvagg"), "sibling is a named aggregate clone")
+        try assert.equal(sib.func_id.id, 999999)
+
+        // recursion retargets to the sibling itself with decomposed args
+        try assert.ok(
+          body_calls_func(sib.body, 999999),
+          "recursive edge retargeted to the decomposed sibling",
+        )
+        try assert.ok(
+          !body_builds_record(sib.body, r.carrier_type.id),
+          "carrier reconstruction is exploded away",
+        )
         .Ok({})
       },
     )

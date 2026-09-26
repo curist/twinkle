@@ -1,0 +1,507 @@
+//! Record-explosion for the aggregate MutVec ABI (slice-1).
+//!
+//! `decompose_clone` turns an owned reconstruction clone
+//! `permute(state: Carrier, …) Carrier` into a private sibling
+//! `permute$mvagg(vhandle, scalar, …) Scalar`: the carrier's collection field
+//! becomes a flat in-place handle parameter the caller retains, the one threaded
+//! scalar field becomes an ordinary param/return, and the record disappears.
+//!
+//! Every `Carrier`-typed local is "exploded" into a `(vec, scalar)` local pair.
+//! Because the handle is threaded by MUTATION through a stable local, control
+//! flow only ever needs to carry the scalar — an `if`/`case`/`break`/return that
+//! used to yield the carrier yields `scalar(carrier)` instead, and the vector is
+//! never a control-flow result (the caller already holds the handle). This is
+//! why the same body shape serves the dead-field and observed-field exits.
+//!
+//! This is a SHAPE transform only; it is sound to run just where the aggregate
+//! verifier accepted and the helper write-calls are being flattened in the same
+//! rewrite (a flat handle must never be reassigned from a persistent result).
+//! Any op it cannot map exactly returns `.None` (all-or-nothing bail → the
+//! persistent clone stands).
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, FieldAtom}
+use compiler.codegen.mutvec_aggregate_region.{AggregateMutVecRegion}
+use compiler.core_ir.{LocalId, Param}
+use compiler.mono_type.{MonoType}
+use lib.source.span
+
+type VecScalar = .{ vec: Int, scalar: Int }
+
+type DecCtx = .{
+  carrier_tid: Int,
+  vector_field: Int,
+  scalar_field: Int,
+  carrier_param: Int,
+  clone_func: Int,
+  sib_id: Int,
+  helper_retarget: Dict<Int, Int>,
+  explode: Dict<Int, VecScalar>,
+  assign_partner: Dict<Int, Int>,
+}
+
+// Build the decomposed `$mvagg` sibling for `clone` under `region`. `sib_id` is
+// the new function id; `helper_retarget` maps each owned vector-helper clone id
+// (e.g. `swap`'s clone) to its flat sibling id, so the flat handle stays flat
+// across the helper call. Returns `.None` on any unmappable shape.
+pub fn decompose_clone(
+  clone: AnfFunctionDef,
+  region: AggregateMutVecRegion,
+  sib_id: Int,
+  helper_retarget: Dict<Int, Int>,
+) AnfFunctionDef? {
+  carrier_tid := region.carrier_type.id
+  if region.scalar_fields.len() != 1 {
+    return .None
+  }
+  scalar_mono := region.scalar_fields[0].mono
+  vector_mono := mono_of_family(region.family)
+  case vector_mono {
+    .None => return .None,
+    .Some(_) => {},
+  }
+  vmono := vector_mono.unwrap()
+
+  // Carrier param must be a Named record whose local we can find.
+  if region.carrier_param < 0 or region.carrier_param >= clone.params.len() {
+    return .None
+  }
+  carrier_param_local := clone.params[region.carrier_param].local.id
+
+  // Pre-pass: every carrier-typed local (the param + any local whose result mono
+  // is the carrier record) gets a fresh (vec, scalar) pair; every carrier→carrier
+  // assign gets one fresh partner void local. All fresh ids are allocated up
+  // front so the rewrite is pure.
+  next := max_local(clone) + 1
+  explode: Dict<Int, VecScalar> = Dict.new()
+  monos := clone.op_result_mono
+
+  carrier_locals := collect_carrier_locals(clone, carrier_tid, carrier_param_local)
+  for lid in carrier_locals {
+    explode[lid] = VecScalar.{ vec: next, scalar: next + 1 }
+    monos[next] = vmono
+    monos[next + 1] = scalar_mono
+    next = next + 2
+  }
+
+  assign_partner: Dict<Int, Int> = Dict.new()
+  for vb in collect_carrier_assign_binders(clone.body, explode) {
+    assign_partner[vb] = next
+    monos[next] = .Void
+    next = .inc()
+  }
+
+  ctx := DecCtx.{
+    carrier_tid,
+    vector_field: region.vector_field.id,
+    scalar_field: region.scalar_fields[0].field.id,
+    carrier_param: region.carrier_param,
+    clone_func: region.clone_func.id,
+    sib_id,
+    helper_retarget,
+    explode,
+    assign_partner,
+  }
+
+  new_body := case rw_tail(clone.body, ctx, true) {
+    .Some(b) => b,
+    .None => return .None,
+  }
+
+  cp := case explode.get(carrier_param_local) {
+    .Some(x) => x,
+    .None => return .None,
+  }
+  new_params: Vector<Param> = []
+  for p, i in clone.params {
+    if i == region.carrier_param {
+      new_params = .append(Param.{ local: .{ id: cp.vec }, ty: vmono })
+      new_params = .append(Param.{ local: .{ id: cp.scalar }, ty: scalar_mono })
+    } else {
+      new_params = .append(p)
+    }
+  }
+
+  .Some(
+    AnfFunctionDef.{
+      func_id: .{ id: sib_id },
+      name: "${clone.name}$mvagg",
+      is_init: false,
+      params: new_params,
+      op_result_mono: monos,
+      body: new_body,
+      return_ty: scalar_mono,
+    },
+  )
+}
+
+fn mono_of_family(family: String) MonoType? {
+  case family {
+    "vec_i64" => .Some(.Vector(.Int)),
+    "vec_bool" => .Some(.Vector(.Bool)),
+    "vec_f64" => .Some(.Vector(.Float)),
+    "vec_byte" => .Some(.Vector(.Byte)),
+    _ => .None,
+  }
+}
+
+fn max_local(f: AnfFunctionDef) Int {
+  m := 0
+  for p in f.params {
+    if p.local.id > m {
+      m = p.local.id
+    }
+  }
+  for k, _v in f.op_result_mono {
+    if k > m {
+      m = k
+    }
+  }
+  m
+}
+
+fn collect_carrier_locals(clone: AnfFunctionDef, carrier_tid: Int, param_local: Int) Vector<Int> {
+  seen: Dict<Int, Bool> = Dict.new()
+  out: Vector<Int> = [param_local]
+  seen[param_local] = true
+  for k, mono in clone.op_result_mono {
+    case mono {
+      .Named(t, _) => if t.id == carrier_tid {
+        case seen.get(k) {
+          .Some(_) => {},
+          .None => {
+            seen[k] = true
+            out = .append(k)
+          },
+        }
+      },
+      _ => {},
+    }
+  }
+  out.sort_by(fn(a, b) { a.compare(b) })
+}
+
+// Void binders of `assign LC = LX` where both are carrier locals — each needs a
+// second (scalar) assign, hence a partner void local.
+fn collect_carrier_assign_binders(e: AnfExpr, explode: Dict<Int, VecScalar>) Vector<Int> {
+  case e {
+    .Let(binder, op, _, rest) => {
+      here: Vector<Int> = case op {
+        .AAssign(target, value) => if explode.get(target.id).is_some()
+          and atom_is_carrier(value, explode) {
+          [binder.id]
+        } else {
+          []
+        },
+        _ => [],
+      }
+      here
+        .concat(assign_binders_in_op(op, explode))
+        .concat(collect_carrier_assign_binders(rest, explode))
+    },
+    _ => [],
+  }
+}
+
+fn assign_binders_in_op(op: AnfOp, explode: Dict<Int, VecScalar>) Vector<Int> {
+  case op {
+    .AIf(_, t, e) => collect_carrier_assign_binders(t, explode).concat(
+      collect_carrier_assign_binders(e, explode),
+    ),
+    .AMatch(_, arms) => {
+      out: Vector<Int> = []
+      for arm in arms {
+        out = .concat(collect_carrier_assign_binders(arm.body, explode))
+      }
+      out
+    },
+    .ALoop(body) => collect_carrier_assign_binders(body, explode),
+    .ADefer(body) => collect_carrier_assign_binders(body, explode),
+    _ => [],
+  }
+}
+
+// ── the pure rewrite ────────────────────────────────────────────────
+fn rw_tail(e: AnfExpr, ctx: DecCtx, tail: Bool) AnfExpr? {
+  case e {
+    .Let(binder, op, sp, rest) => {
+      cont := try rw_tail(rest, ctx, tail)
+      emit_binder(binder, op, sp, ctx, tail, cont)
+    },
+    .Atom(a) => .Some(.Atom(try explode_tail_atom(a, ctx, tail))),
+    .Return(ma) => case ma {
+      .Some(a) => .Some(.Return(.Some(try explode_tail_atom(a, ctx, tail)))),
+      .None => .Some(.Return(.None)),
+    },
+    .Break(ma) => case ma {
+      .Some(a) => .Some(.Break(.Some(try explode_tail_atom(a, ctx, tail)))),
+      .None => .Some(.Break(.None)),
+    },
+    .Continue => .Some(.Continue),
+  }
+}
+
+// A carrier atom is legal only in scalar-tail position (the vector is threaded by
+// mutation, never returned). Elsewhere a bare carrier atom is an unmapped flow.
+fn explode_tail_atom(a: Atom, ctx: DecCtx, tail: Bool) Atom? {
+  case a {
+    .ALocal(l) => case ctx.explode.get(l.id) {
+      .Some(vs) => if tail {
+        .Some(.ALocal(.{ id: vs.scalar }))
+      } else {
+        .None
+      },
+      .None => .Some(a),
+    },
+    _ => .Some(a),
+  }
+}
+
+fn emit_binder(binder: LocalId, op: AnfOp, sp: span.Span, ctx: DecCtx, tail: Bool, cont: AnfExpr) AnfExpr? {
+  case ctx.explode.get(binder.id) {
+    .Some(vs) => vs.emit_carrier_binder(op, sp, ctx, tail, cont),
+    .None => emit_scalar_binder(binder, op, sp, ctx, tail, cont),
+  }
+}
+
+// The binder is a carrier local → produce its (vec, scalar) components.
+fn emit_carrier_binder(
+  vs: VecScalar,
+  op: AnfOp,
+  sp: span.Span,
+  ctx: DecCtx,
+  _tail: Bool,
+  cont: AnfExpr,
+) AnfExpr? {
+  vecl := LocalId.{ id: vs.vec }
+  scl := LocalId.{ id: vs.scalar }
+  case op {
+    .ARecord(tid, fields) => if tid.id == ctx.carrier_tid {
+      vf := try field_value(fields, ctx.vector_field)
+      sf := try field_value(fields, ctx.scalar_field)
+
+      // field values must be ordinary (non-carrier) atoms
+      if atom_is_carrier(vf, ctx.explode) or atom_is_carrier(sf, ctx.explode) {
+        .None
+      } else {
+        .Some(.Let(vecl, .AInit(vf), sp, .Let(scl, .AInit(sf), sp, cont)))
+      }
+    } else {
+      .None
+    },
+    .AInit(a) => case carrier_components(a, ctx) {
+      .Some(src) => .Some(
+        .Let(
+          vecl,
+          .AInit(.ALocal(.{ id: src.vec })),
+          sp,
+          .Let(scl, .AInit(.ALocal(.{ id: src.scalar })), sp, cont),
+        ),
+      ),
+      .None => .None,
+    },
+    .ACall(.AGlobalFunc(f), args) => if f.id == ctx.clone_func {
+      // recursive edge: pass (vec, scalar) of the carrier arg, consume the scalar
+      // result, keep the same flat handle.
+      ca := try nth(args, ctx.carrier_param)
+      src := try carrier_components(ca, ctx)
+      new_args := splice_carrier(args, ctx.carrier_param, src)
+      .Some(
+        .Let(
+          scl,
+          .ACall(.AGlobalFunc(.{ id: ctx.sib_id }), new_args),
+          sp,
+          .Let(vecl, .AInit(.ALocal(.{ id: src.vec })), sp, cont),
+        ),
+      )
+    } else {
+      .None // a helper returning the carrier (by-value) is out of slice-1
+    },
+    .AIf(c, t, e) => {
+      tt := try rw_tail(t, ctx, true)
+      ee := try rw_tail(e, ctx, true)
+      .Some(.Let(scl, .AIf(c, tt, ee), sp, cont))
+    },
+    .AMatch(scrut, arms) => {
+      new_arms := try rw_match_arms(arms, ctx, true)
+      .Some(.Let(scl, .AMatch(scrut, new_arms), sp, cont))
+    },
+    _ => .None,
+  }
+}
+
+// The binder is not a carrier → rewrite the op, splitting a carrier→carrier
+// assign into two, and recursing into control flow. Any op that mentions a
+// carrier local it does not know how to map bails.
+fn emit_scalar_binder(
+  binder: LocalId,
+  op: AnfOp,
+  sp: span.Span,
+  ctx: DecCtx,
+  tail: Bool,
+  cont: AnfExpr,
+) AnfExpr? {
+  case op {
+    .ARecordGet(base, field, tid) => case carrier_components(base, ctx) {
+      .Some(src) => cond {
+        tid.id == ctx.carrier_tid and field.id == ctx.vector_field => .Some(
+          .Let(binder, .AInit(.ALocal(.{ id: src.vec })), sp, cont),
+        ),
+        tid.id == ctx.carrier_tid and field.id == ctx.scalar_field => .Some(
+          .Let(binder, .AInit(.ALocal(.{ id: src.scalar })), sp, cont),
+        ),
+        _ => .None,
+      },
+      .None => .Some(.Let(binder, op, sp, cont)),
+    },
+    .AAssign(target, value) => case ctx.explode.get(target.id) {
+      .Some(tvs) => case carrier_components(value, ctx) {
+        .Some(svs) => {
+          partner := try dget(ctx.assign_partner, binder.id)
+          .Some(
+            .Let(
+              binder,
+              .AAssign(.{ id: tvs.vec }, .ALocal(.{ id: svs.vec })),
+              sp,
+              .Let(
+                .{ id: partner },
+                .AAssign(.{ id: tvs.scalar }, .ALocal(.{ id: svs.scalar })),
+                sp,
+                cont,
+              ),
+            ),
+          )
+        },
+        .None => .None,
+      },
+      .None => if op_mentions_carrier(op, ctx) {
+        .None
+      } else {
+        .Some(.Let(binder, op, sp, cont))
+      },
+    },
+    .ACall(.AGlobalFunc(f), args) => cond {
+      dget(ctx.helper_retarget, f.id).is_some() => .Some(
+        .Let(
+          binder,
+          .ACall(.AGlobalFunc(.{ id: dget(ctx.helper_retarget, f.id).unwrap() }), args),
+          sp,
+          cont,
+        ),
+      ),
+      op_mentions_carrier(op, ctx) => .None,
+      _ => .Some(.Let(binder, op, sp, cont)),
+    },
+    .AIf(c, t, e) => {
+      tt := try rw_tail(t, ctx, false)
+      ee := try rw_tail(e, ctx, false)
+      .Some(.Let(binder, .AIf(c, tt, ee), sp, cont))
+    },
+    .AMatch(scrut, arms) => {
+      new_arms := try rw_match_arms(arms, ctx, false)
+      .Some(.Let(binder, .AMatch(scrut, new_arms), sp, cont))
+    },
+    .ALoop(body) => {
+      nb := try rw_tail(body, ctx, false)
+      .Some(.Let(binder, .ALoop(nb), sp, cont))
+    },
+    .ADefer(body) => {
+      nb := try rw_tail(body, ctx, false)
+      .Some(.Let(binder, .ADefer(nb), sp, cont))
+    },
+    _ => if op_mentions_carrier(op, ctx) {
+      .None
+    } else {
+      .Some(.Let(binder, op, sp, cont))
+    },
+  }
+}
+
+fn rw_match_arms(arms: Vector<AnfMatchArm>, ctx: DecCtx, tail: Bool) Vector<AnfMatchArm>? {
+  out: Vector<AnfMatchArm> = []
+  for arm in arms {
+    body := try rw_tail(arm.body, ctx, tail)
+    out = .append(AnfMatchArm.{ pattern: arm.pattern, body })
+  }
+  .Some(out)
+}
+
+// ── small helpers ───────────────────────────────────────────────────
+fn carrier_components(a: Atom, ctx: DecCtx) VecScalar? {
+  case a {
+    .ALocal(l) => ctx.explode.get(l.id),
+    _ => .None,
+  }
+}
+
+fn atom_is_carrier(a: Atom, explode: Dict<Int, VecScalar>) Bool {
+  case a {
+    .ALocal(l) => explode.get(l.id).is_some(),
+    _ => false,
+  }
+}
+
+fn field_value(fields: Vector<FieldAtom>, fid: Int) Atom? {
+  for fa in fields {
+    if fa.field.id == fid {
+      return .Some(fa.value)
+    }
+  }
+  .None
+}
+
+fn splice_carrier(args: Vector<Atom>, at: Int, src: VecScalar) Vector<Atom> {
+  out: Vector<Atom> = []
+  for a, i in args {
+    if i == at {
+      out = .append(.ALocal(.{ id: src.vec }))
+      out = .append(.ALocal(.{ id: src.scalar }))
+    } else {
+      out = .append(a)
+    }
+  }
+  out
+}
+
+fn op_mentions_carrier(op: AnfOp, ctx: DecCtx) Bool {
+  found := false
+  for a in op_atoms(op) {
+    if atom_is_carrier(a, ctx.explode) {
+      found = true
+    }
+  }
+  found
+}
+
+fn op_atoms(op: AnfOp) Vector<Atom> {
+  case op {
+    .ACall(c, args) => [c].concat(args),
+    .ABinOp(_, a, b, _) => [a, b],
+    .AUnOp(_, a, _) => [a],
+    .ARecord(_, fields) => collect fa in fields {
+      fa.value
+    },
+    .ARecordGet(base, _, _) => [base],
+    .ARecordUpdate(base, _, v, _, _) => [base, v],
+    .AVariant(_, _, args) => args,
+    .AArrayLit(args) => args,
+    .AIndex(base, idx, _, _) => [base, idx],
+    .AInit(a) => [a],
+    .AAssign(_, a) => [a],
+    .AGlobalSet(_, a) => [a],
+    .AWrapAnyref(a, _) => [a],
+    .AUnwrapAnyref(a, _) => [a],
+    _ => [],
+  }
+}
+
+fn nth(xs: Vector<Atom>, i: Int) Atom? {
+  if i >= 0 and i < xs.len() {
+    .Some(xs[i])
+  } else {
+    .None
+  }
+}
+
+fn dget(d: Dict<Int, Int>, k: Int) Int? {
+  d.get(k)
+}
