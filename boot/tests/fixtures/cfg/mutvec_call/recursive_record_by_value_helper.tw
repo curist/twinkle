@@ -1,0 +1,25 @@
+type State = .{ values: Vector<Int>, count: Int }
+
+fn swap_state(s: State, i: Int, j: Int) State {
+  a := s.values[i]
+  b := s.values[j]
+  State.{ values: s.values.set_at(i, b).set_at(j, a), count: s.count }
+}
+
+fn work(s: State, n: Int) State {
+  next := swap_state(State.{ values: s.values, count: s.count + 1 }, 0, 1)
+  if n == 0 {
+    next
+  } else {
+    work(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  base: Vector<Int> = collect _ in range(4) {
+    0
+  }
+  work(State.{ values: base, count: 0 }, 3).count
+}
+
+println(run())

@@ -157,6 +157,13 @@ fn has_aggregate_permute_route(dec: mutvec_call_phase.MutVecCallDecision) Bool {
     and f.name.ends_with("$mvagg") and func_calls(dec.module, run_fn.func_id.id, f.func_id.id) })
 }
 
+// Any decomposed aggregate flat clone at all — the boundary guard for shapes the
+// propagation must leave persistent (over-hop, shared helper, aliased handle,
+// not-yet-supported carrier-by-value).
+fn has_any_mvagg_clone(dec: mutvec_call_phase.MutVecCallDecision) Bool {
+  dec.module.functions.any(fn(f) { f.name.ends_with("$mvagg") })
+}
+
 // The `$mvagg` suffix mangles to `_mvagg` in WAT. Require this exact private
 // aggregate clone so a persistent `permute` or `set_at__Int` cannot satisfy it.
 fn aggregate_permute_wat_body(wat: String) Result<String, String> {
@@ -641,6 +648,32 @@ pub fn suite() runner.Suite {
           st := mutvec_call_stage(fixture_path(name))
           regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
           try assert.equal(regions.len(), 0)
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "aggregate propagation boundary shapes stay persistent",
+      fn() Result<Void, String> {
+        // Slice-1 propagates flatness ONE verified hop for a single-collection,
+        // single-scalar carrier. These shapes must never yield an aggregate flat
+        // clone: a two-hop write, a helper shared by two roots, a helper that
+        // aliases the handle in a closure, a caller-side surviving field alias,
+        // and the carrier-by-value helper (a future access-path-keyed accept).
+        // A regression trip-wire if the fixpoint or a hop ever over-reaches.
+        for name in [
+          "recursive_record_two_hop",
+          "recursive_record_shared_helper",
+          "recursive_record_helper_closure",
+          "recursive_record_field_alias_hop",
+          "recursive_record_by_value_helper",
+        ] {
+          st := mutvec_call_stage(fixture_path(name))
+          dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
+          try assert.ok(
+            !has_any_mvagg_clone(dec),
+            "${name} must stay persistent (no aggregate flat clone)",
+          )
         }
         .Ok({})
       },
@@ -1438,8 +1471,16 @@ pub fn suite() runner.Suite {
           .Some(body) => body,
           .None => return .Err("run function not found in WAT"),
         }
-        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
-        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+
+        // The flat write lands wherever propagation flattened it (the `swap`
+        // clone), not necessarily in `permute$mvagg` itself — assert it in the
+        // propagated clone graph, and that the aggregate clone drops persistent
+        // sets of its own.
+        try assert.ok(
+          count_all_op_calls(wat, "mutvec_set_i64") > 0,
+          "flat write lands in the propagated clone graph",
+        )
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
         try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 0)
         .Ok({})
       },
@@ -1455,8 +1496,16 @@ pub fn suite() runner.Suite {
           .Some(body) => body,
           .None => return .Err("run function not found in WAT"),
         }
-        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
-        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+
+        // The flat write lands wherever propagation flattened it (the `swap`
+        // clone), not necessarily in `permute$mvagg` itself — assert it in the
+        // propagated clone graph, and that the aggregate clone drops persistent
+        // sets of its own.
+        try assert.ok(
+          count_all_op_calls(wat, "mutvec_set_i64") > 0,
+          "flat write lands in the propagated clone graph",
+        )
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
         try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
         try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
         .Ok({})
@@ -1473,8 +1522,16 @@ pub fn suite() runner.Suite {
           .Some(body) => body,
           .None => return .Err("run function not found in WAT"),
         }
-        try assert.ok(clone.contains("mutvec_set_i64"), "private clone must write via MutVec")
-        try assert.ok(!clone.contains("rt_arr__set"), "private clone must drop persistent set")
+
+        // The flat write lands wherever propagation flattened it (the `swap`
+        // clone), not necessarily in `permute$mvagg` itself — assert it in the
+        // propagated clone graph, and that the aggregate clone drops persistent
+        // sets of its own.
+        try assert.ok(
+          count_all_op_calls(wat, "mutvec_set_i64") > 0,
+          "flat write lands in the propagated clone graph",
+        )
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
         try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
         try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
         .Ok({})

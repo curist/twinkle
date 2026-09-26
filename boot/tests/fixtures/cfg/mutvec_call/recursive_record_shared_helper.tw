@@ -1,0 +1,36 @@
+type State = .{ values: Vector<Int>, count: Int }
+
+fn swap(v: Vector<Int>, i: Int, j: Int) Vector<Int> {
+  a := v[i]
+  b := v[j]
+  v.set_at(i, b).set_at(j, a)
+}
+
+fn work_a(s: State, n: Int) State {
+  next := State.{ values: swap(s.values, 0, 1), count: s.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    work_a(next, n - 1)
+  }
+}
+
+fn work_b(s: State, n: Int) State {
+  next := State.{ values: swap(s.values, 0, 1), count: s.count + 2 }
+  if n == 0 {
+    next
+  } else {
+    work_b(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  base: Vector<Int> = collect _ in range(4) {
+    0
+  }
+  a := work_a(State.{ values: base, count: 0 }, 3)
+  b := work_b(State.{ values: base, count: 0 }, 3)
+  a.count + b.count
+}
+
+println(run())
