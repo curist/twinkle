@@ -8492,6 +8492,20 @@ pub fn collect_field_reqs_with_live(
 
 type FieldFlowResult = .{ reqs: Dict<Int, vid.PathSet>, returns: Dict<Int, FlowFact> }
 
+// The conservative field-flow result: every return path certifies no field-lineage
+// ownership (`ff_none`) and no in-place field requirements. Used when the flow
+// fixpoint does not converge, so the function safely falls back to the generic path.
+fn conservative_field_flow(blocks: Vector<CfgBlock>) FieldFlowResult {
+  returns: Dict<Int, FlowFact> = Dict.new()
+  for blk in blocks {
+    case return_atom(blk) {
+      .Some(_) => returns[blk.id.id] = ff_none(),
+      .None => {},
+    }
+  }
+  .{ reqs: Dict.new(), returns }
+}
+
 fn collect_field_flow_with_live(
   f: CfgFunction,
   table: SummaryTable,
@@ -8512,8 +8526,23 @@ fn collect_field_flow_with_live(
     exits[blk.id.id] = Dict.new()
     processed = .set(blk.id.id, false)
   }
+
+  // The enriched field-flow lattice is not provably monotone: a reconstructed
+  // field's origin can differ from its own field id, so `join_fact` must keep the
+  // exact-map guard (`a.fields == b.fields`), which is not a monotone meet and can
+  // oscillate across a loop back-edge (e.g. a single self-looping block). Bound the
+  // fixpoint — mirroring the SCC summary fixpoint's safety net — and on
+  // non-convergence fall back to a conservative result: no field-lineage ownership
+  // is certified, so the function stays on the generic path. Real functions
+  // converge in a handful of rounds.
+  cap := blocks.len() * 8 + 64
   changed := true
+  flow_rounds := 0
   for changed {
+    flow_rounds = .inc()
+    if flow_rounds > cap {
+      return conservative_field_flow(blocks)
+    }
     changed = false
     for blk in blocks {
       entry := flow_join_entry(blk, exits, processed)
