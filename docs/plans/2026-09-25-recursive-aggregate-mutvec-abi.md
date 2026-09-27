@@ -35,9 +35,40 @@
 
 ---
 
+## Status (2026-09-28, session 4) — performance gate narrowly failed
+
+> **READ THIS FIRST.** This is the authoritative current state. Earlier status
+> blocks are retained as implementation history.
+
+Task 6 was run from the committed self-hosted compiler on branch
+`recursive-mutvec-abi`. Correctness stayed green, and emitted WAT confirms the
+selected flat clone graph is `permute$mvagg → swap$mv → set_at$mv`: the helper
+graph uses `mutvec_get_i64`/`mutvec_set_i64` and contains no freeze, persistent
+set, or carrier reconstruction in the recursive hot path.
+
+Three same-build AWFY samples produced these median times:
+
+- ordinary Twinkle `permute`: **4869.31 µs/op**;
+- Twinkle `permute_mut` oracle: **4948.20 µs/op**;
+- LuaJIT `permute`: **3206.45 µs/op**.
+
+Ordinary immutable source therefore beats the manual Buffer oracle
+(`0.984×`) but misses the LuaJIT gate by a narrow margin (`1.519×`, versus the
+required `≤1.50×`). The slice is **not marked landed**, Task 6 remains
+incomplete, and Task 7 has not started. WAT inspection points to residual
+helper-call/index-access overhead after storage flattening; investigation is
+tracked in `docs/plans/2026-09-28-permute-mutvec-hot-path-overhead.md`.
+
+The Task 6 WAT wording below predates flat-handle propagation: mutable reads and
+writes live across the selected clone graph, not literally inside
+`permute$mvagg`. Also, the aggregate census currently renders the accepted
+pre-rewrite row as `would_use=false`; the emitted route and WAT are the
+authoritative consumed-rewrite evidence until that diagnostic is made
+post-rewrite-aware.
+
 ## Status (2026-09-26, session 3) — slice-1 COMMITTED + green; remaining = perf gate
 
-> **READ THIS FIRST.** This block is the authoritative current state. The
+> **HISTORICAL.** The
 > `Status (2026-09-25)` and `Status (2026-09-26, session 2)` blocks below, and the
 > per-step checkboxes in Tasks 4–5, are historical: their work is now done and
 > committed via the propagation carry-through (A–E), not the original
