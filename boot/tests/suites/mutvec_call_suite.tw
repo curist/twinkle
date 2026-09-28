@@ -1613,6 +1613,34 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "aggregate MutVec helpers avoid redundant i64 to i32 index guards",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_scratch")
+        swap := case wat_func_body_where(wat, "swap", "_mv", true) {
+          .Some(body) => body,
+          .None => return .Err("flat swap helper not found in WAT"),
+        }
+        set_at := case wat_func_body_where(wat, "set_at__Int", "_mv", true) {
+          .Some(body) => body,
+          .None => return .Err("flat set_at helper not found in WAT"),
+        }
+
+        // MutVec runtime ops enforce `0 <= index < logical_len`. Passing the
+        // Twinkle Int index through as i64 lets that single check also prove the
+        // eventual i32 array index conversion, so callers need no independent
+        // `index <= i32::MAX` narrowing guard on every read and write.
+        try assert.ok(
+          !swap.contains("i64.const 2147483647"),
+          "swap repeats an index narrowing guard",
+        )
+        try assert.ok(
+          !set_at.contains("i64.const 2147483647"),
+          "set_at repeats an index narrowing guard",
+        )
+        .Ok({})
+      },
+    )
     // Production behavior caught: publishing the whole returned State must
     // freeze its vector once at the run boundary, never inside each update.
     .test(

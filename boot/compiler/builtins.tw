@@ -217,9 +217,9 @@ fn mutvec_abi(name: String) AbiContract? {
       name == "vector$__mutvec_make${s.suffix}" => return .Some(abi([.I32, s.elem], [s.mv_nn])),
       name == "vector$__mutvec_push${s.suffix}" => return .Some(abi([s.mv_null, s.elem], [s.mv_nn])),
       name == "vector$__mutvec_set${s.suffix}" => return .Some(
-        abi([s.mv_null, .I32, s.elem], [s.mv_nn]),
+        abi([s.mv_null, .I64, s.elem], [s.mv_nn]),
       ),
-      name == "vector$__mutvec_get${s.suffix}" => return .Some(abi([s.mv_null, .I32], [s.elem])),
+      name == "vector$__mutvec_get${s.suffix}" => return .Some(abi([s.mv_null, .I64], [s.elem])),
       name == "vector$__mutvec_len${s.suffix}" => return .Some(abi([s.mv_null], [.I32])),
       name == "vector$__mutvec_freeze${s.suffix}" => return .Some(abi([s.mv_null], [s.pvec_nn])),
       _ => {},
