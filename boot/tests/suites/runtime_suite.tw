@@ -975,6 +975,24 @@ fn test_rt_arr_has_internal_helpers() Result<Void, String> {
   .Ok({})
 }
 
+fn test_boxed_mutvec_runtime() Result<Void, String> {
+  types := rt_types.module().types
+  try assert.ok(find_type(types, "MutVecBoxed").is_some(), "missing MutVecBoxed type")
+  funcs := rt_arr.module().funcs
+  for name in [
+    "mutvec_new",
+    "mutvec_make",
+    "mutvec_push",
+    "mutvec_set",
+    "mutvec_get",
+    "mutvec_len",
+    "mutvec_freeze",
+  ] {
+    try assert.ok(find_func(funcs, name).is_some(), "missing boxed ${name}")
+  }
+  .Ok({})
+}
+
 fn test_rt_arr_has_bridge_helpers() Result<Void, String> {
   m := rt_arr.module()
 
@@ -1699,6 +1717,10 @@ pub fn suite() runner.Suite {
     .test("rt.arr: severed from rt.buf (no imports)", test_rt_arr_no_buf_imports)
     .test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals)
     .test("rt.arr: has internal trie helpers", test_rt_arr_has_internal_helpers)
+    .test(
+      "boxed mutvec runtime declares its handle and seven operations",
+      test_boxed_mutvec_runtime,
+    )
     .test("rt.arr: has bridge helpers", test_rt_arr_has_bridge_helpers)
     .test("rt.arr: has builder_extend", test_rt_arr_has_builder_extend)
     .test("rt.arr: make calls push", test_rt_arr_make)

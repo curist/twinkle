@@ -142,6 +142,14 @@ fn mutvec_byte_() ValType {
   ref_nn("rt_types__MutVecByte")
 }
 
+fn mutvec_boxed_n() ValType {
+  ref_null("rt_types__MutVecBoxed")
+}
+
+fn mutvec_boxed_() ValType {
+  ref_nn("rt_types__MutVecBoxed")
+}
+
 fn dict_n() ValType {
   ref_null("rt_types__PDict")
 }
@@ -204,6 +212,13 @@ fn mutvec_specs() Vector<MutVecFamilySpec> {
       mv_null: mutvec_byte_n(),
       mv_nn: mutvec_byte_(),
       pvec_nn: pvec_byte_(),
+    },
+    .{
+      suffix: "",
+      elem: .Anyref,
+      mv_null: mutvec_boxed_n(),
+      mv_nn: mutvec_boxed_(),
+      pvec_nn: pvec_(),
     },
   ]
 }
@@ -805,6 +820,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     .concat(mutvec_rt_defs("_bool"))
     .concat(mutvec_rt_defs("_f64"))
     .concat(mutvec_rt_defs("_byte"))
+    .concat(mutvec_rt_defs(""))
     // Spike-only harness APIs come after every generated family so all
     // established builtin FuncIds remain unchanged.
     .append(

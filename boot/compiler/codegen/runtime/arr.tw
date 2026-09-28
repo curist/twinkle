@@ -352,6 +352,7 @@ pub fn module() WasmModule {
     from_read_file_result_fn(),
     make_empty_fn(),
   ]
+    .concat(family_boxed().mutvec_fns())
     .concat(family_bool().mutvec_fns())
     .concat(family_float().mutvec_fns())
     .concat(family_byte().mutvec_fns())
@@ -1436,7 +1437,7 @@ fn family_boxed() PVecFamily {
     suffix: "",
     leaf_store: [],
     elem_box: [],
-    mutvec_ty: "rt_types__MutVec",
+    mutvec_ty: "rt_types__MutVecBoxed",
   }
 }
 
