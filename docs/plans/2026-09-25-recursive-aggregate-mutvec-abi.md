@@ -35,29 +35,31 @@
 
 ---
 
-## Status (2026-09-28, session 4) — performance gate narrowly failed
+## Status (2026-09-28, session 5) — Task 6 gate PASSED; next = Task 7
 
 > **READ THIS FIRST.** This is the authoritative current state. Earlier status
 > blocks are retained as implementation history.
 
-Task 6 was run from the committed self-hosted compiler on branch
-`recursive-mutvec-abi`. Correctness stayed green, and emitted WAT confirms the
-selected flat clone graph is `permute$mvagg → swap$mv → set_at$mv`: the helper
-graph uses `mutvec_get_i64`/`mutvec_set_i64` and contains no freeze, persistent
-set, or carrier reconstruction in the recursive hot path.
+Task 6 is complete. The first three-sample gate narrowly missed LuaJIT because
+each MutVec get/set call narrowed the Twinkle `Int` index to `i32` under a
+separate caller guard before the runtime repeated the logical-length check. The
+private MutVec ABI now accepts the index as `i64`; its single
+`0 <= index < logical_len` check proves the eventual `i32` array index conversion
+and preserves negative, oversized, and logical-length OOB traps.
 
-Three same-build AWFY samples produced these median times:
+After rebuilding through the self-host fixed point, three same-build AWFY samples
+produced these median times:
 
-- ordinary Twinkle `permute`: **4869.31 µs/op**;
-- Twinkle `permute_mut` oracle: **4948.20 µs/op**;
-- LuaJIT `permute`: **3206.45 µs/op**.
+- ordinary Twinkle `permute`: **4349.85 µs/op**;
+- Twinkle `permute_mut` oracle: **4923.28 µs/op**;
+- LuaJIT `permute`: **6105.90 µs/op** (highly variable in this sample set;
+  the fastest sample was **3288.90 µs/op**).
 
-Ordinary immutable source therefore beats the manual Buffer oracle
-(`0.984×`) but misses the LuaJIT gate by a narrow margin (`1.519×`, versus the
-required `≤1.50×`). The slice is **not marked landed**, Task 6 remains
-incomplete, and Task 7 has not started. WAT inspection points to residual
-helper-call/index-access overhead after storage flattening; investigation is
-tracked in `docs/plans/2026-09-28-permute-mutvec-hot-path-overhead.md`.
+Ordinary immutable source beats the manual Buffer oracle (`0.884×`) and passes
+the prescribed LuaJIT median gate (`0.712×`). It also remains within the gate
+against the fastest LuaJIT sample (`1.323× <= 1.50×`), so the conclusion does not
+depend on the two slow LuaJIT outliers. The recursive aggregate S4 slice is
+landed; Task 7 is the remaining branch-level review.
 
 The Task 6 WAT wording below predates flat-handle propagation: mutable reads and
 writes live across the selected clone graph, not literally inside
@@ -744,7 +746,7 @@ git commit -m "feat(mutvec): materialize recursive carrier boundaries"
 - Consumes: optimized ordinary `permute.tw`, retained `permute_mut.tw` oracle, LuaJIT row.
 - Produces: reproducible correctness/codegen/performance evidence and updated roadmap status.
 
-- [ ] **Step 1: Rebuild the self-hosted compiler and prove a fixed point**
+- [x] **Step 1: Rebuild the self-hosted compiler and prove a fixed point**
 
 ```bash
 make bundle-cli
@@ -755,7 +757,7 @@ shasum -a 256 target/boot.wasm
 
 Expected: the two SHA-256 values match. Do not commit the ignored generated payload.
 
-- [ ] **Step 2: Run correctness suites**
+- [x] **Step 2: Run correctness suites**
 
 ```bash
 make boot-test
@@ -765,7 +767,7 @@ target/twk run examples/performance/awfy/twinkle/permute_mut_test.tw
 
 Expected: all pass.
 
-- [ ] **Step 3: Inspect ordinary Permute WAT and census**
+- [x] **Step 3: Inspect ordinary Permute WAT and census**
 
 ```bash
 target/twk wat examples/performance/awfy/twinkle/main.tw --func permute --calls
@@ -779,7 +781,7 @@ Acceptance:
 - it emits zero `mutvec_freeze` calls because only `count` is observed;
 - the census prints the ownership proof, recursive routes, dead exit, and consumed rewrite.
 
-- [ ] **Step 4: Run three same-session AWFY samples**
+- [x] **Step 4: Run three same-session AWFY samples**
 
 ```bash
 examples/performance/awfy/run.sh
@@ -789,7 +791,7 @@ examples/performance/awfy/run.sh
 
 Record medians for `twinkle permute`, `twinkle permute_mut`, and `luajit permute`. Do not mix results from different compiler builds.
 
-- [ ] **Step 5: Apply the performance gate**
+- [x] **Step 5: Apply the performance gate**
 
 The ordinary `permute` median must:
 
@@ -798,11 +800,11 @@ The ordinary `permute` median must:
 
 If correctness and WAT shape pass but either performance condition fails, do not weaken the gate or require users to write `permute_mut`. Profile the residual ordinary-vs-oracle delta, add a separate follow-up plan for the identified codegen cost, and leave this plan incomplete.
 
-- [ ] **Step 6: Update documentation with measured results**
+- [x] **Step 6: Update documentation with measured results**
 
 Mark the recursive aggregate S4 slice landed only after the gate passes. Explain that normal immutable source now receives the optimization automatically; keep `permute_mut` documented as an oracle, not recommended source style.
 
-- [ ] **Step 7: Commit verification and documentation**
+- [x] **Step 7: Commit verification and documentation**
 
 ```bash
 git add examples/performance/awfy/README.md docs/plans/sound-uniqueness/README.md docs/plans/sound-uniqueness/storage/README.md docs/plans/mutvec-checklist.md

@@ -9,9 +9,10 @@ point holds and boot-test is green. See [../../mutvec-checklist.md](../../mutvec
 for the per-family ledger and [../../mutvec-later-slices.md](../../mutvec-later-slices.md)
 for the family-fold mechanism. Remaining storage work: the boxed/record element family (spike
 done, ~2× lever, deferred pending a workload) and Float/Byte **param-sourced**
-`set_in_place` write-routing; and the later packages **S4** (owned-specialized mutable
-ABI / param-sourced thaw-from-`PVec`), **S5** (`MutDict`), and **S6** (Buffer-retirement
-perf gate) have no retained runtime implementation. S5's flat-index direction and
+`set_in_place` write-routing. The first **S4** slice has landed for a recursive
+record carrier with one vector field and one scalar field; broader carriers and
+general param-sourced thaw-from-`PVec` remain open. **S5** (`MutDict`) and **S6**
+(Buffer-retirement perf gate) have no retained runtime implementation. S5's flat-index direction and
 dense publication adapter are settled, but its live arena element remains behind
 the measurement gate in
 [mutdict-dense-freeze-input.md](../../mutdict-dense-freeze-input.md): unboxed
@@ -389,6 +390,14 @@ with an O(1) small-vector tail-handoff fast path). Both are settled by the S3
 spike.
 
 ### S4 — Owned-specialized mutable ABI across calls
+
+**First slice LANDED:** an owned recursive record carrier with one vector field
+and one scalar field decomposes to a private MutVec handle plus scalar ABI. The
+handle propagates through verified helper clones and recursive edges; a dead
+vector result freezes zero times, while an observed result freezes once at its
+publication boundary. Ordinary immutable AWFY Permute passes both the manual
+Buffer-oracle and LuaJIT performance gates. General bare param-sourced thawing,
+multi-scalar carriers, and unsupported access paths remain persistent.
 
 Extend ownership-specialized variants so selected functions can accept and return
 private mutable storage. This is what lets a proven-owned collection stay low

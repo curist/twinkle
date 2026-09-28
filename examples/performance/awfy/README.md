@@ -163,12 +163,12 @@ What the numbers show now that persistent storage is fast:
 - **NBody still gains modestly.** `nbody` ~4.3 ms → `nbody_mut` ~2.6 ms (~1.7×).
   NBody is *compute*-bound — the residual ~3× gap to Node is float codegen and
   per-access `get_f64`/`set_f64` overhead, not persistence. Kept.
-- **Permute exposes recursive aggregate threading.** `permute` ~60.6 ms/op →
-  `permute_mut` ~4.9 ms/op (~12×). The ordinary version recursively returns a
-  `PState` containing a persistently updated `Vector<Int>` and scalar count; the
-  unlocked version keeps six integers in Buffer and returns only the count. This
-  is evidence for an owned-specialized mutable ABI that carries private vector
-  storage through recursive calls and materializes only if the vector escapes.
+- **Permute now gets the recursive aggregate ABI automatically.** Ordinary
+  immutable `permute` measured 4.35 ms/op versus 4.92 ms/op for the manual Buffer
+  oracle. The compiler decomposes `PState` into a private MutVec handle and scalar
+  count, propagates flat storage through recursion and helper calls, and emits no
+  freeze because only the count escapes. `permute_mut` remains a checksum and
+  performance oracle, not a recommended source style.
 - **Clojure's idiomatic array ports do *not* beat its persistent vectors**
   (`bounce_mut` is actually slower). Reaching the native league needs aggressive
   primitive-type discipline (`*unchecked-math*`, `^long`/`^double`, no boxing

@@ -1,7 +1,8 @@
 # Permute MutVec Hot-Path Overhead Follow-up
 
-**Status:** Planned after the recursive aggregate MutVec ABI performance gate
-narrowly failed on 2026-09-28.
+**Status:** Resolved on 2026-09-28 by removing redundant caller-side index
+narrowing guards from the private MutVec ABI. The rebuilt ordinary benchmark
+passed the recursive aggregate performance gate.
 
 **Goal:** Remove enough residual codegen overhead from ordinary immutable AWFY
 Permute to make its three-sample median no slower than `1.50×` LuaJIT, without
@@ -35,7 +36,11 @@ Current WAT exposes two plausible residual costs:
 - record explosion leaves numerous handle aliases and local-to-local moves in
   `permute$mvagg`, even though the handle has one physical identity.
 
-These are hypotheses, not yet a license to change the optimizer.
+The first hypothesis was confirmed. Changing private MutVec get/set indices from
+`i32` to `i64` lets the runtime logical-length guard prove safe narrowing once;
+the caller no longer emits its own `i32::MAX` guard. Ordinary Permute's median
+fell from 4869.31 to 4349.85 µs/op while OOB trap probes remained intact, so no
+helper inliner or broader optimizer change was needed.
 
 ## Constraints
 

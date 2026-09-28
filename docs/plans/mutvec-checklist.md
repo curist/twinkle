@@ -23,9 +23,14 @@ Legend: ✅ done · ◐ partial · ⏳ deferred (tracked, not started) · ⬜ no
   (owned locally-born `collect`/`make` region with ≥1 indexed write → flat typed
   `MutVec<fam>` → freeze to typed `PVec<fam>`). Self-host fixed point holds;
   boot-test green.
+- **Shipped S4 slice:** an owned recursive record carrier with one vector field
+  and one scalar field decomposes to a private MutVec handle plus scalar ABI,
+  propagates flat storage through verified helper clones, and freezes only at an
+  observed publication boundary. AWFY Permute passes the Buffer/LuaJIT gate from
+  ordinary immutable source.
 - **Deferred (tracked):** boxed/record element family (spike done, ~2× lever, no
-  workload yet); Float/Byte param-sourced `set_in_place` write-routing; S4
-  param-sourced / thaw-from-`PVec` (cross-track).
+  workload yet); Float/Byte param-sourced `set_in_place` write-routing; broader
+  S4 carriers and general param-sourced / thaw-from-`PVec` coverage (cross-track).
 
 ---
 
@@ -112,14 +117,18 @@ not in-place.
       `set_in_place_f64`, not persistent `set`
 - [ ] Gate: fixed point + boot-test + i64/bool byte-neutral (normalized WAT)
 
-### Phase 9 — Param-sourced owned vectors / thaw-from-`PVec` ⏳ (cross-track)
+### Phase 9 — Param-sourced owned vectors / thaw-from-`PVec` ◐ (cross-track)
 The detector requires locally-born vectors so ownership is trivial. Claiming an
 owned vector arriving as a `PVec` **parameter** needs a cross-function uniqueness
 proof + an owned-specialized mutable ABI (caller hands off ownership; callee
 thaws → mutates → refreezes). Lives on the **sound-uniqueness storage S4** track;
-not startable until that lands. Revisit as an S4 customer.
+The first S4 customer has landed: recursive aggregate carriers with one vector
+field and one scalar field stay flat across recursive/helper edges. General bare
+param-sourced thawing and broader carrier shapes remain deferred.
 
-- [ ] (blocked on sound-uniqueness storage S4)
+- [x] Recursive aggregate carrier slice: flat helper propagation, dead-result
+      zero-freeze exit, observed-result single-freeze exit, persistent fallback
+- [ ] General bare param-sourced / thaw-from-`PVec` coverage
 
 ---
 

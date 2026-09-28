@@ -99,16 +99,15 @@ true mutable/transient dict storage all belong to the storage-representation tra
 which happens before migration cleanup and gates retiring `Buffer` as the ordinary
 local-update workaround.
 
-### New S4 evidence: recursive aggregate carrier with a dead collection result
+### Landed S4 slice: recursive aggregate carrier with a dead collection result
 
-The AWFY `permute` / `permute_mut` pair is now the focused S4 customer for a
-recursive aggregate carrier whose collection field should stay in private mutable
-storage. In a same-session run, the ordinary `permute` timed batch took about
-1213 ms while the manual Buffer form took about 98 ms: roughly a 12× reduction.
-LuaJIT ranged from about 63–127 ms across the adjacent runs for the same checksum
-and workload, so private mutable storage closes the original order-of-magnitude
-gap and reaches the same performance class. Treat the remaining difference as
-noise/codegen-accessor work, not evidence for more persistent-structure tuning.
+The AWFY `permute` / `permute_mut` pair is the landed first S4 customer. Ordinary
+immutable source now decomposes the recursive carrier into a private MutVec
+handle and scalar count, propagates the handle through verified helper clones,
+and emits no freeze because the vector dies at the caller. Three same-build
+samples measured an ordinary median of 4349.85 µs/op versus 4923.28 for the
+manual Buffer oracle. It also passed the LuaJIT gate even against the fastest
+sample (1.323×, within the required 1.50×).
 
 The source pattern is:
 
@@ -120,13 +119,13 @@ fn permute(s: PState, n: Int) PState {
 }
 ```
 
-The compiler opportunity is not merely recursive record-shell reuse. An
-owned-specialized SCC variant can carry `s.v` as `MutVec<Int>`, carry `count` as a
-scalar, and keep the mutable handle implicit in the return ABI. If the caller only
-reads the returned count and the vector dies, the region has no publication exit:
-do not freeze the vector and do not reconstruct `PState`. If a caller observes or
-publishes the returned vector, freeze once at that boundary and reconstruct the
-ordinary record there.
+The implementation is not merely recursive record-shell reuse. Its
+owned-specialized SCC variant carries `s.v` as `MutVec<Int>`, carries `count` as a
+scalar, and keeps the mutable handle implicit in the return ABI. If the caller
+only reads the returned count and the vector dies, the region has no publication
+exit and emits neither a freeze nor a reconstructed `PState`. If a caller observes
+or publishes the returned vector, it freezes once at that boundary and
+reconstructs the ordinary record there.
 
 Detection must require all of the following:
 
@@ -143,14 +142,11 @@ Detection must require all of the following:
   freeze/reconstruction, and any unproved exit falls back to the persistent
   variant.
 
-Current diagnostics show why the optimization does not happen today. Explicit
-`.set_at(...)` in `swap` routes through `set_at__Int`; the census reports its
-update as `persistent(aliased shell)` and the mutable-decision table reports
-`absent_fallback`. Existing recursive owned variants therefore prove neither a
-private `MutVec` ABI nor elimination of the dead aggregate result. S4 should add a
-fixture matching `permute`, a negative fixture where the pre-recursion vector or
-returned vector remains observable, and a codegen gate requiring recursive
-mutable routing with zero freezes for the dead-result case.
+The accepted path routes `permute$mvagg → swap$mv → set_at$mv`; mutable reads and
+writes stay in the propagated clone graph rather than requiring source inlining.
+Alias survival, mixed/fresh lineage, unsupported carrier fields, and variant-cap
+overflow retain the persistent ABI. Broader carriers with multiple independently
+threaded scalars remain future S4 work.
 
 ## Standing invariants
 
