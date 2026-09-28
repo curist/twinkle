@@ -23,6 +23,7 @@ use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{
   CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive,
 }
+use compiler.projected_borrow as pb
 use compiler.variant_id as vid
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -79,6 +80,22 @@ pub type RetVia = { Direct, Variant(Int, Int) }
 
 pub type ReturnPathOwn = .{ via: RetVia, field: Int?, own: ReturnOwn }
 
+pub type ProjectedReturn = .{ param: Int, path: ff.AccessPath }
+
+fn meet_projected_return(a: ProjectedReturn?, b: ProjectedReturn?) ProjectedReturn? {
+  case a {
+    .Some(left) => case b {
+      .Some(right) => if left.param == right.param and ff.path_eq(left.path, right.path) {
+        .Some(left)
+      } else {
+        .None
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
 pub type Summary = .{
   params: Vector<ParamSummary>,
   ret: ReturnEffect,
@@ -86,6 +103,7 @@ pub type Summary = .{
   // Unlike MayAliasParams, this requires the same source lineage on every
   // return path. COW updates preserve it; a fresh/ambiguous substitute does not.
   ret_exact_param: Int?,
+  ret_borrow: ProjectedReturn?,
 }
 
 // A positive certificate names the concrete evidence for each obligation (design §5.1),
@@ -3648,7 +3666,51 @@ type ForwardState = .{
   valid: LocalMap<Bool>,
   prov: LocalMap<Vector<Int>>,
   field_own: LocalMap<ff.FieldMap>,
-  path_prov: LocalMap<Dict<Int, Vector<Int>>>,
+  path_prov: LocalMap<Dict<Int, PathProvenance>>,
+  projected_shell: LocalMap<pb.ProjectedBorrow>,
+}
+
+fn projected_of(st: ForwardState, id: Int) pb.ProjectedBorrow? {
+  st.projected_shell.get(id)
+}
+
+fn projected_atom(st: ForwardState, a: Atom) pb.ProjectedBorrow? {
+  case atom_local_id(a) {
+    .Some(id) => st.projected_of(id),
+    .None => .None,
+  }
+}
+
+fn set_projected(st: ForwardState, id: Int, b: pb.ProjectedBorrow?) ForwardState {
+  case b {
+    .Some(borrow) => st.projected_shell = .set(id, borrow),
+    .None => st.projected_shell.inner = .remove(id),
+  }
+  st
+}
+
+// Both channels share the existing destination-path map. Origins always retain
+// canonical parameter ids. Projected roots are an exact fact, not aliases of
+// the object at that destination path; Some([]) distinguishes a rootless borrow
+// from an ordinary fresh subtree. No ownership is derived from this channel.
+type PathProvenance = .{ origins: Vector<Int>, projected: Vector<Int>? }
+
+fn ordinary_path(origins: Vector<Int>) PathProvenance {
+  .{ origins, projected: .None }
+}
+
+fn meet_projected_roots(a: Vector<Int>?, b: Vector<Int>?) Vector<Int>? {
+  case a {
+    .Some(left) => case b {
+      .Some(right) => if same_live(left, right) {
+        .Some(left)
+      } else {
+        .None
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
 }
 
 fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
@@ -3668,14 +3730,14 @@ fn clear_field_own(st: ForwardState, id: Int) ForwardState {
   st
 }
 
-fn path_prov_get(st: ForwardState, id: Int) Dict<Int, Vector<Int>> {
+fn path_prov_get(st: ForwardState, id: Int) Dict<Int, PathProvenance> {
   case st.path_prov.get(id) {
     .Some(m) => m,
     .None => Dict.new(),
   }
 }
 
-fn set_path_prov(st: ForwardState, id: Int, m: Dict<Int, Vector<Int>>) ForwardState {
+fn set_path_prov(st: ForwardState, id: Int, m: Dict<Int, PathProvenance>) ForwardState {
   st.path_prov = .set(id, m)
   st
 }
@@ -3721,7 +3783,7 @@ fn set_prov_st(st: ForwardState, id: Int, origins: Vector<Int>) ForwardState {
 }
 
 fn set_result(st: ForwardState, id: Int, o: Ownership) ForwardState {
-  st.set_own_st(id, o)
+  st.set_projected(id, .None).set_own_st(id, o)
 }
 
 fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
@@ -3734,6 +3796,7 @@ fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
 // escapes forces its origin params to Shared too — the aggregate/escape hole.
 fn publish_local(st: ForwardState, id: Int) ForwardState {
   pp := st.path_prov_get(id) // capture before the choke point clears it
+  st = .publish_projected(id)
   st = .set_own_st(id, .Shared)
   case st.prov.get(id) {
     .Some(origins) => {
@@ -3743,10 +3806,37 @@ fn publish_local(st: ForwardState, id: Int) ForwardState {
     },
     .None => {},
   }
-  for k, os in pp {
-    for o in os {
+  for k, provenance in pp {
+    for o in provenance.origins {
       st = .set_own_st(o, .Shared)
     }
+    case provenance.projected {
+      .Some(roots) => {
+        for root in roots {
+          path := ff.path_of_key(k)
+          if path.segs.len() > 0 {
+            seg := path.segs[path.segs.len() - 1]
+            st = .set_field_own(root, st.field_own_get(root).remove_prefix(seg))
+            st = .set_path_prov(root, remove_prefix_pp(st.path_prov_get(root), seg))
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  st
+}
+
+fn publish_projected(st: ForwardState, id: Int) ForwardState {
+  case st.projected_of(id) {
+    .Some(borrow) => if borrow.path.segs.len() > 0 {
+      for root in borrow.roots {
+        seg := borrow.path.segs[0]
+        st = .set_field_own(root, st.field_own_get(root).remove_prefix(seg))
+        st = .set_path_prov(root, remove_prefix_pp(st.path_prov_get(root), seg))
+      }
+    },
+    .None => {},
   }
   st
 }
@@ -3774,7 +3864,9 @@ fn init_hinge(
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
       pp := st.path_prov_get(src)
+      projected := st.projected_of(src)
       st = .set_own_st(result, o)
+      st = .set_projected(result, projected)
       if o.own_tag() == 0 {
         st.set_field_own(result, fields).set_path_prov(result, pp)
       } else {
@@ -3785,7 +3877,9 @@ fn init_hinge(
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
       pp := st.path_prov_get(src)
+      projected := st.projected_of(src)
       st = .set_own_st(result, o)
+      st = .set_projected(result, projected)
       st = if o.own_tag() == 0 {
         // move: copy source's field_own AND path_prov in lockstep
         st.set_field_own(result, fields).set_path_prov(result, pp)
@@ -3796,9 +3890,9 @@ fn init_hinge(
     } else {
       // alias: both Shared
       st = .publish_local(src)
-      st.set_own_st(result, .Shared)
+      st.set_own_st(result, .Shared).set_projected(result, st.projected_of(src))
     },
-    .None => st.set_own_st(result, .Unknown),
+    .None => st.set_own_st(result, .Unknown).set_projected(result, .None),
   }
 }
 
@@ -3808,6 +3902,7 @@ fn init_hinge(
 fn field_store(st: ForwardState, a: Atom, last: Vector<Int>) ForwardState {
   case atom_local_id(a) {
     .Some(src) => if is_last_use(last, src) {
+      st = .publish_projected(src)
       st.set_valid(src, false)
     } else {
       st.publish_local(src)
@@ -4203,6 +4298,24 @@ fn transfer_summarized_call(
     },
   }
 
+  st = .set_projected(result, .None)
+  if !in_set(suppress, callee_id) {
+    case s.ret_borrow {
+      .Some(borrow) => if borrow.param < args.len() {
+        arg := args[borrow.param]
+        rerooted := case pre.projected_atom(arg) {
+          .Some(parent) => parent.append(borrow.path),
+          .None => .Some(pb.make(prov_of(pre_prov, arg), borrow.path)),
+        }
+        st = .set_own_st(result, .Shared)
+        st = .set_prov_st(result, [])
+        st = .set_projected(result, rerooted)
+        st = .publish_projected(result)
+      },
+      .None => {},
+    }
+  }
+
   // 2. Return-path recovery, gated on the SNAPSHOT. A fresh result shell
   // (OwnedFresh) carries recovered field/payload facts; so does a return that
   // aliases EXACTLY ONE unique (consumed, last-use) param -- the case where
@@ -4217,7 +4330,7 @@ fn transfer_summarized_call(
     .Shared => false,
   }
   result_fields := ff.empty()
-  result_pp: Dict<Int, Vector<Int>> = Dict.new()
+  result_pp: Dict<Int, PathProvenance> = Dict.new()
   eff_ret_paths := if in_set(suppress, callee_id) {
     s.ret_paths.filter(fn(rp) {
       case rp.own {
@@ -4299,12 +4412,15 @@ fn transfer_summarized_call(
 
 fn atom_local_path_origins(st: ForwardState, a: Atom, field: Int) Vector<Int>? {
   case atom_local_id(a) {
-    .Some(id) => st.path_prov_get(id).get(ff.path_key(ff.field_path(field))),
+    .Some(id) => case st.path_prov_get(id).get(ff.path_key(ff.field_path(field))) {
+      .Some(provenance) => .Some(provenance.origins),
+      .None => .None,
+    },
     .None => .None,
   }
 }
 
-type RetPathRecord = .{ fields: ff.FieldMap, pp: Dict<Int, Vector<Int>> }
+type RetPathRecord = .{ fields: ff.FieldMap, pp: Dict<Int, PathProvenance> }
 
 // Write EXACTLY ONE key (the one this ret_path names) into both `fields` (tag
 // Unique=0) and `pp` (origins). The key is built from the ret_path's via/field:
@@ -4314,7 +4430,7 @@ type RetPathRecord = .{ fields: ff.FieldMap, pp: Dict<Int, Vector<Int>> }
 // Never synthesize a sibling key.
 fn record_ret_path(
   fields: ff.FieldMap,
-  pp: Dict<Int, Vector<Int>>,
+  pp: Dict<Int, PathProvenance>,
   rp: ReturnPathOwn,
   origins: Vector<Int>,
 ) RetPathRecord {
@@ -4330,7 +4446,7 @@ fn record_ret_path(
   }
   k := ff.path_key(ap)
   fields2 := fields.set_path(ap, 0)
-  pp[k] = origins
+  pp[k] = ordinary_path(origins)
   .{ fields: fields2, pp }
 }
 
@@ -4391,9 +4507,9 @@ fn projection_move_licensed(
 // Copy `src`'s provenance under `prefix` into `pp`, mirroring ff.graft's
 // representable-inner rules so pp and field_own stay in lockstep. The [prefix]
 // entry is always the value's shell prov (empty vector = proven fresh).
-fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
+fn graft_path_prov(pp: Dict<Int, PathProvenance>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
   Int,
-  Vector<Int>,
+  PathProvenance,
 > {
   // shell_origins starts at the value's own shell prov and accumulates the origins
   // of every inner path that CANNOT be representably rebased under `prefix` at the
@@ -4428,28 +4544,82 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
         if keep {
           pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
         } else {
-          shell_origins = union_sorted(shell_origins, v)
+          shell_origins = union_sorted(shell_origins, v.origins)
         }
       }
     },
     .None => {},
   }
-  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = shell_origins
+  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = ordinary_path(shell_origins)
+  graft_projected_pp(pp, prefix, st, a)
+}
+
+fn graft_projected_pp(pp: Dict<Int, PathProvenance>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
+  Int,
+  PathProvenance,
+> {
+  case st.projected_atom(a) {
+    .Some(borrow) => case pb.prefix(prefix, borrow) {
+      .Some(composed) => {
+        key := ff.path_key(composed.path)
+        existing := case pp.get(key) {
+          .Some(provenance) => provenance,
+          .None => ordinary_path([]),
+        }
+        existing.projected = .Some(composed.roots)
+        pp[key] = existing
+      },
+      .None => {}, // unsupported composition loses this channel
+    },
+    .None => {},
+  }
   pp
 }
 
 // Projection inverse for path_prov, mirroring ff.project: the [seg] entry
 // becomes `shell`; each strict descendant [seg, X] becomes inner[X].
-type PathProvProjection = .{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }
+type PathProvProjection = .{ shell: Vector<Int>?, inner: Dict<Int, PathProvenance> }
 
-fn project_path_prov(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) PathProvProjection {
+fn projected_from_pp(proj: PathProvProjection) pb.ProjectedBorrow? {
+  // A non-owned projection with empty shell provenance and projected inner roots
+  // carries a borrowed value, not a shell alias. Ordinary origins or
+  // conflicting paths lose the projected fact conservatively.
+  case proj.shell {
+    .Some(origins) => if origins.len() > 0 {
+      return .None
+    },
+    .None => return .None,
+  }
+  candidate: pb.ProjectedBorrow? = .None
+  seen := false
+  for key, provenance in proj.inner {
+    if provenance.origins.len() > 0 {
+      return .None
+    }
+    case provenance.projected {
+      .Some(roots) => {
+        next := pb.make(roots, ff.path_of_key(key))
+        candidate = if seen {
+          pb.meet(candidate, .Some(next))
+        } else {
+          .Some(next)
+        }
+        seen = true
+      },
+      .None => {},
+    }
+  }
+  candidate
+}
+
+fn project_path_prov(pp: Dict<Int, PathProvenance>, seg: ff.PathSeg) PathProvProjection {
   shell: Vector<Int>? = .None
-  inner: Dict<Int, Vector<Int>> = Dict.new()
+  inner: Dict<Int, PathProvenance> = Dict.new()
   for k, v in pp {
     p := ff.path_of_key(k)
     if p.segs.len() >= 1 and p.segs[0].seg_eq(seg) {
       if p.segs.len() == 1 {
-        shell = .Some(v)
+        shell = .Some(v.origins)
       } else {
         inner[ff.path_key(ff.AccessPath.{ segs: [p.segs[1]] })] = v
       }
@@ -4459,8 +4629,8 @@ fn project_path_prov(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) PathProvProjec
 }
 
 // Drop the entire [seg]* subtree from a path_prov map, mirroring ff.remove_prefix.
-fn remove_prefix_pp(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) Dict<Int, Vector<Int>> {
-  out: Dict<Int, Vector<Int>> = Dict.new()
+fn remove_prefix_pp(pp: Dict<Int, PathProvenance>, seg: ff.PathSeg) Dict<Int, PathProvenance> {
+  out: Dict<Int, PathProvenance> = Dict.new()
   for k, v in pp {
     p := ff.path_of_key(k)
     drop := p.segs.len() >= 1 and p.segs[0].seg_eq(seg)
@@ -4494,7 +4664,7 @@ fn seed_payload_binding(
   st: ForwardState,
   blk: CfgBlock,
   pred_field: LocalMap<ff.FieldMap>,
-  pred_pp: LocalMap<Dict<Int, Vector<Int>>>,
+  pred_pp: LocalMap<Dict<Int, PathProvenance>>,
   pred_prov: LocalMap<Vector<Int>>,
 ) ForwardState {
   case blk.payload_src {
@@ -4506,7 +4676,13 @@ fn seed_payload_binding(
       proj := src_fields.project(seg) // {shell, fields}
       proj_pp := project_path_prov(src_pp, seg) // {shell, inner}
       case proj.shell {
-        .None => st, // no owned payload fact -> leave binding Unknown
+        .None => case proj_pp.projected_from_pp() {
+          .Some(borrow) => st
+            .set_own_st(ps.binding, .Shared)
+            .set_prov_st(ps.binding, [])
+            .set_projected(ps.binding, .Some(borrow)),
+          .None => st, // no owned or projected payload fact
+        },
         .Some(t) => if !live_contains_int(blk.entry.live, ps.scrutinee) {
           // MOVE: scrutinee dead-after -> binding takes shell own + shell prov + inner facts.
           // set_own_st(binding, Unique) MUST precede set_field_own: the choke point
@@ -4579,7 +4755,7 @@ fn transfer_op(
       // single-retention fields ALSO graft their inner facts into field_own, in
       // lockstep with graft_path_prov's [.f, inner] entries.
       rf := ff.empty()
-      pp: Dict<Int, Vector<Int>> = Dict.new()
+      pp: Dict<Int, PathProvenance> = Dict.new()
       for fa in fields {
         seg := ff.PathSeg.Field(fa.field.id)
         if pre_store.single_retention(fa.value, last, operands) {
@@ -4588,7 +4764,8 @@ fn transfer_op(
         } else {
           // shell-only origin of a non-owned field: recorded for publication only
           // (no field_own[.f] entry; extra path_prov key is a sound over-publish).
-          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, fa.value)
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = ordinary_path(prov_of(st.prov, fa.value))
+          pp = graft_projected_pp(pp, seg, pre_store, fa.value)
         }
       }
       st = if rf.is_empty() {
@@ -4611,7 +4788,7 @@ fn transfer_op(
       // path_prov). Single-retention payloads ALSO graft their inner facts into
       // field_own, in lockstep with graft_path_prov's [Payload(tag,i), inner] entries.
       rf := ff.empty()
-      pp: Dict<Int, Vector<Int>> = Dict.new()
+      pp: Dict<Int, PathProvenance> = Dict.new()
       for a, i in args {
         seg := ff.PathSeg.Payload(vid.id, i)
         if pre_store.single_retention(a, last, args) {
@@ -4620,7 +4797,8 @@ fn transfer_op(
         } else {
           // shell-only origin of a non-owned payload: recorded for publication only
           // (no field_own[Payload] entry; extra path_prov key is a sound over-publish).
-          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, a)
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = ordinary_path(prov_of(st.prov, a))
+          pp = graft_projected_pp(pp, seg, pre_store, a)
         }
       }
       st = if rf.is_empty() {
@@ -4650,14 +4828,14 @@ fn transfer_op(
         case atom_local_id(e) {
           .Some(eid) => {
             for k, v in st.path_prov_get(eid) {
-              elem_origins = union_sorted(elem_origins, v)
+              elem_origins = union_sorted(elem_origins, v.origins)
             }
           },
           .None => {},
         }
       }
-      epp: Dict<Int, Vector<Int>> = Dict.new()
-      epp[ff.path_key(ff.elem_path())] = elem_origins
+      epp: Dict<Int, PathProvenance> = Dict.new()
+      epp[ff.path_key(ff.elem_path())] = ordinary_path(elem_origins)
       st = .set_path_prov(result, epp)
 
       // [Elem]:Unique when EVERY element is single-retention. An EMPTY literal is
@@ -4707,14 +4885,26 @@ fn transfer_op(
             // borrowed field value must not publish the containing record shell;
             // field/deep reuse remains conservative because field facts were not kept.
             .None => {
-              st = .set_result(result, .Unknown)
-              st.set_prov_st(result, [])
+              proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(f.id))
+              projected := proj_pp.projected_from_pp()
+              st = .set_result(
+                result,
+                case projected {
+                  .Some(_) => .Shared,
+                  .None => .Unknown,
+                },
+              )
+              st = .set_prov_st(result, [])
+              st = .set_projected(result, projected)
+              st
             },
           }
         } else {
           // BORROW: aliasing both sides -> R Shared (choke point clears R's facts),
           // and clear base's [.f]* subtree too (both maps).
+          proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(f.id))
           st = .set_own_st(result, .Shared)
+          st = .set_projected(result, proj_pp.projected_from_pp())
           st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
           st = .set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
           st.set_prov_st(result, [])
@@ -4726,18 +4916,40 @@ fn transfer_op(
         },
       }
     },
-    .AIndex(base, _, _, elem_ty) => {
+    .AIndex(base, _, kind, elem_ty) => {
       // Borrow. A primitive element read cannot alias the collection shell, so do
       // not carry base shell provenance into scalar results; otherwise helpers
       // like `read_at(xs) -> Int` summarize as returning alias(p0) and publish
       // the caller's loop-carried vector before a later update.
-      origins := if scalar_result_ty(elem_ty) {
-        []
+      if scalar_result_ty(elem_ty) {
+        st = .set_result(result, .Unknown)
+        st = .set_prov_st(result, [])
       } else {
-        prov_of(st.prov, base)
+        case kind {
+          .Array => {
+            borrow := case st.projected_atom(base) {
+              .Some(parent) => parent.append(ff.elem_path()),
+              .None => .Some(pb.make(prov_of(st.prov, base), ff.elem_path())),
+            }
+            st = .set_result(result, .Shared)
+            st = .set_prov_st(result, [])
+            st = .set_projected(result, borrow)
+            st = .publish_projected(result)
+            st = case atom_local_id(base) {
+              .Some(bid) => {
+                st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Elem))
+                st.set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), .Elem))
+              },
+              .None => st,
+            }
+          },
+          _ => {
+            st = .set_result(result, .Unknown)
+            st = .set_prov_st(result, prov_of(st.prov, base))
+          },
+        }
       }
-      st = .set_result(result, .Unknown)
-      st.set_prov_st(result, origins)
+      st
     },
     .ARecordUpdate(base, f, v, _, _) => {
       origins := prov_of(st.prov, base) // shell-only: drop the old union with v
@@ -4762,6 +4974,9 @@ fn transfer_op(
         if value_moved {
           rf = .graft(.Field(f.id), pre_update.atom_field_own(v))
           pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), pre_update, v)
+        } else {
+          pp[ff.path_key(ff.field_path(f.id))] = ordinary_path(prov_of(pre_update.prov, v))
+          pp = graft_projected_pp(pp, .Field(f.id), pre_update, v)
         }
         st.set_field_own(result, rf).set_path_prov(result, pp)
       } else {
@@ -4776,8 +4991,10 @@ fn transfer_op(
     .AAssign(local, a) => {
       // rebind: result local's fact = fact(a); binding becomes valid again
       o := fact_of(st.own, a)
+      projected := st.projected_atom(a)
       st = .set_own_st(local.id, o)
       st = .set_prov_st(local.id, prov_of(st.prov, a))
+      st = .set_projected(local.id, projected)
       st = if o.own_tag() == 0 {
         st = .set_field_own(local.id, st.atom_field_own(a))
 
@@ -5551,6 +5768,44 @@ fn join_entry_prov(blk: CfgBlock, exit_prov: ProvExits, processed: BlockMap<Bool
   entry
 }
 
+fn join_entry_projected(blk: CfgBlock, exits: ProjectedExits, processed: BlockMap<Bool>) LocalMap<
+  pb.ProjectedBorrow,
+> {
+  entry: LocalMap<pb.ProjectedBorrow> = local_map.local_map()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    candidate: pb.ProjectedBorrow? = .None
+    seen := false
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        source := nested_get(exits, pe.target.id)
+        next := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            case atom_local_id(pe.args[i]) {
+              .Some(id) => source.get(id),
+              .None => .None,
+            }
+          } else {
+            .None
+          },
+          .None => source.get(lid),
+        }
+        candidate = if seen {
+          pb.meet(candidate, next)
+        } else {
+          next
+        }
+        seen = true
+      }
+    }
+    case candidate {
+      .Some(borrow) => entry = .set(lid, borrow),
+      .None => {},
+    }
+  }
+  entry
+}
+
 // Seed block 0's entry: each param's provenance is its own id (a param origin).
 fn seed_param_prov(entry: LocalMap<Vector<Int>>, params: Vector<LocalId>) LocalMap<Vector<Int>> {
   for p in params {
@@ -5674,14 +5929,14 @@ fn join_entry_field_own(
   entry
 }
 
-fn pp_of(pp: LocalMap<Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
+fn pp_of(pp: LocalMap<Dict<Int, PathProvenance>>, id: Int) Dict<Int, PathProvenance> {
   case pp.get(id) {
     .Some(m) => m,
     .None => Dict.new(),
   }
 }
 
-fn pp_of_atom(pp: LocalMap<Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<Int>> {
+fn pp_of_atom(pp: LocalMap<Dict<Int, PathProvenance>>, a: Atom) Dict<Int, PathProvenance> {
   case atom_local_id(a) {
     .Some(id) => pp_of(pp, id),
     .None => Dict.new(),
@@ -5695,12 +5950,12 @@ fn pp_of_atom(pp: LocalMap<Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<In
 // origin vectors (a divergent origin makes the path multi-origin, which a later
 // classifier drops — sound).
 fn join_entry_path_prov(blk: CfgBlock, exit_pp: PathExits, processed: BlockMap<Bool>) LocalMap<
-  Dict<Int, Vector<Int>>,
+  Dict<Int, PathProvenance>,
 > {
-  entry: LocalMap<Dict<Int, Vector<Int>>> = local_map.local_map()
+  entry: LocalMap<Dict<Int, PathProvenance>> = local_map.local_map()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
-    acc: Dict<Int, Vector<Int>>? = .None
+    acc: Dict<Int, PathProvenance>? = .None
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
         pp := nested_get(exit_pp, pe.target.id)
@@ -5730,11 +5985,17 @@ fn join_entry_path_prov(blk: CfgBlock, exit_pp: PathExits, processed: BlockMap<B
 
 // Meet two per-local path_prov maps: a PathKey survives only if present in BOTH;
 // origins are unioned.
-fn meet_path_prov(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
-  out: Dict<Int, Vector<Int>> = Dict.new()
+fn meet_path_prov(a: Dict<Int, PathProvenance>, b: Dict<Int, PathProvenance>) Dict<
+  Int,
+  PathProvenance,
+> {
+  out: Dict<Int, PathProvenance> = Dict.new()
   for k, av in a {
     case b.get(k) {
-      .Some(bv) => out[k] = union_sorted(av, bv),
+      .Some(bv) => out[k] = .{
+        origins: union_sorted(av.origins, bv.origins),
+        projected: meet_projected_roots(av.projected, bv.projected),
+      },
       .None => {},
     }
   }
@@ -5764,14 +6025,14 @@ fn merge_field_own_exit(old: LocalMap<ff.FieldMap>, next: LocalMap<ff.FieldMap>)
   result
 }
 
-fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
+fn same_pp_local(a: Dict<Int, PathProvenance>, b: Dict<Int, PathProvenance>) Bool {
   if a.keys().len() != b.keys().len() {
     return false
   }
   for k in a.keys() {
     case a.get(k) {
       .Some(av) => case b.get(k) {
-        .Some(bv) => if !same_live(av, bv) {
+        .Some(bv) => if !same_live(av.origins, bv.origins) or av.projected != bv.projected {
           return false
         },
         .None => return false,
@@ -5786,10 +6047,10 @@ fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
 // locals present in both old and next, and meet each local's per-PathKey map
 // (key-intersection + origin union).
 fn merge_path_prov_exit(
-  old: LocalMap<Dict<Int, Vector<Int>>>,
-  next: LocalMap<Dict<Int, Vector<Int>>>,
-) LocalMap<Dict<Int, Vector<Int>>> {
-  result: LocalMap<Dict<Int, Vector<Int>>> = local_map.local_map()
+  old: LocalMap<Dict<Int, PathProvenance>>,
+  next: LocalMap<Dict<Int, PathProvenance>>,
+) LocalMap<Dict<Int, PathProvenance>> {
+  result: LocalMap<Dict<Int, PathProvenance>> = local_map.local_map()
   for k in old.keys() {
     case old.get(k) {
       .Some(old_pp) => case next.get(k) {
@@ -5807,6 +6068,19 @@ fn merge_path_prov_exit(
   result
 }
 
+fn merge_projected_exit(old: LocalMap<pb.ProjectedBorrow>, next: LocalMap<pb.ProjectedBorrow>) LocalMap<
+  pb.ProjectedBorrow,
+> {
+  result: LocalMap<pb.ProjectedBorrow> = local_map.local_map()
+  for id in old.keys() {
+    case pb.meet(old.get(id), next.get(id)) {
+      .Some(borrow) => result = .set(id, borrow),
+      .None => {},
+    }
+  }
+  result
+}
+
 // Block-keyed exit maps for the ownership/validity/provenance/field-ownership/
 // path-provenance fixpoint: block id -> LocalMap<X> of per-local facts at the
 // block's exit.
@@ -5818,7 +6092,9 @@ type ProvExits = BlockMap<LocalMap<Vector<Int>>>
 
 type FieldExits = BlockMap<LocalMap<ff.FieldMap>>
 
-type PathExits = BlockMap<LocalMap<Dict<Int, Vector<Int>>>>
+type PathExits = BlockMap<LocalMap<Dict<Int, PathProvenance>>>
+
+type ProjectedExits = BlockMap<LocalMap<pb.ProjectedBorrow>>
 
 // Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
 // point (they share ForwardState and forward_block). The single live driver
@@ -5829,6 +6105,7 @@ pub type FixResult = .{
   exit_prov: ProvExits,
   exit_field_own: FieldExits,
   exit_path_prov: PathExits,
+  exit_projected: ProjectedExits,
 }
 
 // Full inner-fixpoint solver state: the five dataflow exit maps plus the
@@ -5841,6 +6118,7 @@ type FixState = .{
   exit_prov: ProvExits,
   exit_field_own: FieldExits,
   exit_path_prov: PathExits,
+  exit_projected: ProjectedExits,
   prev_exits: OwnExits,
   prev_exit_valid: ValidExits,
   prev_exit_prov: ProvExits,
@@ -6072,7 +6350,45 @@ fn fixv_outer_pp(m: PathExits) String {
         s = "${s}B${bid}{"
         for lid in fixv_isort(inner.keys()) {
           case inner.get(lid) {
-            .Some(pm) => s = "${s}${lid}:(${fixv_int_vec(pm)})",
+            .Some(pm) => {
+              s = "${s}${lid}:("
+              for key in fixv_isort(pm.keys()) {
+                case pm.get(key) {
+                  .Some(provenance) => {
+                    s = "${s}${key}:[${fixv_join_ints(provenance.origins)}]"
+                    case provenance.projected {
+                      .Some(roots) => s = "${s}borrow[${fixv_join_ints(roots)}]",
+                      .None => {},
+                    }
+                    s = "${s},"
+                  },
+                  .None => {},
+                }
+              }
+              s = "${s})"
+            },
+            .None => {},
+          }
+        }
+        s = "${s}}"
+      },
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_projected(m: ProjectedExits) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => {
+        s = "${s}B${bid}{"
+        for lid in fixv_isort(inner.keys()) {
+          case inner.get(lid) {
+            .Some(borrow) => s = "${s}${lid}:${ff.path_key(borrow.path)}:${fixv_join_ints(
+              borrow.roots,
+            )}",
             .None => {},
           }
         }
@@ -6087,7 +6403,9 @@ fn fixv_outer_pp(m: PathExits) String {
 fn render_fix_result(fx: FixResult) String {
   "own[${fixv_outer_ii(fx.exits)}]val[${fixv_outer_bb(fx.exit_valid)}]prov[${fixv_outer_vv(
     fx.exit_prov,
-  )}]fo[${fixv_outer_fm(fx.exit_field_own)}]pp[${fixv_outer_pp(fx.exit_path_prov)}]"
+  )}]fo[${fixv_outer_fm(fx.exit_field_own)}]pp[${fixv_outer_pp(fx.exit_path_prov)}]projected[${fixv_outer_projected(
+    fx.exit_projected,
+  )}]"
 }
 
 fn prev_seen_get(seen: BlockMap<Bool>, id: Int) Bool {
@@ -6244,6 +6562,10 @@ fn run_fixpoint(
     .Some(w) => w.exit_path_prov,
     .None => block_map.block_map(),
   }
+  exit_projected: ProjectedExits = case warm_state {
+    .Some(w) => w.exit_projected,
+    .None => block_map.block_map(),
+  }
   prev_exits: OwnExits = case warm_state {
     .Some(w) => w.prev_exits,
     .None => block_map.block_map(),
@@ -6287,6 +6609,7 @@ fn run_fixpoint(
       exit_prov = .set(blk.id.id, local_map.local_map())
       exit_field_own = .set(blk.id.id, local_map.local_map())
       exit_path_prov = .set(blk.id.id, local_map.local_map())
+      exit_projected = .set(blk.id.id, local_map.local_map())
       prev_exits = .set(blk.id.id, local_map.local_map())
       prev_exit_valid = .set(blk.id.id, local_map.local_map())
       prev_exit_prov = .set(blk.id.id, local_map.local_map())
@@ -6369,12 +6692,14 @@ fn run_fixpoint(
           entry_field = seed_param_field_own(entry_field, field_seed, params)
         }
         entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
+        entry_projected := join_entry_projected(blk, exit_projected, processed)
         st := ForwardState.{
           own: entry_own,
           valid: entry_valid,
           prov: entry_prov,
           field_own: entry_field,
           path_prov: entry_pp,
+          projected_shell: entry_projected,
         }
 
         // seed a payload-bound local from its match predecessor's exit facts
@@ -6409,11 +6734,13 @@ fn run_fixpoint(
         old_prov := nested_get(exit_prov, blk.id.id)
         old_field := nested_get(exit_field_own, blk.id.id)
         old_pp := nested_get(exit_path_prov, blk.id.id)
+        old_projected := nested_get(exit_projected, blk.id.id)
         next_own := st.own
         next_valid := st.valid
         next_prov := st.prov
         next_field := st.field_own
         next_pp := st.path_prov
+        next_projected := st.projected_shell
         if already {
           has_prev := prev_seen_get(prev_seen, blk.id.id)
           force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
@@ -6465,6 +6792,7 @@ fn run_fixpoint(
 
           // path_prov widening in lockstep: same conservative meet shape.
           next_pp = merge_path_prov_exit(old_pp, st.path_prov)
+          next_projected = merge_projected_exit(old_projected, st.projected_shell)
         }
         if timed {
           if next_own.keys().len() > max_own_keys {
@@ -6488,7 +6816,8 @@ fn run_fixpoint(
           or !same_map(old_valid, next_valid, bool_eq)
           or !same_map(old_prov, next_prov, same_live)
           or !same_map(old_field, next_field, ff.same)
-          or !same_map(old_pp, next_pp, same_pp_local) {
+          or !same_map(old_pp, next_pp, same_pp_local)
+          or !same_map(old_projected, next_projected, pb.same) {
           changed = true
           if timed {
             changed_blocks = .inc()
@@ -6505,6 +6834,7 @@ fn run_fixpoint(
           exit_prov = .set(blk.id.id, next_prov)
           exit_field_own = .set(blk.id.id, next_field)
           exit_path_prov = .set(blk.id.id, next_pp)
+          exit_projected = .set(blk.id.id, next_projected)
           if !all_dirty {
             for s in succ_get(succ, blk.id.id) {
               dirty = .set(s, true)
@@ -6534,6 +6864,7 @@ fn run_fixpoint(
     exit_prov,
     exit_field_own,
     exit_path_prov,
+    exit_projected,
     prev_exits,
     prev_exit_valid,
     prev_exit_prov,
@@ -6545,7 +6876,7 @@ fn run_fixpoint(
     processed,
   }
   .{
-    fx: .{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov },
+    fx: .{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov, exit_projected },
     state: final_state,
     widened,
   }
@@ -7149,12 +7480,14 @@ fn call_uniques_sited_with_live(
       entry_field = seed_param_field_own(entry_field, field_seed, f.params)
     }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    entry_projected := join_entry_projected(blk, fx.exit_projected, done)
     st := ForwardState.{
       own: entry_own,
       valid: entry_valid,
       prov: entry_prov,
       field_own: entry_field,
       path_prov: entry_pp,
+      projected_shell: entry_projected,
     }
     pred_id := case blk.preds.len() == 1 {
       true => blk.preds[0].target.id,
@@ -7522,12 +7855,14 @@ fn ownership_stage(
       entry_field = seed_param_field_own(entry_field, field_seed, params)
     }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    entry_projected := join_entry_projected(blk, fx.exit_projected, done)
     st := ForwardState.{
       own: entry_own,
       valid: entry_valid,
       prov: entry_prov,
       field_own: entry_field,
       path_prov: entry_pp,
+      projected_shell: entry_projected,
     }
 
     // seed a payload-bound local from its match predecessor's exit facts
@@ -7619,7 +7954,7 @@ fn param_index_of(params: Vector<LocalId>, local_id: Int) Int? {
 
 // Ascending path-key iteration order (field key 8=.f0 < 12=.f1 < ...), so
 // Direct ret_paths come out sorted by field.
-fn sorted_dict_keys(d: Dict<Int, Vector<Int>>) Vector<Int> {
+fn sorted_dict_keys(d: Dict<Int, PathProvenance>) Vector<Int> {
   out: Vector<Int> = []
   for k in d.keys() {
     out = insert_sorted(out, k)
@@ -7636,20 +7971,31 @@ fn sorted_dict_keys(d: Dict<Int, Vector<Int>>) Vector<Int> {
 // OwnedFresh is emitted ONLY when field_own PROVES the field is a Unique subtree;
 // a path_prov-only `[]` drops (sound under-claim). OwnedFromParam(k) is safe from
 // path_prov alone: it carries the param origin and the caller gates on it.
-fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<LocalId>, fm: ff.FieldMap) ReturnOwn? {
+fn classify_path_own(
+  pp: Dict<Int, PathProvenance>,
+  k: Int,
+  params: Vector<LocalId>,
+  fm: ff.FieldMap,
+) ReturnOwn? {
   case pp.get(k) {
     .None => .None,
-    .Some(os) => cond {
-      os.len() == 0 => if fm.is_unique(ff.path_of_key(k)) {
-        .Some(.OwnedFresh)
-      } else {
-        .None
-      },
-      os.len() == 1 => case param_index_of(params, os[0]) {
-        .Some(pi) => .Some(.OwnedFromParam(pi)),
-        .None => .None,
-      },
-      _ => .None,
+    .Some(provenance) => {
+      if provenance.projected != .None {
+        return .None
+      }
+      os := provenance.origins
+      cond {
+        os.len() == 0 => if fm.is_unique(ff.path_of_key(k)) {
+          .Some(.OwnedFresh)
+        } else {
+          .None
+        },
+        os.len() == 1 => case param_index_of(params, os[0]) {
+          .Some(pi) => .Some(.OwnedFromParam(pi)),
+          .None => .None,
+        },
+        _ => .None,
+      }
     },
   }
 }
@@ -8373,12 +8719,14 @@ fn collect_move_recovered_params(
       entry_field = seed_param_field_own(entry_field, field_seed, params)
     }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    entry_projected := join_entry_projected(blk, fx.exit_projected, done)
     st := ForwardState.{
       own: entry_own,
       valid: entry_valid,
       prov: entry_prov,
       field_own: entry_field,
       path_prov: entry_pp,
+      projected_shell: entry_projected,
     }
     pred_id := case blk.preds.len() == 1 {
       true => blk.preds[0].target.id,
@@ -8874,6 +9222,7 @@ fn summarize_seeded(
   fn_params := f.params // Vector<LocalId>; capture before .Field(f) shadow
   field_flow := collect_field_flow_with_live(f, table, sem, resolve, require, live)
   ret: ReturnEffect = .OwnedFresh
+  ret_borrow: ProjectedReturn? = .None
   ret_sites: Vector<RetSite> = []
   seen := false
   for blk in blocks {
@@ -8891,12 +9240,14 @@ fn summarize_seeded(
           entry_field = seed_param_field_own(entry_field, field_seed, f.params)
         }
         entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+        entry_projected := join_entry_projected(blk, fx.exit_projected, done)
         st := ForwardState.{
           own: entry_own,
           valid: entry_valid,
           prov: entry_prov,
           field_own: entry_field,
           path_prov: entry_pp,
+          projected_shell: entry_projected,
         }
 
         // seed a payload-bound local from its match predecessor's exit facts
@@ -8931,6 +9282,22 @@ fn summarize_seeded(
         // prov non-empty) aliases a param. Deep/field origins are the caller's
         // concern via the return hand-off, not the shell alias set.
         idxs := prov_to_indices(f.params, prov_of(body.prov, a))
+        borrow_here: ProjectedReturn? = case body.projected_atom(a) {
+          .Some(borrow) => {
+            roots := prov_to_indices(f.params, borrow.roots)
+            if roots.len() == 1 {
+              .Some(.{ param: roots[0], path: borrow.path })
+            } else {
+              .None
+            }
+          },
+          .None => .None,
+        }
+        ret_borrow = if seen {
+          meet_projected_return(ret_borrow, borrow_here)
+        } else {
+          borrow_here
+        }
         r: ReturnEffect = if idxs.len() > 0 {
           .MayAliasParams(idxs)
         } else {
@@ -9078,5 +9445,5 @@ fn summarize_seeded(
       )
     }
   }
-  .{ summary: .{ params, ret, ret_paths: ret_paths_final, ret_exact_param }, fx, live }
+  .{ summary: .{ params, ret, ret_paths: ret_paths_final, ret_exact_param, ret_borrow }, fx, live }
 }

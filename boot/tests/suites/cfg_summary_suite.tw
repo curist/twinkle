@@ -520,6 +520,7 @@ fn one_param_summary(role: ownership.ParamRole, ipp: variant_id.PathSet) ownersh
     ret: .MayAliasParams([0]),
     ret_paths: [],
     ret_exact_param: .None,
+    ret_borrow: .None,
   }
 }
 
@@ -750,6 +751,487 @@ fn recursive_transport_fixture() Vector<AnfFunctionDef> {
 pub fn suite() runner.Suite {
   runner
     .suite("cfg summary")
+    .test(
+      "projected element loop meets preserve agreement and lose conflicting roots",
+      fn() {
+        for root in [0, 1] {
+          backedge: AnfExpr = .Let(
+            lid(4),
+            .AIndex(.ALocal(lid(root)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(lid(5), .AAssign(lid(2), .ALocal(lid(4))), span.unknown(), .Continue),
+          )
+          loop_body: AnfExpr = .Let(
+            lid(6),
+            .AIf(.ALitBool(true), .Break(.None), backedge),
+            span.unknown(),
+            .Atom(.ALitVoid),
+          )
+          body: AnfExpr = .Let(
+            lid(2),
+            .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(lid(3), .ALoop(loop_body), span.unknown(), .Atom(.ALocal(lid(2)))),
+          )
+          s := summ1("projected_element_loop", 2, body)
+          if root == 0 {
+            try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+          } else {
+            try assert.is_true(s.ret_borrow == .None)
+          }
+          try assert.is_true(summary.render_summary(s).contains("ret=shared"))
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element nested indexing drops an unrepresentable path",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .Vector(.String)),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AIndex(.ALocal(lid(1)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Atom(.ALocal(lid(2))),
+          ),
+        )
+        s := summ1("projected_element_nested", 1, body)
+        try assert.is_true(s.ret_borrow == .None)
+        try assert.is_true(summary.render_summary(s).contains("ret=shared"))
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element wrapper fields retain independent roots",
+      fn() {
+        for selected in [0, 1] {
+          body: AnfExpr = .Let(
+            lid(2),
+            .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .AIndex(.ALocal(lid(1)), .ALitInt(0), .Array, .String),
+              span.unknown(),
+              .Let(
+                lid(4),
+                .ARecord(
+                  TypeId.{ id: 0 },
+                  [
+                    .{ field: .{ id: 0 }, value: .ALocal(lid(2)) },
+                    .{ field: .{ id: 1 }, value: .ALocal(lid(3)) },
+                  ],
+                ),
+                span.unknown(),
+                .Let(
+                  lid(5),
+                  .ARecordGet(.ALocal(lid(4)), FieldId.{ id: selected }, TypeId.{ id: 0 }),
+                  span.unknown(),
+                  .Atom(.ALocal(lid(5))),
+                ),
+              ),
+            ),
+          )
+          s := summ1("projected_element_fields", 2, body)
+          case s.ret_borrow {
+            .Some(borrow) => try assert.equal(borrow.param, selected),
+            .None => return .Err("lost independent field borrow"),
+          }
+          try assert.is_true(s.ret_exact_param == .None)
+          try assert.is_true(!s.params[0].flows_to_return and !s.params[1].flows_to_return)
+          try assert.is_true(s.ret_paths.is_empty())
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element channel preserves ordinary nested vector publication",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AArrayLit([.ALocal(lid(0))]),
+          span.unknown(),
+          .Let(
+            lid(2),
+            wrapper_record(lid(1)),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+              span.unknown(),
+              .Let(
+                lid(4),
+                .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(3))),
+                span.unknown(),
+                .Atom(.ALitInt(0)),
+              ),
+            ),
+          ),
+        )
+        s := summ1("ordinary_nested_vector", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element survives source rebinding and unknown publication",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AArrayLit([.ALitStr("new")]),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .AAssign(lid(0), .ALocal(lid(2))),
+              span.unknown(),
+              .Let(
+                lid(4),
+                .ACall(.AGlobalFunc(FuncId.{ id: 99 }), [.ALocal(lid(1))]),
+                span.unknown(),
+                .Atom(.ALocal(lid(1))),
+              ),
+            ),
+          ),
+        )
+        s := summ1("projected_element_rebind_source", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element record update preserves borrowed provenance",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          wrapper_record(lid(0)),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .ARecordUpdate(
+                .ALocal(lid(1)),
+                FieldId.{ id: 0 },
+                .ALocal(lid(2)),
+                false,
+                TypeId.{ id: 0 },
+              ),
+              span.unknown(),
+              .Let(
+                lid(4),
+                .ARecordGet(.ALocal(lid(3)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+                span.unknown(),
+                .Atom(.ALocal(lid(4))),
+              ),
+            ),
+          ),
+        )
+        s := summ1("projected_element_update", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element wrapper join loses a rootless versus rooted conflict",
+      fn() {
+        left: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(lid(2), wrapper_record(lid(1)), span.unknown(), .Atom(.ALocal(lid(2)))),
+        )
+        right: AnfExpr = .Let(
+          lid(3),
+          .AArrayLit([.ALitStr("fresh")]),
+          span.unknown(),
+          .Let(
+            lid(4),
+            .AIndex(.ALocal(lid(3)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(lid(5), wrapper_record(lid(4)), span.unknown(), .Atom(.ALocal(lid(5)))),
+          ),
+        )
+        body: AnfExpr = .Let(
+          lid(6),
+          .AIf(.ALitBool(true), left, right),
+          span.unknown(),
+          .Let(
+            lid(7),
+            .ARecordGet(.ALocal(lid(6)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+            span.unknown(),
+            .Atom(.ALocal(lid(7))),
+          ),
+        )
+        s := summ1("projected_element_wrapper_join", 1, body)
+        try assert.is_true(s.ret_borrow == .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element return borrows a parameter path",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Atom(.ALocal(lid(1))),
+        )
+        s := summ1("projected_element_return", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("ret=shared"))
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element survives assignment and record re-projection",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AInit(.ALocal(lid(1))),
+            span.unknown(),
+            .Let(
+              lid(3),
+              wrapper_record(lid(2)),
+              span.unknown(),
+              .Let(
+                lid(4),
+                .ARecordGet(.ALocal(lid(3)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+                span.unknown(),
+                .Atom(.ALocal(lid(4))),
+              ),
+            ),
+          ),
+        )
+        s := summ1("projected_element_record", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        try assert.is_true(summary.render_summary(s).contains("ret=shared"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element rebinding preserves the borrowed return",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AInit(.ALitStr("old")),
+            span.unknown(),
+            .Let(lid(3), .AAssign(lid(2), .ALocal(lid(1))), span.unknown(), .Atom(.ALocal(lid(2)))),
+          ),
+        )
+        s := summ1("projected_element_rebound", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element store publishes the object without publishing the vector shell",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            wrapper_record(lid(1)),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))),
+              span.unknown(),
+              .Atom(.ALitInt(0)),
+            ),
+          ),
+        )
+        s := summ1("projected_element_store", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element in variant or array never publishes the vector shell",
+      fn() {
+        variant_body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))),
+              span.unknown(),
+              .Atom(.ALitInt(0)),
+            ),
+          ),
+        )
+        array_body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AArrayLit([.ALocal(lid(1))]),
+            span.unknown(),
+            .Let(
+              lid(3),
+              .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))),
+              span.unknown(),
+              .Atom(.ALitInt(0)),
+            ),
+          ),
+        )
+        try assert.equal(
+          p_escape(summ1("projected_element_variant", 1, variant_body), 0),
+          escape_tag(.Borrowed),
+        )
+        try assert.equal(
+          p_escape(summ1("projected_element_array", 1, array_body), 0),
+          escape_tag(.Borrowed),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element closure capture leaves the vector shell borrowed",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AMakeClosure(FuncId.{ id: 99 }, [lid(1)]),
+            span.unknown(),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        s := summ1("projected_element_capture", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element joins retain agreement and drop conflicting roots",
+      fn() {
+        same_body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .AIf(.ALitBool(true), .Atom(.ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
+            span.unknown(),
+            .Atom(.ALocal(lid(2))),
+          ),
+        )
+        same := summ1("projected_element_same_join", 1, same_body)
+        try assert.is_true(summary.render_summary(same).contains("borrow(p0,[Elem])"))
+
+        different_body: AnfExpr = .Let(
+          lid(2),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(3),
+            .AIndex(.ALocal(lid(1)), .ALitInt(0), .Array, .String),
+            span.unknown(),
+            .Let(
+              lid(4),
+              .AIf(.ALitBool(true), .Atom(.ALocal(lid(2))), .Atom(.ALocal(lid(3)))),
+              span.unknown(),
+              .Atom(.ALocal(lid(4))),
+            ),
+          ),
+        )
+        different := summ1("projected_element_different_join", 2, different_body)
+        try assert.is_true(different.ret_borrow == .None)
+        try assert.is_true(summary.render_summary(different).contains("ret=shared"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element survives vector slot replacement",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Let(
+            lid(2),
+            .ACall(
+              .AGlobalFunc(b.id("vector$set_unsafe")),
+              [.ALocal(lid(0)), .ALitInt(0), .ALitStr("replacement")],
+            ),
+            span.unknown(),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        s := summ1("projected_element_replaced", 1, body)
+        try assert.is_true(summary.render_summary(s).contains("borrow(p0,[Elem])"))
+        try assert.is_true(summary.render_summary(s).contains("ret=shared"))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element call return leaves caller vector shell unique",
+      fn() {
+        callee_body: AnfExpr = .Let(
+          lid(1),
+          .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .String),
+          span.unknown(),
+          .Atom(.ALocal(lid(1))),
+        )
+        caller_body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+          span.unknown(),
+          .Atom(.ALocal(lid(1))),
+        )
+        b := b_reg()
+        v := cfg.build_view(
+          module_of([
+            fdef(1, "projected_element_callee", 1, callee_body),
+            fdef(2, "projected_element_caller", 1, caller_body),
+          ]),
+          b,
+        )
+        t := summary.compute(v, b, sem())
+        callee := summ_of(t, 1)
+        try assert.is_true(summary.render_summary(callee).contains("borrow(p0,[Elem])"))
+        caller := case v.function_named("projected_element_caller") {
+          .Some(found) => found,
+          .None => return .Err("missing projected_element_caller"),
+        }
+        seed: Dict<Int, Bool> = Dict.new()
+        seed[0] = true
+        analyzed := ownership.analyze_function_with_seed(caller, t, b, sem(), seed)
+        try assert.equal(analyzed.blocks[0].exit.ownership.get(0), .Some(0))
+        try assert.equal(analyzed.blocks[0].exit.ownership.get(1), .Some(1))
+        .Ok({})
+      },
+    )
     .test(
       "t1 borrow: fn f(x) { Dict.new() } -> p0 borrow",
       fn() {
@@ -1641,12 +2123,14 @@ pub fn suite() runner.Suite {
           ret: .MayAliasParams([0, 1]),
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         fresh := ownership.Summary.{
           params: [],
           ret: .OwnedFresh,
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         try assert.equal(
           summary.render_summary(consumed),
@@ -1926,6 +2410,7 @@ pub fn suite() runner.Suite {
           ret: .OwnedFresh,
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         try assert.equal(summary.render_summary(s), "summary: p0=Consumed paths{[]} ret=fresh")
         .Ok({})
@@ -2110,6 +2595,7 @@ pub fn suite() runner.Suite {
           ret: .MayAliasParams([0]),
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
@@ -2153,6 +2639,7 @@ pub fn suite() runner.Suite {
           ret: .OwnedFresh,
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
@@ -2320,6 +2807,7 @@ pub fn suite() runner.Suite {
           ret: .MayAliasParams([0]),
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         v := ownership.select_variant(7, s, [true, true])
         try assert.equal(v.unique.len(), 2) // (0,[]) + (0,[.f0]); p1 contributes nothing
@@ -2426,6 +2914,7 @@ pub fn suite() runner.Suite {
           ret: .OwnedFresh,
           ret_paths: [],
           ret_exact_param: .None,
+          ret_borrow: .None,
         }
         try assert.equal(
           summary.render_summary(s),

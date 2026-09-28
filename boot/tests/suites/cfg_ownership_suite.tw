@@ -4,7 +4,7 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, Atom}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, LocalId}
+use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -59,6 +59,73 @@ fn direct_value_break_module() AnfModule {
     op_result_mono: Dict.new(),
     body,
     return_ty: MonoType.Int,
+  }
+  .{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn projected_element_read_module(elem_ty: MonoType) AnfModule {
+  xs := local(0)
+  item := local(1)
+  body: AnfExpr = .Let(
+    item,
+    .AIndex(.ALocal(xs), .ALitInt(0), .Array, elem_ty),
+    span.unknown(),
+    .Atom(.ALocal(item)),
+  )
+  func: AnfFunctionDef = .{
+    func_id: func_id(1),
+    name: "projected_element_read",
+    is_init: false,
+    params: [Param.{ local: xs, ty: .Vector(elem_ty) }],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: elem_ty,
+  }
+  .{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn fresh_projected_element_record_module() AnfModule {
+  body: AnfExpr = .Let(
+    local(0),
+    .AArrayLit([.ALitStr("value")]),
+    span.unknown(),
+    .Let(
+      local(1),
+      .AIndex(.ALocal(local(0)), .ALitInt(0), .Array, .String),
+      span.unknown(),
+      .Let(
+        local(2),
+        .ARecord(.{ id: 0 }, [.{ field: .{ id: 0 }, value: .ALocal(local(1)) }]),
+        span.unknown(),
+        .Let(
+          local(3),
+          .ARecordGet(.ALocal(local(2)), .{ id: 0 }, .{ id: 0 }),
+          span.unknown(),
+          .Atom(.ALocal(local(3))),
+        ),
+      ),
+    ),
+  )
+  func: AnfFunctionDef = .{
+    func_id: func_id(1),
+    name: "fresh_projected_element_record",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: .String,
   }
   .{
     functions: [func],
@@ -160,6 +227,74 @@ fn block_named(func: cfg.CfgFunction, name: String) cfg.CfgBlock? {
 pub fn suite() runner.Suite {
   runner
     .suite("cfg ownership view")
+    .test(
+      "projected element read preserves a unique vector shell but shares the item",
+      fn() {
+        b := builtins.make_builtin_registry()
+        v := cfg.build_view(projected_element_read_module(.String), b)
+        f := case v.function_named("projected_element_read") {
+          .Some(found) => found,
+          .None => return .Err("missing projected_element_read"),
+        }
+        seed: Dict<Int, Bool> = Dict.new()
+        seed[0] = true
+        analyzed := ownership.analyze_function_with_seed(
+          f,
+          ownership.empty_summary_table(),
+          b,
+          sem_for(),
+          seed,
+        )
+        block := analyzed.blocks[0]
+        try assert.equal(block.exit.ownership.get(0), .Some(0))
+        try assert.equal(block.exit.ownership.get(1), .Some(1))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element inner vector remains shared",
+      fn() {
+        b := builtins.make_builtin_registry()
+        v := cfg.build_view(projected_element_read_module(.Vector(.String)), b)
+        f := case v.function_named("projected_element_read") {
+          .Some(found) => found,
+          .None => return .Err("missing projected_element_read"),
+        }
+        seed: Dict<Int, Bool> = Dict.new()
+        seed[0] = true
+        analyzed := ownership.analyze_function_with_seed(
+          f,
+          ownership.empty_summary_table(),
+          b,
+          sem_for(),
+          seed,
+        )
+        block := analyzed.blocks[0]
+        try assert.equal(block.exit.ownership.get(0), .Some(0))
+        try assert.equal(block.exit.ownership.get(1), .Some(1))
+        .Ok({})
+      },
+    )
+    .test(
+      "projected element without parameter roots stays shared after record projection",
+      fn() {
+        b := builtins.make_builtin_registry()
+        v := cfg.build_view(fresh_projected_element_record_module(), b)
+        f := case v.function_named("fresh_projected_element_record") {
+          .Some(found) => found,
+          .None => return .Err("missing fresh_projected_element_record"),
+        }
+        analyzed := ownership.analyze_function_with_seed(
+          f,
+          ownership.empty_summary_table(),
+          b,
+          sem_for(),
+          Dict.new(),
+        )
+        try assert.equal(analyzed.blocks[0].exit.ownership.get(3), .Some(1))
+        .Ok({})
+      },
+    )
     .test(
       "straight-line function has entry block, return terminator, and empty facts",
       fn() {

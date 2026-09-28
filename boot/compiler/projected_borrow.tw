@@ -1,0 +1,87 @@
+//! Provenance of a borrowed value projected from a parameter-rooted shell.
+//! This fact is independent of ownership of the shell itself.
+
+use compiler.field_facts.{AccessPath, PathSeg}
+
+pub type ProjectedBorrow = .{ roots: Vector<Int>, path: AccessPath }
+
+pub fn make(roots: Vector<Int>, path: AccessPath) ProjectedBorrow {
+  sorted := roots.sort()
+  unique: Vector<Int> = []
+  for root in sorted {
+    if unique.len() == 0 or unique[unique.len() - 1] != root {
+      unique = .append(root)
+    }
+  }
+  .{ roots: unique, path }
+}
+
+pub fn same(a: ProjectedBorrow, b: ProjectedBorrow) Bool {
+  if a.roots.len() != b.roots.len() or !a.path.path_eq(b.path) {
+    return false
+  }
+  for root, i in a.roots {
+    if root != b.roots[i] {
+      return false
+    }
+  }
+  true
+}
+
+pub fn meet(a: ProjectedBorrow?, b: ProjectedBorrow?) ProjectedBorrow? {
+  case a {
+    .Some(left) => case b {
+      .Some(right) => if left.same(right) {
+        .Some(left)
+      } else {
+        .None
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+// The field_facts codec accepts only these two-segment shapes. A failed
+// prefix loses the fact rather than silently truncating the borrowed path.
+pub fn prefix(seg: PathSeg, b: ProjectedBorrow) ProjectedBorrow? {
+  inner := b.path.segs
+  if inner.len() == 0 {
+    return .Some(.{ roots: b.roots, path: .{ segs: [seg] } })
+  }
+  if inner.len() != 1 {
+    return .None
+  }
+  representable := case seg {
+    .Field(_) => case inner[0] {
+      .Elem => true,
+      .Val => true,
+      .Field(_) => true,
+      _ => false,
+    },
+    .Payload(_, _) => case inner[0] {
+      .Field(_) => true,
+      _ => false,
+    },
+    _ => false,
+  }
+  if representable {
+    .Some(.{ roots: b.roots, path: .{ segs: [seg, inner[0]] } })
+  } else {
+    .None
+  }
+}
+
+pub fn append(b: ProjectedBorrow, path: AccessPath) ProjectedBorrow? {
+  segs := b.path.segs
+  if path.segs.len() == 0 {
+    return .Some(b)
+  }
+  if segs.len() == 0 and path.segs.len() == 1 {
+    return .Some(.{ roots: b.roots, path })
+  }
+  if segs.len() != 1 or path.segs.len() != 1 {
+    return .None
+  }
+  prefix(segs[0], make(b.roots, path))
+}

@@ -368,7 +368,9 @@ pub fn suite() runner.Suite {
           out,
           [
             "fn visit",
-            "summary: p0=Published p1=Published p2=Published ret=alias(p0)",
+            // Indexing p2 yields a shared element; publishing that element does
+            // not publish the independent vector shell.
+            "summary: p0=Published p1=Published p2=Borrowed ret=alias(p0)",
             "terminator: loop-back-edge",
             "match.join",
             "record_update",

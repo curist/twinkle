@@ -20,8 +20,8 @@ use compiler.field_facts as ff
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  FixCache, LiveCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn,
-  Summary, SummaryTable, VariantRequirementResolver, VariantResolver,
+  FixCache, LiveCache, ParamRole, ParamSummary, ProjectedReturn, RetVia, ReturnEffect, ReturnOwn,
+  ReturnPathOwn, Summary, SummaryTable, VariantRequirementResolver, VariantResolver,
   analyze_function_with_seed_resolved, call_uniques_sited, empty_fix_cache, empty_live_cache,
   empty_summary_table, fix_cache_get, fix_cache_put, live_cache_put, summarize_function_cached,
   summarize_variant_resolved, summary_get, with_dedupe_helpers,
@@ -121,7 +121,7 @@ pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
     ParamSummary.{ base_role: .Published, in_place_paths: vid.empty_set(), flows_to_return: false }
   }
-  .{ params, ret: .Shared, ret_paths: [], ret_exact_param: .None }
+  .{ params, ret: .Shared, ret_paths: [], ret_exact_param: .None, ret_borrow: .None }
 }
 
 // ── Summary equality (fixpoint stop condition) ──────────────────────
@@ -272,7 +272,18 @@ pub fn same_summary(a: Summary, b: Summary) Bool {
       return false
     }
   }
-  return_eq(a.ret, b.ret) and ret_paths_eq(a.ret_paths, b.ret_paths)
+  return_eq(a.ret, b.ret)
+    and ret_paths_eq(a.ret_paths, b.ret_paths) and same_projected_return(a.ret_borrow, b.ret_borrow)
+}
+
+fn same_projected_return(a: ProjectedReturn?, b: ProjectedReturn?) Bool {
+  case a {
+    .Some(left) => case b {
+      .Some(right) => left.param == right.param and ff.path_eq(left.path, right.path),
+      .None => false,
+    },
+    .None => b == .None,
+  }
 }
 
 // ── Call graph ──────────────────────────────────────────────────────
@@ -546,6 +557,7 @@ fn run_scc(
             ret: s.ret,
             ret_paths: [],
             ret_exact_param: s.ret_exact_param,
+            ret_borrow: .None,
           },
         ),
         .None => {},
@@ -1018,7 +1030,13 @@ fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
       ps
     }
   }
-  .{ params, ret: .MayAliasParams([k]), ret_paths: [], ret_exact_param: .Some(k) }
+  .{
+    params,
+    ret: .MayAliasParams([k]),
+    ret_paths: [],
+    ret_exact_param: .Some(k),
+    ret_borrow: .None,
+  }
 }
 
 fn optimistic_variant_hypothesis(gs: Summary, v: vid.VariantId) Summary {
@@ -1818,6 +1836,23 @@ fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
   }
 }
 
+fn render_borrow(ret: ProjectedReturn?) String {
+  case ret {
+    .None => "",
+    .Some(borrow) => {
+      parts: Vector<String> = collect seg in borrow.path.segs {
+        case seg {
+          .Elem => "Elem",
+          .Val => "Val",
+          .Field(f) => "Field(${f})",
+          .Payload(tag, i) => "Payload(${tag},${i})",
+        }
+      }
+      " borrow(p${borrow.param},[${parts.join(",")}])"
+    },
+  }
+}
+
 // Renders a parameter in-place path: [] (shell) or [.f0,.f1] (field chain). The
 // field-chain arm is only reached once Phase 6 Part 2 populates in_place_paths;
 // in Part 1 every path is the shell [].
@@ -1863,7 +1898,7 @@ fn render_summary_body(s: Summary) String {
       "alias(${ps.join(",")})"
     },
   }
-  "${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}"
+  "${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}${render_borrow(s.ret_borrow)}"
 }
 
 pub fn render_summary(s: Summary) String {

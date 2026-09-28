@@ -111,6 +111,7 @@ use .suites.phys_plan_suite
 use .suites.project_config_suite
 use .suites.project_context_suite
 use .suites.project_scaffold_suite
+use .suites.projected_borrow_suite
 use .suites.query_analyze_suite
 use .suites.query_cache_suite
 use .suites.query_diagnostics_suite
@@ -249,6 +250,7 @@ runner.run_all([
   pathclass_suite.suite(),
   project_config_suite.suite(),
   project_context_suite.suite(),
+  projected_borrow_suite.suite(),
   project_scaffold_suite.suite(),
   dependency_graph_suite.suite(),
   discovery_suite.suite(),
