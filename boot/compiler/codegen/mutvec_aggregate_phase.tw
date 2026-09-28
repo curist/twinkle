@@ -116,6 +116,7 @@ pub fn build_aggregate(
   // (2) Flatten every helper the vhandle is threaded into (least fixpoint).
   acc: PropAcc = .{
     memo: Dict.new(),
+    slots: Dict.new(),
     next_id,
     retarget: Dict.new(),
     siblings: [],

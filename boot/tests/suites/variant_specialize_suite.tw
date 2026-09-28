@@ -152,7 +152,11 @@ pub fn suite() runner.Suite {
     .test(
       "owned reconstruction rejects fresh and different field substitutes",
       fn() Result<Void, String> {
-        for name in ["recursive_record_fresh_substitute", "recursive_record_other_field", "recursive_record_helper_substitute"] {
+        for name in [
+          "recursive_record_fresh_substitute",
+          "recursive_record_other_field",
+          "recursive_record_helper_substitute",
+        ] {
           st := mutvec.mutvec_call_stage(mutvec.fixture_path(name))
           try assert.is_false(
             st.spec.routes.any(fn(r) { r.fallback_reason == .None
@@ -187,13 +191,18 @@ pub fn suite() runner.Suite {
           )
           try assert.ok(route.route_sites.len() > 0, "${name}: entry must route")
           try assert.ok(route.recursive_routes.len() > 0, "${name}: recursion must route")
-          try assert.ok(calls_target(st.spec.anf, "run", route.clone_func), "entry calls the owned clone")
+          try assert.ok(
+            calls_target(st.spec.anf, "run", route.clone_func),
+            "entry calls the owned clone",
+          )
           vt := summary.compute_variants(st.spec.pruned_view, st.builtins, st.sem, st.spec.summary)
           owned := vt.variant_get(route.variant).unwrap().summary
           try assert.ok(owned.ret == .OwnedFresh, "owned variant returns a fresh record shell")
-          try assert.ok(owned.ret_paths.any(fn(rp) {
-            rp.via == .Direct and rp.field == .Some(0) and rp.own == .OwnedFromField(0, 0)
-          }), "values returns exactly the incoming values field")
+          try assert.ok(
+            owned.ret_paths.any(fn(rp) { rp.via == .Direct
+              and rp.field == .Some(0) and rp.own == .OwnedFromField(0, 0) }),
+            "values returns exactly the incoming values field",
+          )
           generic := ownership.summary_get(st.spec.summary, route.generic_func).unwrap()
           try assert.ok(
             generic.ret != .MayAliasParams([0]),

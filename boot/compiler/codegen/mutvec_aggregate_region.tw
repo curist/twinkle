@@ -3,6 +3,7 @@
 //! Clone-local ownership recomputation must precede any future ABI rewrite.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
+use compiler.builder_region_detect.{op_references_deep}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.variant_route
 use compiler.codegen.variant_specialize
@@ -267,11 +268,13 @@ fn find_entry(entries: Dict<Int, EntrySite>, route_sites: Vector<Int>) EntrySite
 fn classify_exit(caller: AnfFunctionDef, entry_local: LocalId, vector_field: Int) AggregateMutVecExit {
   carrier := int_set([entry_local.id])
   projections: Vector<Int> = []
+  record_observed := false
   for e in collect_ops(caller.body) {
     case e.op {
       .AInit(a) => case atom_local(a) {
         .Some(id) => if int_has(carrier, id) {
           carrier[e.local] = true
+          record_observed = true
         },
         .None => {},
       },
@@ -281,7 +284,13 @@ fn classify_exit(caller: AnfFunctionDef, entry_local: LocalId, vector_field: Int
         },
         .None => {},
       },
-      _ => {},
+      _ => {
+        for id, _present in carrier {
+          if op_references_deep(e.op, .{ id }) {
+            record_observed = true
+          }
+        }
+      },
     }
   }
   record_returned := false
@@ -300,8 +309,8 @@ fn classify_exit(caller: AnfFunctionDef, entry_local: LocalId, vector_field: Int
     }
   }
   cond {
-    record_returned => .PublishRecord,
-    field_returned => .PublishField,
+    record_returned or record_observed => .PublishRecord,
+    field_returned or projections.len() > 0 => .PublishField,
     _ => .DeadField,
   }
 }

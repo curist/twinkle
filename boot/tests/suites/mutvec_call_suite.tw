@@ -739,6 +739,7 @@ pub fn suite() runner.Suite {
         }
         seed := mutvec_propagate.PropAcc.{
           memo: Dict.new(),
+          slots: Dict.new(),
           next_id: max_fid(st.spec.anf) + 1,
           retarget: Dict.new(),
           siblings: [],
@@ -766,6 +767,35 @@ pub fn suite() runner.Suite {
         set_i64 := builtins.id(st.builtins, "vector$__mutvec_set_i64").id
         wrote := acc.siblings.any(fn(s) { body_has_mutvec_set(s.def.body, set_i64) })
         try assert.ok(wrote, "a flat sibling writes via mutvec_set_i64")
+        .Ok({})
+      },
+    )
+    .test(
+      "flatten_helper rejects one callee reached through incompatible handle parameters",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        swap := case st.spec.anf.functions.find(fn(f) { f.name.contains("swap") }) {
+          .Some(f) => f,
+          .None => return .Err("no swap clone in module"),
+        }
+        slots: Dict<Int, Int> = Dict.new()
+        slots[swap.func_id.id] = swap.params[0].local.id + 1
+        acc := mutvec_propagate.flatten_helper(
+          swap,
+          swap.params[0].local.id,
+          st.spec,
+          st.builtins,
+          mutvec_propagate.PropAcc.{
+            memo: Dict.new(),
+            slots,
+            next_id: max_fid(st.spec.anf) + 1,
+            retarget: Dict.new(),
+            siblings: [],
+            ok: true,
+            reason: .None,
+          },
+        )
+        try assert.is_false(acc.ok)
         .Ok({})
       },
     )
@@ -1688,6 +1718,16 @@ pub fn suite() runner.Suite {
           "flat write lands in the propagated clone graph",
         )
         try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive record aliased field escape emits exactly one boundary freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_field_alias_escape")
+        _clone := try aggregate_permute_wat_body(wat)
         try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze_i64"), 1)
         try assert.equal(count_all_op_calls(wat, "mutvec_freeze_i64"), 1)
         .Ok({})

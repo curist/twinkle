@@ -276,6 +276,7 @@ pub type FlatSibling = .{ def: AnfFunctionDef, handle_param: Int, fam: ElemRepr 
 // the produced defs.
 pub type PropAcc = .{
   memo: Dict<Int, Int>,
+  slots: Dict<Int, Int>,
   next_id: Int,
   retarget: Dict<Int, Int>,
   siblings: Vector<FlatSibling>,
@@ -283,13 +284,14 @@ pub type PropAcc = .{
   reason: String?,
 }
 
-fn memo_key(callee: Int, arg_pos: Int) Int {
-  callee * 16 + arg_pos
+fn memo_key(callee: Int, _token_param: Int) Int {
+  callee
 }
 
 fn pfail(acc: PropAcc, msg: String) PropAcc {
   .{
     memo: acc.memo,
+    slots: acc.slots,
     next_id: acc.next_id,
     retarget: acc.retarget,
     siblings: acc.siblings,
@@ -309,6 +311,13 @@ pub fn flatten_helper(
   b: BuiltinRegistry,
   acc: PropAcc,
 ) PropAcc {
+  case acc.slots.get(clone.func_id.id) {
+    .Some(slot) => if slot != token_param {
+      return acc.pfail("flat helper reached through incompatible handle parameter")
+    },
+    .None => acc.slots[clone.func_id.id] = token_param,
+  }
+
   // `memo` doubles as a cycle guard: a `-1` sentinel means "this edge is being
   // flattened right now". Re-entering it (a self-recursive or mutually recursive
   // helper) would otherwise recurse forever — slice-1 helpers are acyclic, so a
@@ -373,6 +382,7 @@ pub fn flatten_helper(
       new_retarget[clone.func_id.id] = sib_id
       .{
         memo: new_memo,
+        slots: cur.slots,
         next_id: sib_id + 1,
         retarget: new_retarget,
         siblings: cur.siblings.append(FlatSibling.{ def: sib, handle_param: token_param, fam }),

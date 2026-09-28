@@ -490,7 +490,12 @@ fn uniform_entry_seeds(
         if int_has(targets, site.callee) {
           s := case table.summary_get(site.callee) {
             .Some(x) => x,
-            .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [], ret_exact_param: .None },
+            .None => ownership.Summary.{
+              params: [],
+              ret: .Shared,
+              ret_paths: [],
+              ret_exact_param: .None,
+            },
           }
           case by_id.get(site.callee) {
             .Some(callee_f) => {
@@ -514,7 +519,12 @@ fn uniform_entry_seeds(
     if int_has(targets, f.func_id) and !int_has(unsafe, f.func_id) {
       s := case table.summary_get(f.func_id) {
         .Some(x) => x,
-        .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [], ret_exact_param: .None },
+        .None => ownership.Summary.{
+          params: [],
+          ret: .Shared,
+          ret_paths: [],
+          ret_exact_param: .None,
+        },
       }
       seed: Dict<Int, Bool> = Dict.new()
       for p in seed_param_indices(f, s, b, sem, table) {

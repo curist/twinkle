@@ -1642,7 +1642,12 @@ pub fn suite() runner.Suite {
           ret_paths: [],
           ret_exact_param: .None,
         }
-        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh, ret_paths: [], ret_exact_param: .None }
+        fresh := ownership.Summary.{
+          params: [],
+          ret: .OwnedFresh,
+          ret_paths: [],
+          ret_exact_param: .None,
+        }
         try assert.equal(
           summary.render_summary(consumed),
           "summary: p0=Borrowed p1=Published ret=alias(p0,p1)",

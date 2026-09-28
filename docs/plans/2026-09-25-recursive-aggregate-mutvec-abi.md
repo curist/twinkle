@@ -820,7 +820,7 @@ git commit -m "docs(mutvec): record recursive aggregate performance gate"
 - Consumes: complete aggregate S4 implementation.
 - Produces: merge-ready branch with verified persistent fallbacks and ordinary-source performance.
 
-- [ ] **Step 1: Run the complete project verification**
+- [x] **Step 1: Run the complete project verification**
 
 ```bash
 make test
@@ -828,7 +828,7 @@ make test
 
 Expected: Rust, boot, and JavaScript runtime suites pass.
 
-- [ ] **Step 2: Re-run formatting and lint on reachable Twinkle sources**
+- [x] **Step 2: Re-run formatting and lint on reachable Twinkle sources**
 
 ```bash
 target/twk fmt
@@ -838,15 +838,15 @@ target/twk lint examples/performance/awfy/twinkle/main.tw
 
 Expected: formatting is idempotent. Investigate new lint findings; do not mechanically apply `.inc()`/`.dec()` in the benchmark hot recursion until those methods inline equivalently.
 
-- [ ] **Step 3: Audit fallback WAT**
+- [x] **Step 3: Audit fallback WAT**
 
 Compile the alias, mixed-lineage, unsupported-family, and variant-cap fixtures. Confirm each uses persistent vector operations and contains no MutVec/PVec cast bridge.
 
-- [ ] **Step 4: Review the final diff against the spec**
+- [x] **Step 4: Review the final diff against the spec**
 
 Confirm normal `permute.tw` is unchanged in algorithm and data model, no public API was added, dead results freeze zero times, observed results freeze once, and every uncertain path falls back.
 
-- [ ] **Step 5: Commit any review-only corrections**
+- [x] **Step 5: Commit any review-only corrections**
 
 ```bash
 git add boot/compiler/codegen boot/compiler/backend boot/tests/fixtures/cfg/mutvec_call boot/tests/suites/mutvec_call_suite.tw docs/plans examples/performance/awfy

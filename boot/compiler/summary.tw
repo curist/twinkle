@@ -541,7 +541,12 @@ fn run_scc(
         .Some(s) => table = table_put(
           table,
           id,
-          Summary.{ params: s.params, ret: s.ret, ret_paths: [], ret_exact_param: s.ret_exact_param },
+          Summary.{
+            params: s.params,
+            ret: s.ret,
+            ret_paths: [],
+            ret_exact_param: s.ret_exact_param,
+          },
         ),
         .None => {},
       }
