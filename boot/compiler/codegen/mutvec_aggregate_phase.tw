@@ -39,7 +39,13 @@ use lib.source.span
 
 // ABI fact for one produced flat clone: its receiver handle param and whether it
 // returns the MutVec handle (helpers) or a scalar (`permute$mvagg`).
-pub type HandleUpgrade = .{ clone_func: Int, handle_param: Int, return_mutvec: Bool, fam: ElemRepr }
+pub type HandleUpgrade = .{
+  clone_func: Int,
+  handle_param: Int,
+  return_mutvec: Bool,
+  fam: ElemRepr,
+  vector_mono: MonoType,
+}
 
 pub type AggBuildResult = .{
   siblings: Vector<AnfFunctionDef>,
@@ -117,6 +123,7 @@ pub fn build_aggregate(
   acc: PropAcc = .{
     memo: Dict.new(),
     slots: Dict.new(),
+    monos: Dict.new(),
     next_id,
     retarget: Dict.new(),
     siblings: [],
@@ -128,7 +135,14 @@ pub fn build_aggregate(
       .Some(f) => f,
       .None => return build_fail(next_id),
     }
-    acc = mutvec_propagate.flatten_helper(callee, callee.params[e.arg_pos].local.id, spec, b, acc)
+    acc = mutvec_propagate.flatten_helper(
+      callee,
+      callee.params[e.arg_pos].local.id,
+      region.vector_mono,
+      spec,
+      b,
+      acc,
+    )
     if !acc.ok {
       return build_fail(next_id)
     }
@@ -163,12 +177,19 @@ pub fn build_aggregate(
         handle_param: s.handle_param,
         return_mutvec: true,
         fam: s.fam,
+        vector_mono: s.vector_mono,
       },
     )
   }
   siblings = .append(final_mvagg)
   upgrades = .append(
-    HandleUpgrade.{ clone_func: mvagg_id, handle_param: vhandle, return_mutvec: false, fam },
+    HandleUpgrade.{
+      clone_func: mvagg_id,
+      handle_param: vhandle,
+      return_mutvec: false,
+      fam,
+      vector_mono: region.vector_mono,
+    },
   )
 
   .{
@@ -464,7 +485,7 @@ fn rewrite_caller(
     handle,
     exit: region.exit,
     scalar_mono: region.scalar_fields[0].mono,
-    vec_mono: .Vector(elem_of_suffix(handle.suffix)),
+    vec_mono: region.vector_mono,
     freeze_id: builtins.id(b, "vector$__mutvec_freeze${handle.suffix}").id,
     scalar_local: base,
     frozen_local: base + 1,
@@ -584,15 +605,5 @@ fn family_to_suffix(family: String) String {
     "vec_f64" => "_f64",
     "vec_byte" => "_byte",
     _ => "_i64",
-  }
-}
-
-fn elem_of_suffix(suffix: String) MonoType {
-  case suffix {
-    "_i64" => .Int,
-    "_bool" => .Bool,
-    "_f64" => .Float,
-    "_byte" => .Byte,
-    _ => .Int,
   }
 }

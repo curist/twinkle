@@ -7,7 +7,8 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.backend.repr_policy.{candidate_typed_vec_family}
+use compiler.backend.repr_policy.{boxed_mutvec_family_of, candidate_typed_vec_family}
+use compiler.mono_type.{MonoType}
 
 pub fn suite() runner.Suite {
   runner
@@ -46,6 +47,40 @@ pub fn suite() runner.Suite {
       "non-vector → None",
       fn() {
         try assert.is_true(candidate_typed_vec_family(.Int) == .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed family accepts concrete GC-reference vector elements",
+      fn() {
+        try assert.is_true(boxed_mutvec_family_of(.Vector(.String)).is_some())
+        try assert.is_true(boxed_mutvec_family_of(.Vector(.Named(.{ id: 7 }, []))).is_some())
+        try assert.is_true(boxed_mutvec_family_of(.Vector(.Vector(.String))).is_some())
+        try assert.is_true(boxed_mutvec_family_of(.Vector(.Function([.Int], .String))).is_some())
+        try assert.is_true(boxed_mutvec_family_of(.Vector(.Optional(.String))).is_some())
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed family rejects primitives externrefs and unresolved sentinels",
+      fn() {
+        rejected: Vector<MonoType> = [
+          .Vector(.Int),
+          .Vector(.Float),
+          .Vector(.Bool),
+          .Vector(.Byte),
+          .Vector(.ExternRef(.{ id: 9 })),
+          .Vector(.Optional(.ExternRef(.{ id: 9 }))),
+          .Vector(.Void),
+          .Vector(.Never),
+          .Vector(.Anyref_),
+          .Vector(.Var("T")),
+          .Vector(.MetaVar(3)),
+          .Vector(.ErrorType),
+        ]
+        for mono in rejected {
+          try assert.is_true(boxed_mutvec_family_of(mono) == .None)
+        }
         .Ok({})
       },
     )

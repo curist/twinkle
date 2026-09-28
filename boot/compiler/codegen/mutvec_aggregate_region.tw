@@ -24,6 +24,7 @@ pub type AggregateMutVecRegion = .{
   carrier_type: TypeId,
   vector_field: FieldId,
   family: String,
+  vector_mono: MonoType,
   scalar_fields: Vector<AggregateScalarField>,
   entry_call: LocalId,
   recursive_calls: Vector<LocalId>,
@@ -161,7 +162,7 @@ fn build_region(
   .None
 }
 
-type VecField = .{ field: Int, family: String }
+type VecField = .{ field: Int, family: String, mono: MonoType }
 
 // Exactly one collection field may claim the private handle. Zero or several
 // leaves the carrier persistent (the plan's single-vector constraint).
@@ -172,7 +173,7 @@ fn single_vector_field(field_monos: Dict<Int, MonoType>) VecField? {
       .Some(_) => case elem_family.elem_family_of(mono) {
         .Some(fam) => case found {
           .Some(_) => return .None,
-          .None => found = .Some(VecField.{ field, family: fam.mono_key }),
+          .None => found = .Some(VecField.{ field, family: fam.mono_key, mono }),
         },
         .None => {},
       },
@@ -221,6 +222,7 @@ fn assemble_region(
       carrier_type: tid,
       vector_field: .{ id: vec.field },
       family: vec.family,
+      vector_mono: vec.mono,
       scalar_fields: scalars,
       entry_call: en.local,
       recursive_calls,
@@ -237,6 +239,7 @@ fn assemble_region(
       carrier_type: tid,
       vector_field: .{ id: vec.field },
       family: vec.family,
+      vector_mono: vec.mono,
       scalar_fields: scalars,
       entry_call: .{ id: 0 - 1 },
       recursive_calls,

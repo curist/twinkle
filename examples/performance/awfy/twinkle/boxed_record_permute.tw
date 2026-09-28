@@ -1,0 +1,50 @@
+type Person = .{ id: Int, score: Int }
+
+type State = .{ people: Vector<Person>, count: Int }
+
+fn swap(people: Vector<Person>, i: Int, j: Int) Vector<Person> {
+  a := people[i]
+  b := people[j]
+  people.set_at(i, b).set_at(j, a)
+}
+
+fn permute(state: State, n: Int) State {
+  next := State.{ people: state.people, count: state.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    next = .permute(n - 1)
+    i := n - 1
+    for i >= 0 {
+      next.people = swap(next.people, n - 1, i)
+      next = .permute(n - 1)
+      next.people = swap(next.people, n - 1, i)
+      i = .dec()
+    }
+    next
+  }
+}
+
+pub warmup := 10
+pub iters := 20
+pub size := 300
+pub expected := 8696
+
+pub fn run(size: Int) Int {
+  checksum := 0
+  rep := 0
+  for rep < size {
+    people: Vector<Person> = collect i in range(6) {
+      Person.{ id: i, score: i + 1 }
+    }
+    result := permute(State.{ people, count: 0 }, 6)
+    checksum = result.count
+    for person in result.people {
+      checksum = checksum + person.id + person.score
+    }
+    rep = .inc()
+  }
+  checksum
+}
+
+println(run(1))

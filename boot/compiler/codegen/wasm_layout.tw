@@ -501,6 +501,7 @@ pub fn mutvec_wasm_type(elem: ElemRepr) ValType {
     .I32 => "rt_types__MutVecBool",
     .F64 => "rt_types__MutVecF64",
     .Byte => "rt_types__MutVecByte",
+    .Boxed => "rt_types__MutVecBoxed",
   }
   .Ref(true, .Named(name))
 }
@@ -514,6 +515,7 @@ pub fn pvec_wasm_type(elem: ElemRepr) ValType {
     .I32 => "rt_types__PVecBool",
     .F64 => "rt_types__PVecF64",
     .Byte => "rt_types__PVecByte",
+    .Boxed => "rt_types__PVec",
   }
   .Ref(true, .Named(name))
 }

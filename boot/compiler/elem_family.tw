@@ -74,6 +74,22 @@ fn family_byte() ElemFamily {
   }
 }
 
+// Shared physical family for concrete GC-reference elements. It is deliberately
+// excluded from `all_families` and `mutvec_families` until the private boxed
+// runtime is registered; callers must opt in through the closed classifier.
+pub fn family_boxed() ElemFamily {
+  .{
+    mono_key: "vec_boxed",
+    suffix: "",
+    pvec_type: "rt_types__PVec",
+    elem_wasm: .Anyref,
+    get_call: "rt_arr__get",
+    make_call: "rt_arr__make",
+    box_call: "",
+    unbox_call: "",
+  }
+}
+
 pub fn family_by_pvec_name(name: String) ElemFamily? {
   for f in all_families() {
     if f.pvec_type == name {

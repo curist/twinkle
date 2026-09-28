@@ -22,7 +22,6 @@
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, FieldAtom}
 use compiler.codegen.mutvec_aggregate_region.{AggregateMutVecRegion}
 use compiler.core_ir.{LocalId, Param}
-use compiler.mono_type.{MonoType}
 use lib.source.span
 
 type VecScalar = .{ vec: Int, scalar: Int }
@@ -54,12 +53,7 @@ pub fn decompose_clone(
     return .None
   }
   scalar_mono := region.scalar_fields[0].mono
-  vector_mono := mono_of_family(region.family)
-  case vector_mono {
-    .None => return .None,
-    .Some(_) => {},
-  }
-  vmono := vector_mono.unwrap()
+  vmono := region.vector_mono
 
   // Carrier param must be a Named record whose local we can find.
   if region.carrier_param < 0 or region.carrier_param >= clone.params.len() {
@@ -132,16 +126,6 @@ pub fn decompose_clone(
       return_ty: scalar_mono,
     },
   )
-}
-
-fn mono_of_family(family: String) MonoType? {
-  case family {
-    "vec_i64" => .Some(.Vector(.Int)),
-    "vec_bool" => .Some(.Vector(.Bool)),
-    "vec_f64" => .Some(.Vector(.Float)),
-    "vec_byte" => .Some(.Vector(.Byte)),
-    _ => .None,
-  }
 }
 
 fn max_local(f: AnfFunctionDef) Int {

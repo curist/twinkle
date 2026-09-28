@@ -364,6 +364,7 @@ fn elem_repr_name(e: ElemRepr) String {
     .F64 => "F64",
     .I32 => "I32",
     .Byte => "Byte",
+    .Boxed => "Boxed",
   }
 }
 
@@ -740,6 +741,7 @@ pub fn suite() runner.Suite {
         seed := mutvec_propagate.PropAcc.{
           memo: Dict.new(),
           slots: Dict.new(),
+          monos: Dict.new(),
           next_id: max_fid(st.spec.anf) + 1,
           retarget: Dict.new(),
           siblings: [],
@@ -749,6 +751,7 @@ pub fn suite() runner.Suite {
         acc := mutvec_propagate.flatten_helper(
           swap,
           swap.params[0].local.id,
+          swap.params[0].ty,
           st.spec,
           st.builtins,
           seed,
@@ -783,11 +786,13 @@ pub fn suite() runner.Suite {
         acc := mutvec_propagate.flatten_helper(
           swap,
           swap.params[0].local.id,
+          swap.params[0].ty,
           st.spec,
           st.builtins,
           mutvec_propagate.PropAcc.{
             memo: Dict.new(),
             slots,
+            monos: Dict.new(),
             next_id: max_fid(st.spec.anf) + 1,
             retarget: Dict.new(),
             siblings: [],
@@ -796,6 +801,38 @@ pub fn suite() runner.Suite {
           },
         )
         try assert.is_false(acc.ok)
+        .Ok({})
+      },
+    )
+    .test(
+      "exact boxed mono rejects one helper reached with a different vector mono",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_scratch"))
+        swap := case st.spec.anf.functions.find(fn(f) { f.name.contains("swap") }) {
+          .Some(f) => f,
+          .None => return .Err("no swap clone in module"),
+        }
+        monos: Dict<Int, MonoType> = Dict.new()
+        monos[swap.func_id.id] = .Vector(.String)
+        acc := mutvec_propagate.flatten_helper(
+          swap,
+          swap.params[0].local.id,
+          swap.params[0].ty,
+          st.spec,
+          st.builtins,
+          mutvec_propagate.PropAcc.{
+            memo: Dict.new(),
+            slots: Dict.new(),
+            monos,
+            next_id: max_fid(st.spec.anf) + 1,
+            retarget: Dict.new(),
+            siblings: [],
+            ok: true,
+            reason: .None,
+          },
+        )
+        try assert.is_false(acc.ok)
+        try assert.equal(acc.siblings.len(), 0)
         .Ok({})
       },
     )

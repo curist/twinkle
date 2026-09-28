@@ -56,6 +56,7 @@ use compiler.codegen.variant_specialize
 use compiler.codegen.variant_specialize.{SpecializeResult}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.elem_family.{elem_family_of, elem_family_suffix}
+use compiler.mono_type.{MonoType}
 use compiler.variant_id as vid
 
 pub type MutVecCallDecision = .{
@@ -78,6 +79,7 @@ pub type MutVecCallAbiUpgrade = .{
   param_slots: Vector<Int>,
   return_mutvec: Bool,
   fam: ElemRepr,
+  vector_mono: MonoType,
 }
 
 // One accepted thread call's clone attribution: which clone it routes to,
@@ -87,7 +89,7 @@ pub type MutVecCallAbiUpgrade = .{
 // direct upgrade vs a `$mv` sibling — a single accepted region is never
 // sufficient on its own, since the same clone may have OTHER routed sites (other
 // callers, or other regions in this same function) that were rejected.
-type ThreadObservation = .{ clone_func: Int, recv_local: Int, fam: ElemRepr }
+type ThreadObservation = .{ clone_func: Int, recv_local: Int, fam: ElemRepr, vector_mono: MonoType }
 
 // Discover + verify every call-thread region across `spec.anf`'s functions,
 // derive the HP-4 ABI-upgrade table from the accepted ones, and REWRITE the
@@ -213,6 +215,7 @@ fn run_aggregate(
                 param_slots: [u.handle_param],
                 return_mutvec: u.return_mutvec,
                 fam: u.fam,
+                vector_mono: u.vector_mono,
               },
             )
           }
@@ -319,6 +322,7 @@ fn build_mutvec_call_plan(
           param_slots: [o.recv_local],
           return_mutvec: true,
           fam: o.fam,
+          vector_mono: o.vector_mono,
         },
       )
     } else {
@@ -358,6 +362,7 @@ fn build_mutvec_call_plan(
           param_slots: [o.recv_local],
           return_mutvec: true,
           fam: o.fam,
+          vector_mono: o.vector_mono,
         },
       )
       for sk in accepted_subset {
@@ -767,6 +772,16 @@ fn handle_elem_repr(func: AnfFunctionDef, handle_id: Int) ElemRepr? {
   }
 }
 
+fn handle_vector_mono(func: AnfFunctionDef, handle_id: Int) MonoType? {
+  case func.op_result_mono.get(handle_id) {
+    .Some(mono) => case mono {
+      .Vector(_) => .Some(mono),
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
 // Every thread call in an ACCEPTED region, resolved to its clone + receiver
 // param + element family. Mirrors the exact same site-key/clone/receiver-index
 // lookups `mutvec_call_verify.verify_region` already performed to accept this region
@@ -783,6 +798,10 @@ fn region_observations(
     .Some(f) => f,
     .None => return [],
   }
+  vector_mono := case handle_vector_mono(func, region.handle.id) {
+    .Some(m) => m,
+    .None => return [],
+  }
   out: Vector<ThreadObservation> = []
   for cr in region.thread_calls {
     case defs.get(cr) {
@@ -795,6 +814,7 @@ fn region_observations(
                   clone_func: clone_id,
                   recv_local: clone.params[idx].local.id,
                   fam,
+                  vector_mono,
                 },
               )
             },
@@ -823,10 +843,16 @@ pub fn all_sites_accepted(route_sites: Vector<Int>, accepted_sites: Dict<Int, Bo
 }
 
 fn find_observation(obs: Vector<ThreadObservation>, clone_func: Int) ThreadObservation? {
+  found: ThreadObservation? = .None
   for o in obs {
     if o.clone_func == clone_func {
-      return .Some(o)
+      case found {
+        .Some(prev) => if prev.recv_local != o.recv_local or prev.vector_mono != o.vector_mono {
+          return .None
+        },
+        .None => found = .Some(o),
+      }
     }
   }
-  .None
+  found
 }
