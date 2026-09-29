@@ -37,6 +37,8 @@
 
 ### Task 1: Separate Projected Element Borrows from Shell Provenance
 
+**Status:** Complete in `7cdfb0b6`.
+
 **Files:**
 - Create: `boot/compiler/projected_borrow.tw`
 - Create: `boot/tests/suites/projected_borrow_suite.tw`
@@ -51,17 +53,17 @@
 - Produces: `AIndex` transfer semantics in which a GC-reference result is `.Shared`, has empty shell `prov`, and carries a rooted `[Elem]` projected borrow; primitive reads remain unchanged.
 - Consumes: existing `field_facts.AccessPath`, `path_prov`, parameter-origin ids, CFG liveness/fixpoint joins, and summary SCC fallback.
 
-- [ ] **Step 1: Write pure projected-borrow lattice tests**
+- [x] **Step 1: Write pure projected-borrow lattice tests**
 
   Add `projected_borrow_suite` cases asserting that identical roots/path survive `meet`, conflicting paths return `.None`, roots are canonicalized, prefixing `[Field(f)]` with `[Elem]` yields a representable composed path, and paths beyond the supported depth return `.None` rather than truncating optimistically. Register the suite in `boot/tests/main.tw`.
 
-- [ ] **Step 2: Run the new suite and verify it fails**
+- [x] **Step 2: Run the new suite and verify it fails**
 
   Run: `target/twk test --filter "projected borrow"`
 
   Expected: FAIL because `compiler.projected_borrow` and its interfaces do not exist.
 
-- [ ] **Step 3: Implement the pure projected-borrow value module**
+- [x] **Step 3: Implement the pure projected-borrow value module**
 
   In `boot/compiler/projected_borrow.tw`, define:
 
@@ -75,13 +77,13 @@
 
   Canonicalize roots with sorted de-duplication. `meet` preserves a fact only when roots and path agree exactly. `prefix` uses only paths representable by the existing `field_facts` codec and returns `.None` on depth overflow.
 
-- [ ] **Step 4: Run the pure suite and verify it passes**
+- [x] **Step 4: Run the pure suite and verify it passes**
 
   Run: `target/twk test --filter "projected borrow"`
 
   Expected: PASS.
 
-- [ ] **Step 5: Write failing ownership and summary tests**
+- [x] **Step 5: Write failing ownership and summary tests**
 
   Extend `cfg_ownership_suite.tw` and `cfg_summary_suite.tw` with fixtures/assertions for:
 
@@ -93,21 +95,21 @@
   - storing or closure-capturing that result publishes the element object without publishing the vector shell;
   - reading an inner vector from `Vector<Vector<Person>>` never gives the inner result unique ownership.
 
-- [ ] **Step 6: Run focused ownership tests and verify the old transfer fails**
+- [x] **Step 6: Run focused ownership tests and verify the old transfer fails**
 
   Run: `target/twk test --filter "projected element"`
 
   Expected: FAIL because current reference-valued `AIndex` copies base shell origins into the result and summaries have no borrowed-projection return.
 
-- [ ] **Step 7: Thread projected borrows through ownership state and joins**
+- [x] **Step 7: Thread projected borrows through ownership state and joins**
 
   Add `projected_shell: LocalMap<ProjectedBorrow>` to `ForwardState` and the corresponding block exit/fixpoint state. Seed it empty; copy it through `AInit`/assignment; meet it at CFG joins. When constructing a record, variant, or collection, graft the projected roots into the destination's existing `path_prov` under the destination path; when projecting that path, reconstruct `projected_shell`. Use the same representable-depth policy as `path_prov` and clear the fact at ownership choke points without changing unrelated shell facts. Update warm-cache/fixpoint equality and conservative non-convergence fallback so missing or conflicting projected information cannot create ownership.
 
-- [ ] **Step 8: Implement `AIndex` and publication transfer**
+- [x] **Step 8: Implement `AIndex` and publication transfer**
 
   For GC-reference array/vector results, set result ownership to `.Shared`, shell provenance to `[]`, and projected borrow to the base's canonical shell roots composed with `.Elem`. If the base already is a projected borrow, compose its path with `.Elem` only when representable. Publishing such a local invalidates/publishes only the corresponding deep path/object evidence and leaves the root shell ownership unchanged. Primitive index results keep the existing empty-provenance behavior.
 
-- [ ] **Step 9: Add borrowed-projection summaries and call transfer**
+- [x] **Step 9: Add borrowed-projection summaries and call transfer**
 
   Add:
 
@@ -119,7 +121,7 @@
 
   A function returning one consistent projected borrow emits `ret_borrow`; conflicting return sites and summary-fixpoint non-convergence yield `.None`. Include it in summary equality/rendering. At known calls, re-root the projection through the actual argument, set the call result shared with empty shell provenance, and never use `ret_borrow` to set `flows_to_return`, `ret_exact_param`, `ReturnOwn`, or variant ownership eligibility.
 
-- [ ] **Step 10: Run ownership, summary, and sound-uniqueness suites**
+- [x] **Step 10: Run ownership, summary, and sound-uniqueness suites**
 
   Run: `target/twk test --filter "projected element"`
 
@@ -129,7 +131,7 @@
 
   Expected: PASS with existing ownership tests unchanged.
 
-- [ ] **Step 11: Format, lint, and commit**
+- [x] **Step 11: Format, lint, and commit**
 
   Run: `target/twk fmt boot/compiler/projected_borrow.tw boot/compiler/ownership.tw boot/compiler/summary.tw boot/tests/suites/projected_borrow_suite.tw boot/tests/suites/cfg_ownership_suite.tw boot/tests/suites/cfg_summary_suite.tw boot/tests/main.tw`
 
@@ -143,6 +145,8 @@
   ```
 
 ### Task 2: Add Safe Boxed-Family Classification and Exact-Mono ABI Identity
+
+**Status:** Complete in `da2f5efa`.
 
 **Files:**
 - Modify: `boot/compiler/elem_family.tw`
@@ -161,11 +165,11 @@
 - Produces: `ElemRepr.Boxed`, `boxed_mutvec_family_of(vector_mono: MonoType) ElemFamily?`, and exact `vector_mono: MonoType` fields on `AggregateMutVecRegion`, `MutVecCallAbiUpgrade`, `FlatSibling`, flat propagation observations, and memo identity. The semantic classifier is exhaustive; the backend separately confirms the resolved Wasm heap type is below `any`.
 - Produces: helper sibling identity `(callee_func, handle_param, vector_mono)` and rejection on any mono mismatch before ANF rewriting.
 
-- [ ] **Step 1: Write classifier and exact-mono failing tests**
+- [x] **Step 1: Write classifier and exact-mono failing tests**
 
   In `repr_policy_suite.tw`, assert boxed eligibility for concrete record, string, nested-vector, enum, and closure element monos, while primitive behavior remains unchanged. Assert rejection for `ExternRef`, `Optional<ExternRef>`, `Void`, `Never`, `Anyref_`, `Var`, `MetaVar`, and `ErrorType`. In `mutvec_call_suite.tw`, add synthetic propagation tests showing same callee/slot with different boxed monos cannot reuse a sibling, and same callee/mono through different handle slots is rejected or receives a distinct sibling according to the existing slot rule.
 
-- [ ] **Step 2: Run focused tests and verify they fail**
+- [x] **Step 2: Run focused tests and verify they fail**
 
   Run: `target/twk test --filter "boxed family"`
 
@@ -173,19 +177,19 @@
 
   Expected: FAIL because no boxed classification or mono-bearing propagation identity exists.
 
-- [ ] **Step 3: Implement the closed boxed classifier**
+- [x] **Step 3: Implement the closed boxed classifier**
 
   Add `ElemRepr.Boxed` and exhaustive mappings in `repr_policy.tw`. Add one boxed `ElemFamily` in `elem_family.tw`, but do not use the spike's `.Vector(_)` catch-all. The selector must first reject semantic sentinels and externref-family types, then accept only `.Vector(element)` whose resolved Wasm type is a GC reference below `.Any`; keep `candidate_typed_vec_family` primitive-only so normal persistent boxed vectors continue using `PVec` rather than becoming a new typed-vector representation.
 
-- [ ] **Step 4: Carry exact mono through aggregate decomposition**
+- [x] **Step 4: Carry exact mono through aggregate decomposition**
 
   Add `vector_mono: MonoType` to `AggregateMutVecRegion`, populate it from the record field mono, and use it directly in `decompose_clone` and caller reconstruction. Remove primitive-only reconstruction via `mono_of_family`/`elem_of_suffix` wherever boxed routing would erase `T`.
 
-- [ ] **Step 5: Carry exact mono through flat propagation and ABI upgrades**
+- [x] **Step 5: Carry exact mono through flat propagation and ABI upgrades**
 
   Add `vector_mono` to `MutVecCallAbiUpgrade`, `ThreadObservation`, `FlatSibling`, propagation arguments/accumulator identity, and backend-facing route records. Replace callee-only memoization with an explicit key or validated tables covering callee, handle parameter, and mono. Before reusing or retargeting a sibling, compare exact monos; mismatch sets the propagation result to rejected before any rewrite is committed.
 
-- [ ] **Step 6: Run focused classifier and propagation tests**
+- [x] **Step 6: Run focused classifier and propagation tests**
 
   Run: `target/twk test --filter "boxed family"`
 
@@ -195,11 +199,11 @@
 
   Expected: PASS; existing primitive route tests remain green.
 
-- [ ] **Step 7: Add the benchmark source while boxed routing is still inactive**
+- [x] **Step 7: Add the benchmark source while boxed routing is still inactive**
 
   Create `boxed_record_permute.tw` with a producer-built `Vector<Person>`, recursive carrier, helper-based read-before-write swap, and deterministic checksum. Verify it runs persistently with the current compiler and record this commit as the source-compatible pre-activation baseline candidate; Task 6 will rebuild this exact revision and confirm its WAT before timing.
 
-- [ ] **Step 8: Format, lint, and commit**
+- [x] **Step 8: Format, lint, and commit**
 
   Run: `target/twk fmt boot/compiler/elem_family.tw boot/compiler/backend/repr_policy.tw boot/compiler/codegen/mutvec_call_phase.tw boot/compiler/codegen/mutvec_propagate.tw boot/compiler/codegen/mutvec_aggregate_region.tw boot/compiler/codegen/mutvec_aggregate_rewrite.tw boot/compiler/codegen/mutvec_aggregate_phase.tw boot/tests/suites/repr_policy_suite.tw boot/tests/suites/mutvec_call_suite.tw examples/performance/awfy/twinkle/boxed_record_permute.tw`
 
@@ -213,6 +217,8 @@
   ```
 
 ### Task 3: Add the Compiler-Private Boxed MutVec Runtime
+
+**Status:** Complete in `1232332f`.
 
 **Files:**
 - Modify: `boot/compiler/codegen/runtime/types.tw`
@@ -228,29 +234,29 @@
 - Produces: Wasm types `rt_types__MutVecBoxed` and its `Array<anyref>` backing; private builtin/runtime operations `vector$__mutvec_{new,make,push,set,get,len,freeze}` mapped to `rt_arr__mutvec_*`; `mutvec_wasm_type(.Boxed)` and `pvec_wasm_type(.Boxed)`.
 - Produces: the same logical-length, capacity-growth, bounds, and freeze behavior as existing primitive MutVec families; no thaw operation.
 
-- [ ] **Step 1: Write runtime registry, layout, and generator tests**
+- [x] **Step 1: Write runtime registry, layout, and generator tests**
 
   Assert the boxed handle maps to `MutVecBoxed`, freezes to ordinary `PVec`, and has seven registered private operations using `.Anyref` element ABI. Inspect the generated runtime module to verify each operation exists with the expected parameter/result types, set/get perform logical-length guards, growth replaces only private flat backing, and freeze materializes ordinary PVec nodes. Executing these operations through optimized source is deferred to Task 4, when boxed route activation exists.
 
-- [ ] **Step 2: Run focused tests and verify they fail**
+- [x] **Step 2: Run focused tests and verify they fail**
 
   Run: `target/twk test --filter "boxed mutvec runtime"`
 
   Expected: FAIL because the type and private runtime symbols do not exist.
 
-- [ ] **Step 3: Define `MutVecBoxed` and layout mappings**
+- [x] **Step 3: Define `MutVecBoxed` and layout mappings**
 
   Add `MutVecBoxed { data: ref Array, len: i32 }` beside the primitive handles. Extend `mutvec_wasm_type` and `pvec_wasm_type` exhaustively so `.Boxed` maps to `MutVecBoxed` and ordinary `PVec` respectively.
 
-- [ ] **Step 4: Generate boxed runtime operations from `PVecFamily`**
+- [x] **Step 4: Generate boxed runtime operations from `PVecFamily`**
 
   Reuse `family_boxed()` with a boxed mutable handle name rather than adding identity box/unbox runtime shims. Instantiate the existing seven-operation MutVec generator with `.Anyref`, null default, ordinary boxed leaf operations, and the existing capacity/bounds algorithms. Ensure freeze materializes an ordinary persistent `PVec` and never aliases mutable backing as persistent trie storage.
 
-- [ ] **Step 5: Register the boxed private builtin ABI**
+- [x] **Step 5: Register the boxed private builtin ABI**
 
   Extend `MutVecFamilySpec` data with the empty suffix boxed family after all established families. Register its seven runtime definitions without changing existing builtin identities unexpectedly; update identity/canonical registry tests if the append-only table changes expected terminal ids.
 
-- [ ] **Step 6: Run runtime, layout, and builtin tests**
+- [x] **Step 6: Run runtime, layout, and builtin tests**
 
   Run: `target/twk test --filter "boxed mutvec runtime"`
 
@@ -260,7 +266,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 7: Format, lint, and commit**
+- [x] **Step 7: Format, lint, and commit**
 
   Run: `target/twk fmt boot/compiler/codegen/runtime/types.tw boot/compiler/codegen/runtime/arr.tw boot/compiler/codegen/wasm_layout.tw boot/compiler/builtins.tw boot/tests/suites/builtins_suite.tw boot/tests/suites/wasm_layout_suite.tw boot/tests/suites/runtime_suite.tw`
 
@@ -274,6 +280,20 @@
   ```
 
 ### Task 4: Activate Boxed Recursive Aggregate and Helper Routes
+
+**Status:** In progress. Checkpoint `c1239483` activates the dead-result
+`Vector<Person>` recursive/helper route; the publication and runtime matrices
+below still gate completion.
+
+- [x] Detect and flatten a producer-rooted recursive `Vector<Person>` carrier.
+- [x] Retarget boxed helper reads/writes to empty-suffix `mutvec_get`/`mutvec_set`.
+- [x] Preserve exact boxed mono identity and reject cross-mono helper reuse.
+- [x] Assign every activated helper handle/result slot as `MutVecBoxed` without an i64 cross-cast.
+- [x] Verify the dead-result route emits no freeze and keeps persistent updates out of the clone graph.
+- [ ] Add whole-carrier and projected-field publication fixtures with exactly one freeze.
+- [ ] Add the boxed runtime execution/OOB/type-round-trip fixture matrix.
+- [ ] Add explicit backend rejection tests for boxed value/element mono mismatches.
+- [ ] Run Task 4's complete focused verification, format/lint, and final task commit.
 
 **Files:**
 - Modify: `boot/compiler/codegen/mutvec_region.tw`
