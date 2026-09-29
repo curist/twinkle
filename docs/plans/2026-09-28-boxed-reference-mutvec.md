@@ -496,6 +496,23 @@ tracked in `docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`.
 
 ### Task 7: Self-Host, Full Verification, and Branch Review
 
+**Status:** Verification complete; independent review (Step 4) not yet run.
+
+- **Self-host fixed point:** `make bundle-cli` then `make stage2` both reach
+  `Fixed point reached: stage3 == stage4`. The projected-borrow join needed a
+  self-host fix (`9ebf550e`, see the Task 4 self-host note) — it was the first
+  self-host of that code.
+- **Full verification:** `target/twk test` → `Ran 3775 tests: 3775 passed`;
+  `target/twk lint boot/main.tw` → no findings; `git diff --check` clean.
+- **WAT audit:** boxed benchmark emits `mutvec_get`/`set`/`freeze` with no
+  persistent set in its clone graph; the persistent path
+  (`TWINKLE_VARIANT_SPECIALIZE=0`) emits none; publication fixtures emit exactly
+  one boundary freeze; all six fallback fixtures stay on the persistent ABI with
+  no cross-mono retarget.
+- **Remaining:** Step 4 independent branch review (soundness focus areas below);
+  and the deferred idiomatic field-rebind-sugar boxing route
+  (`docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`).
+
 **Files:**
 - Modify only files required by failures attributable to this feature.
 - Modify: `docs/plans/2026-09-28-boxed-reference-mutvec.md` with final status and any durable implementation notes.
