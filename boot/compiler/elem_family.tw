@@ -90,6 +90,32 @@ pub fn family_boxed() ElemFamily {
   }
 }
 
+pub fn boxed_mutvec_family_of(vector_mono: MonoType) ElemFamily? {
+  elem := case vector_mono {
+    .Vector(t) => t,
+    _ => return .None,
+  }
+  case elem {
+    .String => .Some(family_boxed()),
+    .Named(_, _) => .Some(family_boxed()),
+    .Vector(_) => .Some(family_boxed()),
+    .Dict(_, _) => .Some(family_boxed()),
+    .Function(_, _) => .Some(family_boxed()),
+    .Optional(inner) => case inner {
+      .ExternRef(_) => .None,
+      .Void => .None,
+      .Never => .None,
+      .Anyref_ => .None,
+      .Var(_) => .None,
+      .MetaVar(_) => .None,
+      .ErrorType => .None,
+      _ => .Some(family_boxed()),
+    },
+    .Result(_, _) => .Some(family_boxed()),
+    _ => .None,
+  }
+}
+
 pub fn family_by_pvec_name(name: String) ElemFamily? {
   for f in all_families() {
     if f.pvec_type == name {
@@ -141,7 +167,11 @@ pub fn mutvec_families() Vector<ElemFamily> {
 // builtin ids per region. Phase 3/4 widen the claim set purely by extending
 // `mutvec_families`.
 pub fn elem_family_suffix(mono: MonoType) String? {
-  case elem_family_of(mono) {
+  candidate := case elem_family_of(mono) {
+    .Some(f) => .Some(f),
+    .None => boxed_mutvec_family_of(mono),
+  }
+  case candidate {
     .Some(f) => {
       for m in mutvec_families() {
         if m.mono_key == f.mono_key {

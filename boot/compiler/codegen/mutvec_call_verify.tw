@@ -70,7 +70,7 @@ use compiler.codegen.mutvec_call_region.{MutVecCallRegion}
 use compiler.codegen.mutvec_region.{collect_defs}
 use compiler.codegen.variant_specialize
 use compiler.core_ir.{LocalId}
-use compiler.elem_family.{elem_family_of}
+use compiler.elem_family.{boxed_mutvec_family_of, elem_family_of}
 use compiler.mono_type.{MonoType}
 use compiler.variant_id as vid
 
@@ -148,9 +148,15 @@ pub fn sole_receiver_index(call_op: AnfOp, handle: LocalId) Int? {
 // either side (non-vector, or a family with no registered repr) is treated as
 // disagreement — the verifier cannot prove agreement, so it rejects.
 pub fn repr_agrees(caller_ty: MonoType, callee_ty: MonoType) Bool {
-  case elem_family_of(caller_ty) {
-    .Some(cf) => case elem_family_of(callee_ty) {
-      .Some(ef) => cf.mono_key == ef.mono_key,
+  caller := elem_family_of(caller_ty).or_else(fn() { boxed_mutvec_family_of(caller_ty) })
+  callee := elem_family_of(callee_ty).or_else(fn() { boxed_mutvec_family_of(callee_ty) })
+  case caller {
+    .Some(cf) => case callee {
+      .Some(ef) => if cf.mono_key == "vec_boxed" or ef.mono_key == "vec_boxed" {
+        cf.mono_key == ef.mono_key and caller_ty == callee_ty
+      } else {
+        cf.mono_key == ef.mono_key
+      },
       .None => false,
     },
     .None => false,

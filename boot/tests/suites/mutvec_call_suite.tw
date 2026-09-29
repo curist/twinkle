@@ -681,18 +681,27 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         // The ownership route (single authority) already declined these carriers,
         // so no region reaches the verifier and the persistent path stands: an
-        // alias survives the field, a branch substitutes a different or fresh
-        // vector, or the vector element type has no MutVec family.
+        // alias survives the field or a branch substitutes a different or fresh
+        // vector.
         for name in [
           "recursive_record_alias",
           "recursive_record_mixed_lineage",
           "recursive_record_fresh_lineage",
-          "recursive_record_unsupported",
         ] {
           st := mutvec_call_stage(fixture_path(name))
           regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
           try assert.equal(regions.len(), 0)
         }
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed String recursive carrier is now eligible",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_unsupported"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        try assert.equal(regions.len(), 1)
+        try assert.is_true(regions[0].family == "vec_boxed")
         .Ok({})
       },
     )
@@ -833,6 +842,16 @@ pub fn suite() runner.Suite {
         )
         try assert.is_false(acc.ok)
         try assert.equal(acc.siblings.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "exact boxed mono verifier rejects different logical element types",
+      fn() Result<Void, String> {
+        try assert.is_false(
+          mutvec_call_verify.repr_agrees(.Vector(.String), .Vector(.Vector(.String))),
+        )
+        try assert.is_true(mutvec_call_verify.repr_agrees(.Vector(.String), .Vector(.String)))
         .Ok({})
       },
     )
@@ -1652,6 +1671,45 @@ pub fn suite() runner.Suite {
           has_aggregate_permute_route(dec),
           "recursive State must select an aggregate permute upgrade",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed recursive record swap gets an aggregate MutVec route",
+      fn() Result<Void, String> {
+        st := mutvec_call_stage(fixture_path("recursive_record_boxed_swap"))
+        regions := mutvec_aggregate_region.detect_aggregate_regions(st.spec, st.builtins)
+        if regions.len() != 1 {
+          live := st.spec.routes.filter(fn(r) { r.fallback_reason == .None })
+          return .Err(
+            "boxed route diagnostic: routes=${st.spec.routes.len()} live=${live.len()} functions=${st.spec.anf.functions.len()}",
+          )
+        }
+        try assert.ok(regions[0].vector_mono != .Vector(.Anyref_), "exact record mono retained")
+        dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
+        try assert.ok(has_any_mvagg_clone(dec), "boxed recursive carrier must flatten")
+        try assert.ok(
+          dec.abi_upgrades.any(fn(u) { u.fam == .Boxed and u.vector_mono == regions[0].vector_mono }),
+          "boxed upgrade retains the exact vector mono",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed recursive record emits boxed mutvec get and set",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_boxed_swap")
+        clone := try aggregate_permute_wat_body(wat)
+        set_at := case wat_func_body_where(wat, "set_at__T25", "_mv", true) {
+          .Some(body) => body,
+          .None => return .Err("boxed flat set_at helper not found"),
+        }
+        try assert.ok(count_all_op_calls(wat, "mutvec_get") > 0, "boxed reads stay flat")
+        try assert.ok(count_all_op_calls(wat, "mutvec_set") > 0, "boxed writes stay flat")
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone drops persistent set")
+        try assert.ok(set_at.contains("MutVecBoxed"), "boxed helper uses boxed handle slots")
+        try assert.ok(!set_at.contains("MutVecI64"), "boxed helper must not cross-cast through i64")
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze"), 0)
         .Ok({})
       },
     )

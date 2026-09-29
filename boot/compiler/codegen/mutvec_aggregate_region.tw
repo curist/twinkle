@@ -170,7 +170,9 @@ fn single_vector_field(field_monos: Dict<Int, MonoType>) VecField? {
   found: VecField? = .None
   for field, mono in field_monos {
     case elem_family.elem_family_suffix(mono) {
-      .Some(_) => case elem_family.elem_family_of(mono) {
+      .Some(_) => case elem_family
+        .elem_family_of(mono)
+        .or_else(fn() { elem_family.boxed_mutvec_family_of(mono) }) {
         .Some(fam) => case found {
           .Some(_) => return .None,
           .None => found = .Some(VecField.{ field, family: fam.mono_key, mono }),

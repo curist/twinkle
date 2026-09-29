@@ -262,15 +262,13 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "unclaimable element type (String) is NOT claimed",
+      "boxed String element type is claimed",
       fn() {
-        // Int/Bool/Float are mutvec families; a reference element type (String) has
-        // no typed mutvec family, so the region stays persistent.
         try assert.equal(
           region_count(
             "fn f(n: Int) Vector<String> {\n  xs := collect i in range(n) { \"a\" }\n  xs[0] = \"b\"\n  xs\n}\nprintln(f(5).len().to_string())\n",
           ),
-          0,
+          1,
         )
         .Ok({})
       },

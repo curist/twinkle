@@ -44,7 +44,7 @@ use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
 use compiler.backend.repr_assign.{wasm_type_of_repr}
-use compiler.backend.repr_policy.{ElemRepr, candidate_typed_vec_family}
+use compiler.backend.repr_policy.{ElemRepr, boxed_mutvec_family_of, candidate_typed_vec_family}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutvec_call_phase.{MutVecCallAbiUpgrade}
@@ -267,10 +267,7 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFu
       // The ElemRepr follows the handle slot's element family (its mono is the
       // claimed `Vector<T>`); `.I64` for the i64 family. Physical wasm type is
       // still the shared MutVec layout downstream, so the tag is classificatory.
-      elem := case candidate_typed_vec_family(info.mono) {
-        .Some(e) => e,
-        .None => .I64,
-      }
+      elem := elem_repr_for_handle(info, pf.name)
       override_slot(info, .MutVec(elem), env)
     } else {
       info
@@ -279,6 +276,18 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFu
 
   pf.slots = new_slots
   pf
+}
+
+fn elem_repr_for_handle(info: SlotInfo, func_name: String) ElemRepr {
+  case candidate_typed_vec_family(info.mono) {
+    .Some(e) => e,
+    .None => case boxed_mutvec_family_of(info.mono) {
+      .Some(_) => ElemRepr.Boxed,
+      .None => error(
+        "mutvec_repr: handle slot S${info.slot.id.to_string()} has no safe element family in ${func_name}",
+      ),
+    },
+  }
 }
 
 // Override the physical repr of every MutVec handle slot across the module (the

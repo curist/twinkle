@@ -604,6 +604,7 @@ fn family_to_suffix(family: String) String {
     "vec_bool" => "_bool",
     "vec_f64" => "_f64",
     "vec_byte" => "_byte",
+    "vec_boxed" => "",
     _ => "_i64",
   }
 }

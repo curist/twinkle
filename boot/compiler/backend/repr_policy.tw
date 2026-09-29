@@ -6,7 +6,8 @@
 //! only the primitive vector element-family classification lives here.
 
 use compiler.codegen.wasm_ir.{ValType}
-use compiler.elem_family.{ElemFamily, elem_family_of, family_boxed}
+use compiler.elem_family as elem_family
+use compiler.elem_family.{ElemFamily, elem_family_of}
 use compiler.mono_type.{MonoType}
 
 /// The primitive storage class of a typed vector's elements. Byte is distinct
@@ -20,39 +21,7 @@ pub type ElemRepr = { I64, F64, I32, Byte, Boxed }
 /// types lower below Wasm `any`; this pure policy cannot depend on wasm_layout
 /// without creating the layout-policy import cycle.
 pub fn boxed_mutvec_family_of(vector_mono: MonoType) ElemFamily? {
-  elem := case vector_mono {
-    .Vector(t) => t,
-    _ => return .None,
-  }
-  case elem {
-    .String => .Some(family_boxed()),
-    .Named(_, _) => .Some(family_boxed()),
-    .Vector(_) => .Some(family_boxed()),
-    .Dict(_, _) => .Some(family_boxed()),
-    .Function(_, _) => .Some(family_boxed()),
-    .Optional(inner) => case inner {
-      .ExternRef(_) => .None,
-      .Void => .None,
-      .Never => .None,
-      .Anyref_ => .None,
-      .Var(_) => .None,
-      .MetaVar(_) => .None,
-      .ErrorType => .None,
-      _ => .Some(family_boxed()),
-    },
-    .Result(_, _) => .Some(family_boxed()),
-    .Int => .None,
-    .Float => .None,
-    .Bool => .None,
-    .Byte => .None,
-    .Void => .None,
-    .Anyref_ => .None,
-    .ExternRef(_) => .None,
-    .Var(_) => .None,
-    .MetaVar(_) => .None,
-    .Never => .None,
-    .ErrorType => .None,
-  }
+  elem_family.boxed_mutvec_family_of(vector_mono)
 }
 
 /// candidate_typed_vec_family returns the *candidate* typed element family for a

@@ -33,7 +33,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutvec_call_verify.{func_def_of}
 use compiler.codegen.variant_specialize.{SpecializeResult}
 use compiler.core_ir.{FuncId, LocalId}
-use compiler.elem_family.{elem_family_of, elem_family_suffix}
+use compiler.elem_family.{boxed_mutvec_family_of, elem_family_of, elem_family_suffix}
 use compiler.mono_type.{MonoType}
 
 // A helper call inside a verified continuation that carries the token forward and
@@ -444,7 +444,7 @@ fn handle_fam(clone: AnfFunctionDef, token_param: Int) ElemRepr? {
     }
   }
   case ty {
-    .Some(t) => case elem_family_of(t) {
+    .Some(t) => case elem_family_of(t).or_else(fn() { boxed_mutvec_family_of(t) }) {
       .Some(fam) => elem_repr_of_mono_key(fam.mono_key),
       .None => .None,
     },
