@@ -431,6 +431,30 @@ restores it — the same discipline `join_entry_prov` already uses.
 
 ### Task 6: Establish the Record-Vector Performance Gate
 
+**Status:** PASS (6.9×, gate 3.0×).
+
+**Result.** `examples/performance/awfy/twinkle/boxed_record_permute.tw`
+(producer-built `Vector<Person>`, recursive `State` carrier, helper read-before-write
+swap, checksum 8696) self-times via the AWFY `harness` (warmup 10, iters 20, size 300).
+
+- **Boxed candidate** (route active): 167.94 / 167.51 / 167.13 ms → **median 167.5 ms**.
+- **Persistent baseline** (`TWINKLE_VARIANT_SPECIALIZE=0`): 1158.89 / 1139.87 / 1165.99 ms → **median 1158.9 ms**.
+- **Ratio: 6.9×** faster, ≥ the 3.0× gate. Checksums agree (8696) on both paths.
+- **Route evidence (WAT).** Boxed path emits `mutvec_get`/`mutvec_set`/`mutvec_freeze`
+  and no persistent set in the hot clone graph; the persistent path emits zero
+  `mutvec_*` ops. Toggled by the single flag, same compiler, same source.
+
+**Methodology note (deviation from the two-worktree recipe below).** The baseline
+is the *same* candidate compiler with `TWINKLE_VARIANT_SPECIALIZE=0`, the in-code
+sanctioned kill-switch that makes the compiler "fall back to the generic
+persistent path" (`codegen.tw`). This is a stricter control than a separate
+pre-activation CLI — it holds compiler version and source **identical**, isolating
+exactly the boxed route — and it sidesteps that the recorded pre-activation
+commit (Task 3, `1232332f`) cannot self-host without the Task-4 self-host fix
+`9ebf550e`. The benchmark uses the explicit record-rebuild carrier form because
+the idiomatic field-rebind sugar (`rec.f = ...`) does not yet box; that gap is
+tracked in `docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`.
+
 **Files:**
 - Test: `examples/performance/awfy/twinkle/boxed_record_permute.tw`
 - Modify: `docs/plans/2026-09-28-boxed-reference-mutvec.md`

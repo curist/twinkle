@@ -1,3 +1,6 @@
+use .harness
+use .harness.{Benchmark}
+
 type Person = .{ id: Int, score: Int }
 
 type State = .{ people: Vector<Person>, count: Int }
@@ -16,9 +19,13 @@ fn permute(state: State, n: Int) State {
     next = .permute(n - 1)
     i := n - 1
     for i >= 0 {
-      next.people = swap(next.people, n - 1, i)
+      // Full record reconstruction (ARecord), which the boxed recursive-aggregate
+      // route recognizes. The idiomatic `next.people = swap(...)` field-rebind
+      // sugar (ARecordUpdate) stays persistent today — tracked as a follow-up in
+      // docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md.
+      next = State.{ people: swap(next.people, n - 1, i), count: next.count }
       next = .permute(n - 1)
-      next.people = swap(next.people, n - 1, i)
+      next = State.{ people: swap(next.people, n - 1, i), count: next.count }
       i = .dec()
     }
     next
@@ -47,4 +54,4 @@ pub fn run(size: Int) Int {
   checksum
 }
 
-println(run(1))
+harness.run_all([Benchmark.{ name: "boxed_record_permute", warmup, iters, size, expected, run }])
