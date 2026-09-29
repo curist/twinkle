@@ -1,0 +1,25 @@
+type Person = .{ id: Int, score: Int }
+
+type Grid = .{ rows: Vector<Vector<Person>>, count: Int }
+
+// `inner` is a shared projected borrow of `rows[0]`; an index read must not seed
+// unique ownership of the nested vector, so the in-place write to `inner` cannot
+// take a boxed MutVec route — it stays persistent.
+fn bump(g: Grid, n: Int) Grid {
+  inner := g.rows[0]
+  updated := inner.set_at(0, Person.{ id: n, score: n })
+  next := Grid.{ rows: g.rows.set_at(0, updated), count: g.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    bump(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  row: Vector<Person> = [Person.{ id: 1, score: 1 }]
+  grid: Vector<Vector<Person>> = [row]
+  bump(Grid.{ rows: grid, count: 0 }, 2).count
+}
+
+println(run())

@@ -893,6 +893,61 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "boxed reference fallbacks stay persistent with no partial boxed ABI",
+      fn() Result<Void, String> {
+        // Every rejected boxed shape must keep its persistent ABI end to end —
+        // no aggregate flat clone, hence no partial boxed sibling/upgrade to
+        // reconcile. Covered shapes:
+        //   alias         — a surviving Vector<Person> shell alias
+        //   capture       — the handle captured in a helper closure
+        //   mixed_lineage — a producer vector meeting a fresh record literal
+        //   externref     — ExternRef elements (classifier reject; compile-only)
+        //   nested_borrow — an indexed borrow of an inner Vector<Person> used as
+        //                   an attempted in-place mutation root
+        //   mixed_mono    — one generic source helper reached by Vector<Person>
+        //                   and Vector<String>, so no boxed sibling can be shared
+        for name in [
+          "recursive_record_boxed_alias",
+          "recursive_record_boxed_capture",
+          "recursive_record_boxed_mixed_lineage",
+          "recursive_record_externref",
+          "recursive_record_boxed_nested_borrow",
+          "recursive_record_boxed_mixed_mono",
+        ] {
+          st := mutvec_call_stage(fixture_path(name))
+          dec := mutvec_call_phase.run_mutvec_call(st.spec, st.builtins)
+          try assert.ok(
+            !has_any_mvagg_clone(dec),
+            "${name} must stay persistent (no aggregate flat clone)",
+          )
+        }
+        .Ok({})
+      },
+    )
+    // The rejected shapes must still compile byte-valid on the persistent path —
+    // a rejected boxed route may never leave the module unemittable. externref is
+    // compile-only (its `dom` host import is never provided), so this is the only
+    // gate that exercises it.
+    .test(
+      "boxed reference fallbacks compile byte-valid on the persistent path",
+      fn() Result<Void, String> {
+        for name in [
+          "recursive_record_boxed_alias",
+          "recursive_record_boxed_capture",
+          "recursive_record_boxed_mixed_lineage",
+          "recursive_record_externref",
+          "recursive_record_boxed_nested_borrow",
+          "recursive_record_boxed_mixed_mono",
+        ] {
+          case compile_fixture_wat(name) {
+            .Ok(wat) => try assert.str_contains(wat, "(module"),
+            .Err(e) => return .Err("${name} failed to compile: ${e}"),
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
       "recursive SCC route closure clones both owned record carriers",
       fn() Result<Void, String> {
         st := mutvec_call_stage(fixture_path("recursive_record_mutual"))

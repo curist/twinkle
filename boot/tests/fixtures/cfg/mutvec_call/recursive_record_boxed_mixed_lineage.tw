@@ -1,0 +1,25 @@
+type Person = .{ id: Int, score: Int }
+
+type State = .{ people: Vector<Person>, count: Int }
+
+fn permute(state: State, n: Int) State {
+  next := State.{
+    people: if n == 0 {
+      state.people
+    } else {
+      [Person.{ id: 9, score: 9 }]
+    },
+    count: state.count + 1,
+  }
+  if n == 0 {
+    next
+  } else {
+    next.permute(n - 1)
+  }
+}
+
+pub fn run() Int {
+  permute(State.{ people: [Person.{ id: 1, score: 1 }], count: 0 }, 2).count
+}
+
+println(run())

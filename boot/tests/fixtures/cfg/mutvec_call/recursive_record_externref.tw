@@ -1,0 +1,35 @@
+// ExternRef elements lower through a reference-shaped sentinel but must be
+// rejected by the boxed classifier, so this producer-rooted recursive carrier
+// stays on the persistent ABI. Compile-only: the `dom` host import is never
+// provided, so this fixture is never executed — the route decision is what the
+// suite inspects.
+extern dom {
+  type Element
+  fn make_element(id: Int) Element
+}
+
+type State = .{ items: Vector<Element>, count: Int }
+
+fn swap(v: Vector<Element>, i: Int, j: Int) Vector<Element> {
+  a := v[i]
+  b := v[j]
+  v.set_at(i, b).set_at(j, a)
+}
+
+fn work(s: State, n: Int) State {
+  next := State.{ items: swap(s.items, 0, 1), count: s.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    work(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  base: Vector<Element> = collect i in range(4) {
+    dom.make_element(i)
+  }
+  work(State.{ items: base, count: 0 }, 3).count
+}
+
+println(run())

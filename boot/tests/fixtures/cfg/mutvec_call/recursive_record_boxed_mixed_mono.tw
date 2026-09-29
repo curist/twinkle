@@ -1,0 +1,40 @@
+type Person = .{ id: Int, score: Int }
+
+type PState = .{ items: Vector<Person>, count: Int }
+
+type SState = .{ items: Vector<String>, count: Int }
+
+// One generic source helper reached with two distinct boxed element monos. Each
+// monomorphic clone must keep its own exact `Vector<T>` identity; a boxed sibling
+// for `Vector<Person>` must never be retargeted onto the `Vector<String>` carrier.
+fn swap<T>(v: Vector<T>, i: Int, j: Int) Vector<T> {
+  a := v[i]
+  b := v[j]
+  v.set_at(i, b).set_at(j, a)
+}
+
+fn work_p(s: PState, n: Int) PState {
+  next := PState.{ items: swap(s.items, 0, 1), count: s.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    work_p(next, n - 1)
+  }
+}
+
+fn work_s(s: SState, n: Int) SState {
+  next := SState.{ items: swap(s.items, 0, 1), count: s.count + s.items[0].len() }
+  if n == 0 {
+    next
+  } else {
+    work_s(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  ps: Vector<Person> = [Person.{ id: 1, score: 1 }, Person.{ id: 2, score: 2 }]
+  ss: Vector<String> = ["ab", "c"]
+  work_p(PState.{ items: ps, count: 0 }, 3).count + work_s(SState.{ items: ss, count: 0 }, 3).count
+}
+
+println(run())

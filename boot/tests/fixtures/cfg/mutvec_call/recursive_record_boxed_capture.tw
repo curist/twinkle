@@ -1,0 +1,27 @@
+type Person = .{ id: Int, score: Int }
+
+type State = .{ people: Vector<Person>, count: Int }
+
+fn swap(v: Vector<Person>, i: Int, j: Int) Vector<Person> {
+  peek := fn() Int { v[0].score }
+  base := peek()
+  v.set_at(i, Person.{ id: base - base, score: v[j].score })
+}
+
+fn work(s: State, n: Int) State {
+  next := State.{ people: swap(s.people, 0, 1), count: s.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    work(next, n - 1)
+  }
+}
+
+pub fn run() Int {
+  base: Vector<Person> = collect i in range(4) {
+    Person.{ id: i, score: i }
+  }
+  work(State.{ people: base, count: 0 }, 3).count
+}
+
+println(run())

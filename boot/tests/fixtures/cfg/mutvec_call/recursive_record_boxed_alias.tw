@@ -1,0 +1,23 @@
+type Person = .{ id: Int, score: Int }
+
+type State = .{ people: Vector<Person>, count: Int }
+
+fn permute(state: State, n: Int) State {
+  saved := state.people
+  next := State.{
+    people: state.people.set_at(0, Person.{ id: n, score: n }),
+    count: state.count + saved[0].score,
+  }
+  if n == 0 {
+    next
+  } else {
+    next.permute(n - 1)
+  }
+}
+
+pub fn run() Int {
+  people: Vector<Person> = [Person.{ id: 1, score: 1 }, Person.{ id: 2, score: 2 }]
+  permute(State.{ people, count: 0 }, 2).count
+}
+
+println(run())
