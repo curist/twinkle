@@ -30,6 +30,51 @@ boxes (`mutvec_get`/`set`/`freeze` in its WAT); change its loop's
 `next = State.{ people: swap(...), count: next.count }` to
 `next.people = swap(next.people, ...)` and the boxed ops disappear.
 
+## Precise drop point (deepened investigation)
+
+Traced end to end with sugar-only instrumentation. The variant candidate for
+`permute` is proposed, its SCC converges, but the converged summary **fails
+`summary.variant_valid`** (retracted at the SCC validate step → `member_key`
+emptied → nothing published → `spec.routes` empty). `variant_valid` fails because
+the converged variant summary has **empty `in_place_paths` (`param_ok=false`) and
+empty `ret_paths`**. Both trace to three *separate* analyses that each treat
+`ARecordUpdate` weaker than `ARecord`, and all three must line up in the
+non-monotone field-flow/SCC fixpoint:
+
+1. **Field-flow (`ownership.transfer_flow` → `collect_field_flow_with_live` →
+   `reqs`).** `ARecordUpdate` on a base whose whole-value origin is `< 0` (a fresh
+   `ARecord`-built carrier) returned `ff_none()`, dropping the per-field origins
+   and the written value's dirty. **Candidate fix (verified to work in isolation):**
+   in the `origin < 0` branch, keep the base's field origins and, for a dirtied
+   exact param-field projection, add `vid.field(field)` to `bf.dirty` — mirroring
+   the `ARecord` arm. With this, one field-flow run yields `rf.fields=[people<-state]`
+   and `reqs=[state:{people}]` (`has_mut=true`). **But it is unstable:** the fact
+   only appears in the run where `swap` is resolved to its owned variant; other
+   rounds see `swap` generic, the reconstructed field origin differs from the
+   carrier's, and the exact-map `join_fact` guard (documented non-monotone) drops
+   it — the fixpoint settles on empty.
+2. **Main ownership body (`path_prov` / `field_own`, the `ARecordUpdate` arm near
+   `ownership.tw:8322`).** `ret_paths` is built (around `ownership.tw:9364`) from
+   the returned atom's `body.path_prov_get` + `body.field_own_get` (NOT the
+   field-flow). For `people` to become `OwnedFromField(state, people)` the returned
+   `next` needs a single-segment `.Field(people)` in `path_prov` AND
+   `field_own.is_unique(field_path(people))`. The `ARecordUpdate` field-lineage in
+   this analysis does not establish that for a fresh-base update, so `ret_paths`
+   stays empty even when the field-flow run is good.
+3. **Role gate (`reconcile_role`, `ownership.tw:8227`).** `Consumed` requires
+   `(has_mut or cap==Consumed) and flows_to_return`. `flows_to_return`
+   (`param_flows_to_return`) is true only for `MayAliasParams(k)` or a ret_path
+   `OwnedFromParam(k)` — it does **not** count `OwnedFromField`. So even the good
+   run (`has_mut=true`) yields role `Borrowed` because `ret_paths` is empty →
+   `in_place_paths` empty → `variant_valid` fails. Fixing (1) alone is
+   insufficient; (2) must also populate `ret_paths` (and possibly
+   `param_flows_to_return`/`reconcile_role` must accept an `OwnedFromField` return
+   as flowing-to-return).
+
+The rebuild (`ARecord`) form succeeds because all three analyses treat a full
+reconstruction as owned-field-preserving and its field origins are stable across
+the loop join.
+
 ## Root-cause map (from the Task 4 investigation)
 
 The divergence is upstream of the mutvec codegen, in ownership/variant
