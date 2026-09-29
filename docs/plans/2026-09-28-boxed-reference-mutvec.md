@@ -281,19 +281,33 @@
 
 ### Task 4: Activate Boxed Recursive Aggregate and Helper Routes
 
-**Status:** In progress. Checkpoint `c1239483` activates the dead-result
-`Vector<Person>` recursive/helper route; the publication and runtime matrices
-below still gate completion.
+**Status:** Complete. Checkpoint `c1239483` activated the dead-result
+`Vector<Person>` recursive/helper route; `1f21ef39` added the publication,
+runtime-execution, and backend-repr test surface; `9ebf550e` fixed a stage0
+self-host trap the projected-borrow join (Task 1) had latently introduced. With
+that fix the boxed route runs end to end: `mutvec_boxed.tw` executes through
+boxed `mutvec_get`/`mutvec_set`/`mutvec_freeze` over records, strings, nested
+vectors, and closures and reproduces its checksum (84), the boxed OOB fixtures
+trap on the logical length, and the self-host fixed point (stage3 == stage4)
+holds with the full boot suite green.
 
 - [x] Detect and flatten a producer-rooted recursive `Vector<Person>` carrier.
 - [x] Retarget boxed helper reads/writes to empty-suffix `mutvec_get`/`mutvec_set`.
 - [x] Preserve exact boxed mono identity and reject cross-mono helper reuse.
 - [x] Assign every activated helper handle/result slot as `MutVecBoxed` without an i64 cross-cast.
 - [x] Verify the dead-result route emits no freeze and keeps persistent updates out of the clone graph.
-- [ ] Add whole-carrier and projected-field publication fixtures with exactly one freeze.
-- [ ] Add the boxed runtime execution/OOB/type-round-trip fixture matrix.
-- [ ] Add explicit backend rejection tests for boxed value/element mono mismatches.
-- [ ] Run Task 4's complete focused verification, format/lint, and final task commit.
+- [x] Add whole-carrier and projected-field publication fixtures with exactly one freeze.
+- [x] Add the boxed runtime execution/OOB/type-round-trip fixture matrix.
+- [x] Add explicit backend rejection tests for boxed value/element mono mismatches.
+- [x] Run Task 4's complete focused verification, format/lint, and final task commit.
+
+**Self-host note:** The projected-borrow CFG join (`ownership.join_entry_projected`)
+threads an `Option<ProjectedBorrow>` accumulator sourced from a generic
+`LocalMap.get` and `pb.meet`. Matching that slot directly leaves its variant tag
+misrepresented under stage0 codegen, tripping stage0's non-exhaustive-match
+fallback the first time the join runs on real self-host input. Re-materializing
+the accumulator through a typed-return boundary (`reproject`) before the match
+restores it — the same discipline `join_entry_prov` already uses.
 
 **Files:**
 - Modify: `boot/compiler/codegen/mutvec_region.tw`
