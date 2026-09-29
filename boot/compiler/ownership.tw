@@ -5768,6 +5768,21 @@ fn join_entry_prov(blk: CfgBlock, exit_prov: ProvExits, processed: BlockMap<Bool
   entry
 }
 
+// The joined `candidate` is an `Option<ProjectedBorrow>` threaded across the
+// predecessor loop from a generic `LocalMap.get` (an erased `Option<T>`) and
+// `pb.meet`. Matching that slot directly leaves its variant tag misrepresented
+// under stage0 codegen, so the `case` falls through to stage0's non-exhaustive
+// fallback and traps during self-host. Re-materializing the value through this
+// typed-return boundary before the match yields a well-formed `ProjectedBorrow?`
+// — the same discipline `join_entry_prov` applies by unwrapping its generic get
+// immediately instead of holding the raw `Option`.
+fn reproject(o: pb.ProjectedBorrow?) pb.ProjectedBorrow? {
+  case o {
+    .Some(b) => .Some(b),
+    .None => .None,
+  }
+}
+
 fn join_entry_projected(blk: CfgBlock, exits: ProjectedExits, processed: BlockMap<Bool>) LocalMap<
   pb.ProjectedBorrow,
 > {
@@ -5798,7 +5813,7 @@ fn join_entry_projected(blk: CfgBlock, exits: ProjectedExits, processed: BlockMa
         seen = true
       }
     }
-    case candidate {
+    case reproject(candidate) {
       .Some(borrow) => entry = .set(lid, borrow),
       .None => {},
     }
