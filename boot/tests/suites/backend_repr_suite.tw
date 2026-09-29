@@ -20,11 +20,12 @@ use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.phys_plan
 use compiler.backend.prepare.{prepare_backend, prepare_backend_preroute}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, ReprKind, SlotInfo}
-use compiler.backend.repr_assign.{repr_of_mono}
+use compiler.backend.repr_assign.{repr_of_mono, wasm_type_of_repr}
 use compiler.backend.repr_policy.{ElemRepr}
 use compiler.backend.route_typed_vec.{route_typed_vectors}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_ir.{AbiContract, ValType}
+use compiler.codegen.wasm_layout.{mutvec_wasm_type}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.elem_family.{pvec_family_of}
@@ -383,6 +384,29 @@ fn emit_picks_i64_op(info: SlotInfo) Bool {
   }
 }
 
+// The Named heap-type of a `.Ref(_, .Named(n))` ValType, else None. Lets a boxed
+// handle repr be checked against its exact runtime struct name.
+fn ref_named(vt: ValType) String? {
+  case vt {
+    .Ref(_, ht) => case ht {
+      .Named(n) => .Some(n),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn assert_ref_named(vt: ValType, name: String, label: String) Result<Void, String> {
+  case ref_named(vt) {
+    .Some(n) => if n == name {
+      .Ok({})
+    } else {
+      assert.fail("${label}: expected ref ${name}, got ${n}")
+    },
+    .None => assert.fail("${label}: expected a named ref, got a non-ref ValType"),
+  }
+}
+
 // ── repr_of_mono tests ────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner
@@ -621,6 +645,42 @@ pub fn suite() runner.Suite {
         try assert.ok(
           emit_picks_i64_op(typed_slot),
           "PVecI64 physical type must select the typed rt_arr__push_i64",
+        )
+        .Ok({})
+      },
+    )
+    // A boxed MutVec handle slot lowers to the dedicated MutVecBoxed struct
+    // purely from its ElemRepr — independent of the logical element mono, and
+    // never conflated with the i64 handle. This is the physical-type half of
+    // the exact-mono contract: the handle is boxed while loaded/stored values
+    // keep their own GC reference type.
+    .test(
+      "boxed MutVec handle repr lowers to MutVecBoxed and never cross-casts to i64",
+      fn() Result<Void, String> {
+        env := empty_env()
+        try assert_ref_named(
+          mutvec_wasm_type(.Boxed),
+          "rt_types__MutVecBoxed",
+          "mutvec_wasm_type(.Boxed)",
+        )
+
+        // Same boxed repr, different logical element monos → same physical type.
+        try assert_ref_named(
+          wasm_type_of_repr(.MutVec(.Boxed), .Vector(.String), env),
+          "rt_types__MutVecBoxed",
+          "MutVec(.Boxed) over Vector<String>",
+        )
+        try assert_ref_named(
+          wasm_type_of_repr(.MutVec(.Boxed), .Vector(.Named(.{ id: 7 }, [])), env),
+          "rt_types__MutVecBoxed",
+          "MutVec(.Boxed) over Vector<record>",
+        )
+
+        // The i64 handle stays a distinct struct — no boxed/i64 conflation.
+        try assert_ref_named(
+          wasm_type_of_repr(.MutVec(.I64), .Vector(.Int), env),
+          "rt_types__MutVecI64",
+          "MutVec(.I64) over Vector<Int>",
         )
         .Ok({})
       },

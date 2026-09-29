@@ -1713,6 +1713,50 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    // Production behavior caught: publishing the whole returned State must
+    // freeze its boxed vector once at the run boundary, never inside each
+    // update. No i64 mutvec ops exist in a pure-Person module, so the
+    // suffix-less `mutvec_freeze` count is unambiguously the boxed op.
+    .test(
+      "boxed recursive record escape emits exactly one boundary freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_boxed_escape")
+        clone := try aggregate_permute_wat_body(wat)
+        _run := case wat_func_body(wat, "_run") {
+          .Some(body) => body,
+          .None => return .Err("run function not found in WAT"),
+        }
+        try assert.ok(
+          count_all_op_calls(wat, "mutvec_set") > 0,
+          "flat boxed write lands in the propagated clone graph",
+        )
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze"), 1)
+        .Ok({})
+      },
+    )
+    // Production behavior caught: publishing only State.people must freeze that
+    // projected boxed vector once at the run boundary.
+    .test(
+      "boxed recursive record field escape emits exactly one boundary freeze",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("recursive_record_boxed_field_escape")
+        clone := try aggregate_permute_wat_body(wat)
+        _run := case wat_func_body(wat, "_run") {
+          .Some(body) => body,
+          .None => return .Err("run function not found in WAT"),
+        }
+        try assert.ok(
+          count_all_op_calls(wat, "mutvec_set") > 0,
+          "flat boxed write lands in the propagated clone graph",
+        )
+        try assert.ok(!clone.contains("rt_arr__set"), "aggregate clone must drop persistent set")
+        try assert.equal(count_op_calls(wat, "_run", "mutvec_freeze"), 1)
+        try assert.equal(count_all_op_calls(wat, "mutvec_freeze"), 1)
+        .Ok({})
+      },
+    )
     // Production behavior caught: the private Int update must use a flat
     // MutVec and the scratch path must never freeze its temporary carrier.
     .test(

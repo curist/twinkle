@@ -1,0 +1,46 @@
+// Emit-level OOB trap gates for the boxed MutVec runtime ops (Task 4). A lowered
+// boxed region's `mutvec_set` / `mutvec_get` must bounds-check against the
+// LOGICAL length (not the doubled backing capacity) and trap on an out-of-range
+// index, exactly like the persistent path — never silently read/write past the
+// end, and never return a null `anyref` for an in-capacity-but-out-of-length
+// slot. Both are runtime traps, so this is a manual gate (select one call in
+// `main`):
+//
+//   target/twk run <this file>   # -> traps (index out of bounds)
+//   (flag-off traps identically via the persistent path; boxed must not diverge)
+type Person = .{ id: Int, score: Int }
+
+// Region is claimed by the in-bounds set; the OOB set then traps in mutvec_set.
+fn oob_set(n: Int) Vector<Person> {
+  xs: Vector<Person> = collect i in range(n) {
+    Person.{ id: i, score: i + 1 }
+  }
+  xs[0] = Person.{ id: 99, score: 99 }
+  xs[n + 100] = Person.{ id: 7, score: 7 }
+  xs
+}
+
+// Region is claimed by the in-bounds set; the OOB read then traps in mutvec_get.
+fn oob_get(n: Int) Int {
+  xs: Vector<Person> = collect i in range(n) {
+    Person.{ id: i, score: i + 1 }
+  }
+  xs[0] = Person.{ id: 99, score: 99 }
+  xs[n + 100].score
+}
+
+// A negative index must also trap, never wrap to a valid backing slot.
+fn oob_negative(n: Int) Int {
+  xs: Vector<Person> = collect i in range(n) {
+    Person.{ id: i, score: i + 1 }
+  }
+  xs[0] = Person.{ id: 99, score: 99 }
+  xs[0 - 1].score
+}
+
+fn main() Int {
+  // Select exactly one to exercise the corresponding boxed trap:
+  oob_set(5).len()
+}
+
+println(main())
