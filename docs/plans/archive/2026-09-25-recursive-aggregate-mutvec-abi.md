@@ -35,6 +35,20 @@
 
 ---
 
+## Status (2026-09-30) — COMPLETE
+
+All tasks landed. Tasks 0–3 committed directly; Tasks 4–5 superseded by the
+flat-handle propagation carry-through (A–E below), not the original
+decompose-per-task structure (their per-step checkboxes are historical — do not
+re-do them). Task 6 performance gate PASSED. Task 7 branch review: findings
+closed in `b9e3631f`, and the whole-branch soundness review of
+`recursive-mutvec-abi` (merge-base `3e307904`..HEAD, which contains every commit
+in this plan) confirmed the aggregate machinery — exact-mono propagation
+identity, transactional `build_aggregate` fallback, freeze-boundary discipline —
+with no Critical issues. The successor boxed-reference work
+(`docs/plans/archive/2026-09-28-boxed-reference-mutvec.md`) built on this ABI and
+is likewise complete. Archived.
+
 ## Status (2026-09-28, session 5) — Task 6 gate PASSED; next = Task 7
 
 > **READ THIS FIRST.** This is the authoritative current state. Earlier status

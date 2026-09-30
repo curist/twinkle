@@ -1,7 +1,7 @@
 # Aggregate MutVec ABI Rewrite — Design Notes (Tasks 4–5)
 
 Design capture before implementing the decomposed-ABI rewrite in
-`docs/plans/2026-09-25-recursive-aggregate-mutvec-abi.md`. Tasks 0–3 landed
+`docs/plans/archive/2026-09-25-recursive-aggregate-mutvec-abi.md`. Tasks 0–3 landed
 (ownership field-lineage foundation, `detect_aggregate_regions`,
 `verify_aggregate_region`, census). This doc records the rewrite design so
 Task 4–5 can be implemented in a focused follow-up without re-deriving it.
