@@ -14,11 +14,14 @@ storage, and — post-`to_float` — mandelbrot) and *loses* on a cluster of hot
 numeric/recursive loops.
 
 The important finding: those remaining losses are **not one "MutVec pattern"
-away**. Each needs a distinct in-place or ownership capability. `mandelbrot`
+away** — but they are also *not* three unrelated projects. They sort cleanly
+against the **single existing ownership analysis**: two are precision gaps on its
+one linearity hinge, one extends that hinge, and one is an orthogonal
+representation choice (see "One analysis, three positions" below). `mandelbrot`
 flipped from 2.8× behind to 2.7× ahead off a *single* prelude function because
 its gap was an accidental string round-trip; there is no equivalent free lunch
 left in the losing benches. This catalog exists so we can pick and sequence the
-real capabilities deliberately.
+real work deliberately.
 
 ### Foundation this builds on
 
@@ -35,6 +38,41 @@ real capabilities deliberately.
 Benchmark exemplar → what it compiles to **today** (measured) → root cause →
 what it would need → existing track or NEW → difficulty → benchmarks unlocked →
 open questions.
+
+### One analysis, three positions relative to the linearity hinge
+
+These are **not three separate analyses.** `sound-uniqueness/` is already a single
+unified dataflow analysis — a fact lattice + an exhaustive per-op transfer
+function over the closed `AnfOp` enum + a CFG fixpoint + interprocedural
+summaries. Its whole decision reduces to one **linearity hinge** (from
+[`analysis/worked-examples.md`](sound-uniqueness/analysis/worked-examples.md)):
+
+> `AInit` is a **move** iff the source is dead afterward, else an **alias**
+> (→ stay persistent).
+
+Each pattern below is a *position relative to that hinge*, which is what actually
+sets its difficulty:
+
+- **Precision gaps (A, B-spine).** Semantically already **move/dead** cases the
+  hinge *should* accept, but the analysis can't yet see the ownership through a
+  dynamic field projection (A) or route it to the boxed in-place op (B-spine).
+  These extend the **precision** of the existing hinge — no new lattice state, no
+  new runtime.
+- **Expressiveness gap (C).** The hinge is *binary* (dead→move / live→persistent).
+  Backtracking is **live-but-restorable**, a third outcome the lattice cannot
+  express today. C extends the hinge from binary to **ternary** (move / transient /
+  alias) — a genuine core change with new runtime (undo-log) and lowering.
+- **Orthogonal axis (B-record-alloc).** nbody's dominant cost is *record
+  allocation*, which is not an ownership question at all — it's a **representation**
+  choice (in-place struct fields / struct-of-arrays). The hinge does nothing for
+  it either way.
+
+So the leverage isn't a mythical "one algorithm for all patterns" (the engine is
+already one algorithm; exact aliasing/liveness is undecidable, so a sound,
+annotation-free, never-reject analysis *always* has a precision frontier). The
+leverage is: raise precision on the **shared hinge** (A, B-spine), extend the hinge
+to ternary once for all backtracking (C), and treat representation (B-record-alloc)
+as its own track.
 
 ---
 
@@ -69,12 +107,17 @@ per-element boxing — this is the cleanest of the remaining cases.
 a dynamic selector — recognize the "read field *k*, transform, write field *k*
 back, old field value dead" idiom even when *k* is a `case`/runtime index.
 
+**Classification:** *Precision gap on the linearity hinge.* This is already a
+**move/dead** case (the old field value is consumed by `drop_last`); the analysis
+just can't prove it through the dynamic projection. No new lattice state, no new
+runtime — the destructive lowering already exists (MutVec).
+
 **Track:** extends `sound-uniqueness/` (aggregate/field ownership). Related to
 `archive/loop-threaded-field-ownership.md` and
 `archive/sound-uniqueness-recursive-summary-ownership.md`, but adds the dynamic
 selector + read-alias-then-overwrite shape.
 
-**Difficulty:** Medium. Self-contained analysis extension; no new runtime rep.
+**Difficulty:** Medium. Self-contained analysis-precision extension; no new runtime rep.
 
 **Unlocks:** towers; generalizes to any record-of-vectors threaded linearly
 (stacks/queues/pegs held in a record).
@@ -117,8 +160,15 @@ LuaJIT (0.59×), which is the existence proof that the win is real.
   parallel `PVecF64` columns (close gap 2). `nbody_mut` validates the SoA/flat
   approach manually.
 
+**Classification:** two independent things wearing one benchmark. Gap 1 (spine) is
+a *precision/routing gap on the linearity hinge* — same class as Pattern A (a
+move/dead case not reaching the in-place op). Gap 2 (record alloc) is **not an
+ownership question at all**; it is an *orthogonal representation axis*. Don't
+conflate them: closing gap 1 alone leaves most of nbody on the table.
+
 **Track:** gap 1 → `mutvec-later-slices.md` (boxed family) + `mutvec-checklist.md`
-Phase 7. Gap 2 → **NEW axis** (no current plan covers in-place struct fields).
+Phase 7. Gap 2 → **NEW representation axis** (no current plan covers in-place
+struct fields / SoA unboxing).
 
 **Difficulty:** Medium (gap 1 routing) to Hard (gap 2 struct in-place / SoA needs
 a representation decision).
@@ -160,6 +210,13 @@ mutate in place before the recursive call, restore on backtrack. This is a new
 runtime + analysis capability (recognize the mutate→recurse→restore idiom, or
 expose a scoped-transient API the pattern lowers to).
 
+**Classification:** *Expressiveness extension of the linearity hinge.* The only
+pattern here that changes the analysis core: it adds a third outcome —
+**live-but-restorable → transient** — generalizing the current binary
+(move / alias) hinge to ternary (move / transient / alias), plus a new runtime
+(undo-log) and lowering. Everything else in this doc is precision or
+representation; this is the one that touches the lattice itself.
+
 **Track:** **NEW capability.** No current plan. Distinct from all owned-linear
 work.
 
@@ -189,19 +246,31 @@ its residual is small and read-path/representation-bound, not an in-place gap.
 
 ## Common threads & suggested sequencing
 
-- **Patterns A and B both push the aggregate-ownership frontier** through record
-  boundaries — A is *vector-in-record* (dynamic field projection), B gap 1 is
-  *record-in-vector* (boxed spine). Shared foundation: `sound-uniqueness/`
-  ownership facts. Worth checking whether one analysis extension serves both.
-- **Pattern B gap 2 (in-place struct fields) and Pattern C (transient)** are each
-  a *new* capability on a new axis — neither is a MutVec extension.
-- **Pattern C generalizes furthest** beyond benchmarks (all backtracking), but is
-  the hardest and needs the most design.
+Sorted by *what they touch in the one analysis*, not by benchmark:
 
-**Suggested first spin-off:** Pattern A. It is the most self-contained (analysis
-only, no new runtime representation), a clean unboxed-Int win, and it exercises
-the record-field-ownership machinery that Pattern B gap 1 also needs — so it
-de-risks the harder aggregate work while delivering towers on its own.
+- **Precision on the shared hinge (A, B-spine).** Both are already move/dead cases
+  the linearity hinge should accept but can't yet — A through a dynamic field
+  projection, B-spine through boxed-spine routing. They push the **precision** of
+  the *same* rule; worth checking whether one lattice/summary extension serves
+  both.
+- **Expressiveness of the hinge (C).** The one core change: binary → ternary
+  (move / transient / alias). Generalizes furthest beyond benchmarks (all
+  backtracking / DFS / search), and is the hardest — new lattice state, undo-log
+  runtime, and lowering.
+- **Representation, off the ownership axis entirely (B-record-alloc).** In-place
+  struct fields or SoA unboxing. No hinge work touches it; it is nbody's dominant
+  cost and needs its own representation-boundary decision (cf.
+  `performance/representation-boundary-policy.md`).
+
+The lesson from reviewing the analysis core: the leverage is **the hinge**, not any
+one benchmark. Raise its precision (A, B-spine), extend it to ternary once for all
+of backtracking (C), and keep representation (B-record-alloc) as a separate track.
+
+**Suggested first spin-off:** Pattern A. It is the most self-contained (a precision
+extension of the existing hinge — no new lattice state, no new runtime), a clean
+unboxed-Int win, and it exercises the record-field-ownership machinery that
+B-spine also needs — so it de-risks the harder aggregate work while delivering
+towers on its own.
 
 **Next steps:** promote one pattern at a time into `docs/plans/` as its own spec
 (brainstorm → design → implementation plan), starting from the sequencing above.
