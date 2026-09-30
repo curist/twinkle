@@ -32,13 +32,13 @@ justifies a change on its own. For codegen/ownership work, gate every change on
 ## Current baseline (2026-09-30, after recursive-aggregate + boxed-reference MutVec)
 
 Compiling `boot/main.tw` (277 modules / ~4752 functions, `wanted` 4155) with the
-bundled CLI, sound-uniqueness codegen enabled (the default). Three timing-disabled
-wall-clock samples were **29.65–31.69s, median ~30.85s**. The two sound-uniqueness
-ownership phases dominate even harder than before — **~20.8s of the ~30.9s
-median**:
+bundled CLI, sound-uniqueness codegen enabled (the default). After the
+iterate-independent no-op-resummary win (below), timing-disabled wall-clock samples
+are **~27.37–27.83s, median ~27.5s** (was ~30.85s). The two sound-uniqueness
+ownership phases still dominate — ~19s of the ~27.5s median:
 
 ```text
-variant_specialize         15.30–15.62s median ~15.4s
+variant_specialize         ~13.5s (was ~15.4s)
 produce_mutable_decisions  5.31–5.62s   median ~5.4s
 compile_modules            3.23–3.38s   median ~3.3s
 emit_module                1.47–1.53s   median ~1.5s
@@ -60,9 +60,9 @@ closure_convert            ~0.03s
 Sub-breakdown of the two dominant phases:
 
 ```text
-variant_specialize:        table ~8.1s
-                           variants ~5.1s
-                           groups ~1.9s; filter ~0.06s
+variant_specialize:        table ~8.2s
+                           variants ~3.3s (was ~5.1s)
+                           groups ~1.95s; filter ~0.06s
 produce_mutable_decisions: summary ~4.2s
                            summary:reuse ~2.0s
                            cfg ~0.15s; ownership ~0.97s
@@ -87,35 +87,85 @@ per-variant ownership/classification work is the primary driver.
 `produce_mutable_decisions` grew more modestly (4.53s → ~5.4s; `summary` ~3.5 →
 ~4.2s, `summary:reuse` ~1.65 → ~2.0s), tracking the larger program.
 
-This is a coincidence-of-timing attribution, not an isolated A/B: the numbers
-were not re-measured against the pre-MutVec compiler on identical source, and the
-module-graph growth is confounded in. The next probe should A/B the `variants`
-subphase with the boxed/projected-borrow classification paths bypassed on
-identical source to confirm the ~4s delta is the MutVec ownership work rather than
-program growth, before treating it as a lever.
+**Measured (2026-09-30, A/B vs pre-MutVec `3e307904`).** The `variants` subphase
+(`summary.compute_variants`) was instrumented behind `TWINKLE_VARIANTS_PROBE`,
+splitting it into candidate-scan / order-sccs / per-SCC fixpoint-loop, and the same
+probe was ported to a CLI built at the fork point `3e307904` and run on *its own*
+`boot/main.tw` (self-consistent rates, not identical source):
 
-**What the `variants` subphase is, and where the cost is NOT.** `variants` is
-`summary.compute_variants` (variant_specialize.tw:500), which runs an ownership
-fixpoint (`run_scc_variants`) once per candidate variant per SCC. A first guess was
-that the projected-borrow state (`ForwardState.projected_shell`, added by the MutVec
-Task 1 foundation) threaded through every such run was the overhead. **Reading the
-code rules that out as the primary cost:** `merge_projected_exit`
-(ownership.tw:6155) iterates only `old.keys()`, and `projected_shell` is non-empty
-only for a function that reads a GC-reference vector element (`xs[i]`). For the
-~99% of functions that never do, the map is empty and the per-join merge is an
-empty loop already — gating it would recover ~nothing. Do **not** start with a
-"gate `projected_shell`" change; it is very likely a null result.
+```text
+                        OLD 3e307904   NEW main   ratio
+variants total            851 ms       5028 ms    5.9x
+  candidate scan           98 ms        111 ms    1.1x   (candidate_variants + dict)
+  order_sccs               21 ms         21 ms    1.0x
+  fixpoint loop           729 ms       4890 ms    6.7x   (run_scc_variants)
+candidate variants          556         1281      2.3x
+  - field-tier (new)          0          705       —     (record-reconstruct branch)
+  - shell-tier              556          576      1.04x
+active SCCs (real runs)     498          974      2.0x
+published variants           —           377       —
+final clones                 47           47      1.0x
+ms / active SCC            1.46         5.02      3.4x
+```
 
-**The actual next probe (measure first, no plan doc needed).** The ~6× jump is
-more likely *more work of the same kind*: the boxed/owned-variant eligibility
-producing **more candidate variants** (so the per-variant fixpoint runs more
-times), or heavier per-run summaries, amplified across `4155` wanted functions.
-Instrument `compute_variants`/`run_scc_variants` to report the candidate-variant
-count, the number of SCC-variant fixpoint runs, and per-part timing, and compare
-against the pre-MutVec compiler on identical source (build both CLIs, or bisect the
-recursive-mutvec-abi range). Only once the dominant term is identified does a lever
-follow — and acceptance is byte-identical output + the `make stage2` fixed point
-regardless of which lever it turns out to be.
+**Conclusion — the dominant term is the per-SCC variant ownership fixpoint
+(`run_scc_variants` → repeated `summarize_variant_resolved`), not candidate
+generation.** The candidate scan and SCC ordering are trivial (~130 ms combined,
+flat across versions). The whole ~4.9 s — and its entire 6.7× growth — is the
+fixpoint loop. It decomposes cleanly as **~2× more runs × ~3.4× heavier per run**,
+and *both* factors trace to one source: the **705 new field-tier candidates** from
+the record-reconstruct `else` branch added to `candidate_variants`
+(summary.tw:972). Shell-tier candidates barely moved (556→576, tracking the ~15%
+program growth); every added candidate above that is field-tier. Each field-tier
+candidate makes its SCC "active" (→ 2× the fixpoint runs) and seeds richer
+field-path summaries via `optimistic_variant_hypothesis` plus an extra full-tier
+re-analyze `summarize_variant_resolved` at publish (→ ~3.4× the per-run cost). The
+projected-borrow hypothesis is confirmed **not** the driver, as predicted below.
+Notably the doubled candidate work produces **identical final output** (47 clones,
+~105→109 groups): the funnel is 1281 candidates → 377 published variants → 109
+groups → 47 clones, so most field-tier fixpoint runs are speculative and retracted.
+
+**Where the cost is NOT.** A first guess was that the projected-borrow state
+(`ForwardState.projected_shell`, added by the MutVec Task 1 foundation) threaded
+through every run was the overhead. `merge_projected_exit` (ownership.tw:6155)
+iterates only `old.keys()`, and `projected_shell` is non-empty only for a function
+that reads a GC-reference vector element (`xs[i]`); for the ~99% that never do the
+per-join merge is an empty loop. The A/B above bears this out — the growth is in
+candidate *count* and field-path summary richness, not the projected-borrow merge.
+Do **not** pursue a "gate `projected_shell`" change; it is a null result.
+
+### Landed: skip the no-op re-summary for iterate-independent variant members
+
+`run_scc_variants`'s inner Gauss-Seidel worklist re-summarized **every** active
+member every round until a full round produced no change. But a member with **no
+in-SCC callee** reads only out-of-SCC/generic summaries (constant across the
+fixpoint), never a live in-SCC iterate — so its round-0 summary is already final and
+every later `summarize_variant_resolved` on it recomputes the identical value. Since
+`callee_ids` (via `collect_op_callees`) is the *exact* edge relation that built the
+SCC and that the transfer resolves through the overlay, "no in-SCC callee" is
+precisely "iterate-independent." The fixpoint now computes each such member in round
+0 and skips it thereafter; members with an in-SCC callee (including self-recursion —
+a self-calling function is still a size-1 SCC) are unaffected. Active SCCs are
+dominated by size-1 non-recursive functions, so this removes the confirming
+second-round summarize for the common case.
+
+The round-by-round `changed` flag is determined solely by iterate-dependent members
+(the skipped ones never change after round 0), so the convergence round, the
+retract/re-run behavior, and every published summary are unchanged.
+**`variants` ~5020 → ~3320ms (~34%); build wall ~30.85 → ~27.5s median.**
+`groups0=109 updatable=47` unchanged. Acceptance met: byte-identical WAT on a fixed
+input (a HEAD worktree compiled by the pre- and post-change CLI), `make stage2`
+fixed point (stage3 == stage4), and the full boot suite (3782 passed). *Lesson (same
+family as the cold-worklist and liveness-reuse wins): skipping a provably-no-op
+re-visit is byte-safe; the safe skip predicate here is a purely structural
+per-member fact (in-SCC callee set), computed once.*
+
+**Remaining deferred lever.** *Cut speculative field-tier fixpoint runs.* Only 377
+of 1281 candidates are published and only 47 become clones, so most field-tier
+candidates still fail validation after paying a (now-cheaper) per-SCC fixpoint. A
+conservative necessary-condition pre-filter on the record-reconstruct branch (that
+provably never drops a survivor) would remove wasted runs. Risk: any dropped
+survivor changes codegen — needs the FIXVERIFY-census discipline below.
 
 ### The dominant redundancy: the whole-program summary is computed ~twice
 

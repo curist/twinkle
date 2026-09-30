@@ -1175,9 +1175,32 @@ fn run_scc_variants(
   vtable: VariantSummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  user_ids: Dict<Int, Bool>,
 ) VariantSummaryTable {
   members := scc.sort()
   scc_set := int_set(members)
+
+  // A member with no in-SCC callee summarizes to the same value every round: its
+  // transfer reads only out-of-SCC/generic summaries (constant across the fixpoint),
+  // never a live in-SCC iterate. `callee_ids` is the exact edge relation that built
+  // this SCC, so "no in-SCC callee" is precisely "iterate-independent" -- such a
+  // member converges in round 0 and re-summarizing it later is a provable no-op.
+  // Recompute it only in round 0 and skip the confirming re-summary afterwards.
+  inscc_dep: Dict<Int, Bool> = Dict.new()
+  for m in members {
+    dep := false
+    case index.get(m) {
+      .Some(f) => {
+        for c in callee_ids(f, user_ids) {
+          if in_set(scc_set, c) {
+            dep = true
+          }
+        }
+      },
+      .None => {},
+    }
+    inscc_dep[m] = dep
+  }
 
   // active member -> (candidate variant, seeded param k). MVP: one key per member.
   member_key: Dict<Int, vid.VariantId> = Dict.new()
@@ -1220,25 +1243,28 @@ fn run_scc_variants(
       for changed and rounds < cap_inner {
         changed = false
         for m, k in member_pidx {
-          f := case index.get(m) {
-            .Some(fn0) => fn0,
-            .None => error("variant: scc id ${m} not in index"),
-          }
-          key := case member_key.get(m) {
-            .Some(v) => v.unique,
-            .None => [],
-          }
-          overlay := build_overlay(generic, member_iter)
-          resolve := vtable.make_outscc_resolver(scc_set)
-          require := vtable.make_outscc_requirement_resolver(scc_set)
-          next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve, require)
-          prev := case member_iter.get(m) {
-            .Some(s) => s,
-            .None => optimistic_variant_hypothesis(table_get(generic, m), member_key[m].unwrap()),
-          }
-          if !same_summary(next, prev) {
-            member_iter[m] = next
-            changed = true
+          // Iterate-independent members are final after round 0; skip the no-op.
+          if rounds == 0 or in_set(inscc_dep, m) {
+            f := case index.get(m) {
+              .Some(fn0) => fn0,
+              .None => error("variant: scc id ${m} not in index"),
+            }
+            key := case member_key.get(m) {
+              .Some(v) => v.unique,
+              .None => [],
+            }
+            overlay := build_overlay(generic, member_iter)
+            resolve := vtable.make_outscc_resolver(scc_set)
+            require := vtable.make_outscc_requirement_resolver(scc_set)
+            next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve, require)
+            prev := case member_iter.get(m) {
+              .Some(s) => s,
+              .None => optimistic_variant_hypothesis(table_get(generic, m), member_key[m].unwrap()),
+            }
+            if !same_summary(next, prev) {
+              member_iter[m] = next
+              changed = true
+            }
           }
         }
         rounds = .inc()
@@ -1339,7 +1365,7 @@ pub fn compute_variants(
   candidates := candidates_by_func(view, generic, sem)
   vtable := empty_variant_table()
   for scc in order_sccs(view, index, user_ids) {
-    vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
+    vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem, user_ids)
   }
   vtable
 }
