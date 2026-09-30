@@ -1,5 +1,5 @@
 // Runtime-correctness coverage for the compiler-private boxed MutVec family
-// (docs/plans/2026-09-28-boxed-reference-mutvec.md, Task 4/7).
+// (docs/plans/archive/2026-09-28-boxed-reference-mutvec.md, Task 4/7).
 //
 // The other boxed suites (mutvec_call, backend_repr) assert the *structure* of
 // the generated code — that the boxed get/set/freeze ops appear and the

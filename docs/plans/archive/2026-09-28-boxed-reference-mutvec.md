@@ -8,7 +8,7 @@
 
 **Tech Stack:** Self-hosted Twinkle boot compiler, ANF/CFG ownership summaries, Wasm-GC arrays and structs, existing MutVec S4 passes, boot test harness, standalone `target/twk`, AWFY benchmark harness.
 
-**Spec:** `docs/plans/2026-09-28-boxed-reference-mutvec-design.md`
+**Spec:** `docs/plans/archive/2026-09-28-boxed-reference-mutvec-design.md`
 
 ## Global Constraints
 
@@ -330,11 +330,11 @@ restores it — the same discipline `join_entry_prov` already uses.
 - Produces: accepted producer-rooted `Vector<Person>` aggregate routes, boxed `$mv` helper siblings, boxed `$mvagg` recursive siblings, and backend slots physically represented as `MutVecBoxed` while retaining exact logical mono.
 - Produces: verifier rejection before emission when boxed get/set value/result types disagree with the handle's `Vector<T>` mono.
 
-- [ ] **Step 1: Add realistic record-swap route and WAT tests**
+- [x] **Step 1: Add realistic record-swap route and WAT tests**
 
   Create a fixture whose producer-built `Vector<Person>` is carried in a recursive record, whose helper reads two records then writes them back swapped, and whose scalar result supplies a checksum. Add dead-field, publish-record, and publish-field variants. Add runtime fixtures covering empty/singleton construction, growth by push, reference get/set, freeze, records/strings/nested vectors/closures round-tripping, negative index, logical-length OOB, and oversized index traps. Assert route acceptance, correct execution, boxed get/set calls in the propagated clone graph, absence of persistent `rt_arr__set` in that graph, and zero/one freeze boundaries.
 
-- [ ] **Step 2: Run the boxed aggregate tests and verify they fail**
+- [x] **Step 2: Run the boxed aggregate tests and verify they fail**
 
   Run: `target/twk test --filter "boxed recursive record"`
 
@@ -342,19 +342,19 @@ restores it — the same discipline `join_entry_prov` already uses.
 
   Expected: FAIL because boxed family activation and backend representation assignment are not wired.
 
-- [ ] **Step 3: Enable boxed region and helper verification**
+- [x] **Step 3: Enable boxed region and helper verification**
 
   Route eligible boxed producers through existing `classify_producer_prime`, region detection, and aggregate verification. Retarget index reads/writes to the empty-suffix boxed runtime operations only after the verifier confirms the handle's exact `Vector<T>` mono and the operation result/value mono equals `T`. Preserve exhaustive reject-by-default matching for unsupported ANF ops.
 
-- [ ] **Step 4: Enable boxed backend representation assignment**
+- [x] **Step 4: Enable boxed backend representation assignment**
 
   In `mutvec_repr.tw`, derive `.MutVec(.Boxed)` from the ABI upgrade's exact `vector_mono` and validated boxed family rather than defaulting an unknown family to `.I64`. Type handle params/results as `MutVecBoxed`; leave loaded/stored logical values at their exact GC reference type. Extend backend verification to reject missing mono, externref, sentinel, or value/element mismatch before Wasm emission.
 
-- [ ] **Step 5: Wire caller freeze and reconstruction with the exact mono**
+- [x] **Step 5: Wire caller freeze and reconstruction with the exact mono**
 
   Resolve empty-suffix boxed builtins, use `region.vector_mono` for the producer handle and frozen result, and reconstruct the original nominal carrier without substituting `.Vector(.Anyref_)`. Keep the existing all-or-nothing plan reservation so a boxed failure leaves the original persistent caller and clone graph untouched.
 
-- [ ] **Step 6: Run boxed route, backend, and primitive regression tests**
+- [x] **Step 6: Run boxed route, backend, and primitive regression tests**
 
   Run: `target/twk test --filter "boxed recursive record"`
 
@@ -364,7 +364,7 @@ restores it — the same discipline `join_entry_prov` already uses.
 
   Expected: PASS, including existing primitive recursive aggregate cases.
 
-- [ ] **Step 7: Format, lint, and commit**
+- [x] **Step 7: Format, lint, and commit**
 
   Run: `target/twk fmt boot/compiler/codegen/mutvec_region.tw boot/compiler/codegen/mutvec_call_region.tw boot/compiler/codegen/mutvec_call_verify.tw boot/compiler/codegen/mutvec_propagate.tw boot/compiler/codegen/mutvec_aggregate_phase.tw boot/compiler/backend/mutvec_repr.tw boot/compiler/backend/verify_expr.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_swap.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_escape.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_field_escape.tw boot/tests/suites/fixtures/mutvec_boxed.tw boot/tests/suites/fixtures/mutvec_boxed_oob.tw boot/tests/suites/mutvec_call_suite.tw boot/tests/suites/backend_repr_suite.tw`
 
@@ -392,21 +392,21 @@ restores it — the same discipline `join_entry_prov` already uses.
 - Consumes: the complete boxed route from Task 4.
 - Produces: integration evidence that every rejected boxed shape remains on the persistent ABI and that no partial boxed sibling/upgrade survives rejection.
 
-- [ ] **Step 1: Add end-to-end fallback fixtures and assertions**
+- [x] **Step 1: Add end-to-end fallback fixtures and assertions**
 
   Cover a surviving vector alias, element closure capture, fresh/mixed recursive lineage, nested-vector indexed borrow used as an attempted inner mutation root, `Person`/`String` calls reaching one source helper, `ExternRef` elements, handle duplication across callee slots, and a deliberately exhausted variant cap. For each, assert the documented accepted or rejected outer route, exact sibling identity, absence of incompatible retargeting, byte-valid compilation, and correct runtime result.
 
-- [ ] **Step 2: Run fallback tests and inspect failures**
+- [x] **Step 2: Run fallback tests and inspect failures**
 
   Run: `target/twk test --filter "boxed fallback"`
 
   Expected: new tests either pass immediately through conservative behavior or expose a partial-rewrite/identity bug; any failure must be fixed without weakening the fixture.
 
-- [ ] **Step 3: Make rejection transactional where needed**
+- [x] **Step 3: Make rejection transactional where needed**
 
   If a failing fixture exposes mutation before full graph acceptance, change planning to reserve every sibling/ABI upgrade and validate all exact monos first, then append rewritten functions and caller changes only when the whole chain is accepted. Do not add boxed-specific ownership exceptions.
 
-- [ ] **Step 4: Run focused and full boot tests**
+- [x] **Step 4: Run focused and full boot tests**
 
   Run: `target/twk test --filter "boxed fallback"`
 
@@ -416,7 +416,7 @@ restores it — the same discipline `join_entry_prov` already uses.
 
   Expected: PASS.
 
-- [ ] **Step 5: Format, lint, and commit**
+- [x] **Step 5: Format, lint, and commit**
 
   Run: `target/twk fmt boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_alias.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_capture.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_mixed_lineage.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_nested_borrow.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_boxed_mixed_mono.tw boot/tests/fixtures/cfg/mutvec_call/recursive_record_externref.tw boot/tests/suites/mutvec_call_suite.tw`
 
@@ -464,23 +464,23 @@ that `ARecordUpdate` form has shipped (see
 - Consumes: Task 4's ordinary optimized `Vector<Person>` route and the parent commit immediately before Task 4 route activation as the persistent compiler baseline.
 - Produces: a deterministic checksum workload, recorded compiler revisions/commands, route-selection evidence, three-sample medians, and a pass/fail decision against the `3.0x` gate.
 
-- [ ] **Step 1: Validate the benchmark's recorded pre-activation revision**
+- [x] **Step 1: Validate the benchmark's recorded pre-activation revision**
 
   Use the fixture committed in Task 2, before Task 4's activation commit, so identical source compiles with both compilers. Confirm it uses a producer-built `Vector<Person>`, recursive record carrier, helper-based read-before-write swap, and observable checksum. Record the Task 3 commit as the pre-activation compiler revision when its WAT confirms persistent vector updates.
 
-- [ ] **Step 2: Prove correctness and representation for both compilers**
+- [x] **Step 2: Prove correctness and representation for both compilers**
 
   Build standalone CLIs from the recorded pre-activation commit and the completed candidate in separate worktrees. Run the benchmark once with each and assert identical checksum. Emit WAT: baseline must call persistent vector update; candidate hot clone graph must call boxed `mutvec_get`/`mutvec_set`, contain no persistent update, and preserve zero/one freeze behavior in its dead/published fixture variants.
 
-- [ ] **Step 3: Run three benchmark rounds for each compiler**
+- [x] **Step 3: Run three benchmark rounds for each compiler**
 
   Use the repository AWFY runner and the same host/session settings used for the existing Permute gate. Alternate baseline and candidate runs to reduce drift, retain every sample, and compare medians. Do not compare the write-only spike or a deliberately pessimized source variant.
 
-- [ ] **Step 4: Apply the performance decision**
+- [x] **Step 4: Apply the performance decision**
 
   PASS when candidate median time is at least `3.0x` faster than the persistent parent-compiler baseline, checksums agree, and WAT proves the intended route. If it misses, profile the residual and open a focused follow-up; do not weaken ownership, exact-mono, or ABI checks and do not mark this plan complete.
 
-- [ ] **Step 5: Record evidence, format, lint, and commit**
+- [x] **Step 5: Record evidence, format, lint, and commit**
 
   Add compiler commit ids, exact commands, samples, medians, ratio, checksum, and WAT route/freeze evidence to this task's status section without changing the prescribed gate.
 
@@ -497,7 +497,42 @@ that `ARecordUpdate` form has shipped (see
 
 ### Task 7: Self-Host, Full Verification, and Branch Review
 
-**Status:** Verification complete; independent review (Step 4) not yet run.
+**Status:** Complete. Independent branch review run; its one substantive
+finding is fixed.
+
+**Independent review (Step 4).** A soundness-focused reviewer audited the whole
+branch (`3e307904..c612228d`) against the Global Constraints and Review Focus.
+All seven soundness invariants were confirmed upheld in code and by execution:
+projected-borrow summary isolation (`ret_borrow` never feeds
+`flows_to_return`/`ret_exact_param`/`ReturnOwn`/variant eligibility;
+`classify_path_own` returns `.None` on any projected fact; joins/SCC drop
+conservatively), exhaustive sentinel/externref exclusion (classifier keys on
+`MonoType` shape, backend re-checks below-`any`), deep-structural exact-mono
+identity with no cross-mono sibling reuse, genuinely all-or-nothing
+transactional fallback (`build_aggregate` accumulates only under `ok`), and
+persistent-backing isolation (freeze copies into fresh PVec nodes, never
+aliases). No Critical issues.
+
+**Finding addressed.** The reviewer's one Important finding: boxed-route coverage
+in `make test` was WAT-structural only — a miscompile emitting structurally
+correct boxed ops with wrong element values would have passed. Fixed by
+`boot/tests/suites/mutvec_boxed_runtime_suite.tw` (`81ed6b28`), which *executes*
+the boxed route (records, strings, nested vectors, closures) via the boot
+suite's own `proc.run_wasm` path and asserts the permutation checksums. The
+record/nested-vector/closure clones take the boxed `array<anyref>` route in the
+combined test binary (`swap__*_mv`, empty-suffix
+`mutvec_get`/`set`/`new`/`push`/`freeze`), so the assertions exercise the real
+runtime. Full boot suite green at 3782 tests; lint clean; test-only change so
+self-host/bundle are unaffected.
+
+**Minor notes (not blocking).** The plan's Task 4 file list names
+`backend/verify_expr.tw`, but the backend externref/sentinel/mono gate is
+actually realized in `backend/mutvec_repr.tw` (`elem_repr_for_handle` calls
+`error(...)` when no classifier matches) — a fail-closed assert, unreachable for
+accepted routes. `boxed_mutvec_family_of` accepts arbitrarily nested `Optional`
+and leans on that backend assert for the exotic case; left as-is.
+
+**Prior status (verification, retained):**
 
 - **Self-host fixed point:** `make bundle-cli` then `make stage2` both reach
   `Fixed point reached: stage3 == stage4`. The projected-borrow join needed a
@@ -523,7 +558,7 @@ that `ARecordUpdate` form has shipped (see
 - Consumes: all prior task commits and performance evidence.
 - Produces: a self-host fixed point, complete test/lint evidence, and an independent soundness review with all findings resolved or explicitly blocking completion.
 
-- [ ] **Step 1: Rebuild and verify the self-host fixed point**
+- [x] **Step 1: Rebuild and verify the self-host fixed point**
 
   Run: `make bundle-cli`
 
@@ -531,7 +566,7 @@ that `ARecordUpdate` form has shipped (see
 
   Expected: both complete and the repository's stage comparison reports a fixed point.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
   Run: `make test`
 
@@ -543,15 +578,15 @@ that `ARecordUpdate` form has shipped (see
 
   Expected: all suites pass; lint has no new actionable findings; no whitespace errors. Never run tree-sitter tests.
 
-- [ ] **Step 3: Audit generated WAT and fallback output**
+- [x] **Step 3: Audit generated WAT and fallback output**
 
   Use `target/twk wat` on the accepted record-swap benchmark and representative fallback fixtures. Confirm boxed ops and freeze counts only on accepted graphs, ordinary PVec ABI on rejected graphs, and no `Vector<Person>`/`Vector<String>` cross-retarget.
 
-- [ ] **Step 4: Request an independent branch review**
+- [x] **Step 4: Request an independent branch review**
 
   Ask the reviewer to focus on projected-borrow summary soundness, externref/sentinel exclusions, exact-mono identity, transactional fallback, persistent-backing isolation, self-host stability, and the benchmark's fairness. Fix every confirmed issue with focused regression coverage and rerun the affected verification.
 
-- [ ] **Step 5: Record final evidence and commit**
+- [x] **Step 5: Record final evidence and commit**
 
   Update this plan with the final implementation commits, verification commands/results, performance conclusion, and any intentionally deferred scope such as consume/replace ownership for nested vectors.
 

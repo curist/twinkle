@@ -1,5 +1,5 @@
 // Runtime execution matrix for the compiler-private boxed MutVec family
-// (docs/plans/2026-09-28-boxed-reference-mutvec.md, Task 4). Each `run_*` builds
+// (docs/plans/archive/2026-09-28-boxed-reference-mutvec.md, Task 4). Each `run_*` builds
 // a producer-rooted `Vector<T>` for a concrete GC-reference element type, carries
 // it through a recursive record (`Box<T>`), and permutes it with a helper-based
 // read-before-write swap — the exact shape that activates the boxed aggregate
