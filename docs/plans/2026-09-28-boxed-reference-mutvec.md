@@ -451,9 +451,10 @@ persistent path" (`codegen.tw`). This is a stricter control than a separate
 pre-activation CLI — it holds compiler version and source **identical**, isolating
 exactly the boxed route — and it sidesteps that the recorded pre-activation
 commit (Task 3, `1232332f`) cannot self-host without the Task-4 self-host fix
-`9ebf550e`. The benchmark uses the explicit record-rebuild carrier form because
-the idiomatic field-rebind sugar (`rec.f = ...`) does not yet box; that gap is
-tracked in `docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`.
+`9ebf550e`. The benchmark now uses the idiomatic field-rebind sugar
+(`rec.f = swap(rec.f, ...)`); the follow-up that taught the boxed route to fire for
+that `ARecordUpdate` form has shipped (see
+`docs/plans/archive/2026-09-29-boxed-mutvec-field-rebind-sugar.md`).
 
 **Files:**
 - Test: `examples/performance/awfy/twinkle/boxed_record_permute.tw`
@@ -509,9 +510,10 @@ tracked in `docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`.
   (`TWINKLE_VARIANT_SPECIALIZE=0`) emits none; publication fixtures emit exactly
   one boundary freeze; all six fallback fixtures stay on the persistent ABI with
   no cross-mono retarget.
-- **Remaining:** Step 4 independent branch review (soundness focus areas below);
-  and the deferred idiomatic field-rebind-sugar boxing route
-  (`docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md`).
+- **Remaining:** Step 4 independent branch review (soundness focus areas below).
+  The idiomatic field-rebind-sugar boxing route has since shipped
+  (`docs/plans/archive/2026-09-29-boxed-mutvec-field-rebind-sugar.md`); the AWFY
+  benchmark now uses the sugar form.
 
 **Files:**
 - Modify only files required by failures attributable to this feature.

@@ -1,0 +1,39 @@
+type Person = .{ id: Int, score: Int }
+
+type State = .{ people: Vector<Person>, count: Int }
+
+fn swap(people: Vector<Person>, i: Int, j: Int) Vector<Person> {
+  a := people[i]
+  b := people[j]
+  people.set_at(i, b).set_at(j, a)
+}
+
+// Same recursive carrier as recursive_record_boxed_swap, but the write-back uses
+// the idiomatic field-rebind sugar (`next.people = swap(...)`, an ARecordUpdate)
+// instead of the explicit full record reconstruction (an ARecord). Both must take
+// the boxed aggregate MutVec route.
+fn permute(state: State, n: Int) State {
+  next := State.{ people: state.people, count: state.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    next = .permute(n - 1)
+    i := n - 1
+    for i >= 0 {
+      next.people = swap(next.people, n - 1, i)
+      next = .permute(n - 1)
+      next.people = swap(next.people, n - 1, i)
+      i = .dec()
+    }
+    next
+  }
+}
+
+pub fn run() Int {
+  people: Vector<Person> = collect i in range(6) {
+    Person.{ id: i, score: i + 1 }
+  }
+  permute(State.{ people, count: 0 }, 6).count
+}
+
+println(run())

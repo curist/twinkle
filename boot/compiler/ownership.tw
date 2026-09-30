@@ -277,7 +277,13 @@ fn op_mentions_one_of(op: AnfOp, ids: Vector<Int>) Bool {
   false
 }
 
-fn op_moves_one_of(op: AnfOp, ids: Vector<Int>, live_after: Vector<Int>, sem: OptimizerSemantics) Bool {
+fn op_moves_one_of(
+  op: AnfOp,
+  ids: Vector<Int>,
+  live_after: Vector<Int>,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+) Bool {
   case op {
     .ACall(callee, args) => case callee_func_id(callee) {
       .Some(fid) => case call_info(sem, fid) {
@@ -292,11 +298,55 @@ fn op_moves_one_of(op: AnfOp, ids: Vector<Int>, live_after: Vector<Int>, sem: Op
           },
           _ => false,
         },
-        .None => false,
+        // A summarized user helper that takes a derived local as a LAST-USE
+        // argument threads it linearly to its result — but only when the callee has
+        // an owned VARIANT that consumes that parameter (proven uniqueness lets it
+        // take ownership of the field backing and hand back the transformed
+        // backing, exactly like a builtin COW base consume). This is what lets a
+        // read-before-write field update route through a helper
+        // (`rec.f = swap(rec.f, ...)`), not only a direct builtin COW
+        // (`rec.f = Vector.set(rec.f, ...)`). A helper that merely READS its
+        // argument (e.g. `to_string`) has no such variant, so a read-only projected
+        // use stays persistent. The resolver is `generic_only_resolver` in the
+        // generic analysis (so this never fires there) and a real variant resolver
+        // during seeded/variant-selection analysis, exactly matching where an owned
+        // route may actually be published.
+        .None => {
+          moved := false
+          for a, pos in args {
+            case atom_local_id(a) {
+              .Some(aid) => if live_contains_int(ids, aid)
+                and !live_contains_int(live_after, aid)
+                and callee_consumes_param(resolve, fid.id, pos, args.len()) {
+                moved = true
+              },
+              .None => {},
+            }
+          }
+          moved
+        },
       },
       .None => false,
     },
     _ => false,
+  }
+}
+
+// Whether `resolve` can select an owned variant of `fid` that consumes parameter
+// `pos` — proven by requiring shell-uniqueness on `pos` alone. A callee with such a
+// variant genuinely takes ownership of that argument's backing, so passing a
+// projected field value into it (at last use) moves the field out linearly.
+fn callee_consumes_param(resolve: VariantResolver, fid: Int, pos: Int, arity: Int) Bool {
+  paths: Vector<vid.PathSet> = collect _i in 0..arity {
+    vid.empty_set()
+  }
+  if pos < 0 or pos >= arity {
+    return false
+  }
+  paths[pos] = vid.shell_set()
+  case resolve(fid, paths) {
+    .Some(s) => pos < s.params.len() and !s.params[pos].in_place_paths.is_empty(),
+    .None => false,
   }
 }
 
@@ -356,6 +406,7 @@ fn quartet_ok(
   bid: Int,
   fid: Int,
   sem: OptimizerSemantics,
+  resolve: VariantResolver,
 ) Bool {
   insts := blk.instructions
   matched := false
@@ -405,7 +456,7 @@ fn quartet_ok(
         return false
       }
       if op_mentions_one_of(op, derived) {
-        if !op_moves_one_of(op, derived, scan.live_after[j], sem) {
+        if !op_moves_one_of(op, derived, scan.live_after[j], sem, resolve) {
           return false
         }
         derived = insert_sorted(derived, insts[j].anf_local.id)
@@ -418,7 +469,12 @@ fn quartet_ok(
 // Pre-scan a block's instruction list, returning the set of ARecordGet
 // result-locals whose projection is licensed to MOVE by the quartet proof,
 // even though the base record is not whole-record-dead at the get.
-fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemantics) Dict<Int, Bool> {
+fn recognize_quartet_moves(
+  blk: CfgBlock,
+  scan: BlockScan,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+) Dict<Int, Bool> {
   moves: Dict<Int, Bool> = Dict.new()
   insts := blk.instructions
   for inst, i in insts {
@@ -426,7 +482,7 @@ fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemanti
       .ARecordGet(base, f, _) => case atom_local_id(base) {
         .Some(bid) => {
           rget := inst.anf_local.id
-          if quartet_ok(blk, scan, i, rget, bid, f.id, sem)
+          if quartet_ok(blk, scan, i, rget, bid, f.id, sem, resolve)
             or reconstruction_projection_dead(blk, i, bid, f.id) {
             moves[rget] = true
           }
@@ -3486,28 +3542,41 @@ type BlockPrep = .{ scan: BlockScan, moves: Dict<Int, Bool>, transport: Dict<Int
 // `blocks` is the whole function's block list — the transport recognizer needs it
 // for the field-path cross-block conditions. Summary/seed callers pass `[]` (no
 // transport moves; conservative). Only `ownership_stage` passes the real list.
-fn block_prep(blk: CfgBlock, sem: OptimizerSemantics, blocks: Vector<CfgBlock>) BlockPrep {
+fn block_prep(
+  blk: CfgBlock,
+  sem: OptimizerSemantics,
+  blocks: Vector<CfgBlock>,
+  resolve: VariantResolver,
+) BlockPrep {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live filled by the liveness stage
   .{
     scan,
-    moves: recognize_quartet_moves(blk, scan, sem),
+    moves: recognize_quartet_moves(blk, scan, sem, resolve),
     transport: recognize_transport_moves(blk, scan, blocks),
   }
 }
 
 // Precompute every block's prep once, keyed by block id, for the fixpoint loop.
-fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics) Dict<Int, BlockPrep> {
+fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics, resolve: VariantResolver) Dict<
+  Int,
+  BlockPrep,
+> {
   preps: Dict<Int, BlockPrep> = Dict.new()
   for blk in blocks {
-    preps[blk.id.id] = block_prep(blk, sem, blocks)
+    preps[blk.id.id] = block_prep(blk, sem, blocks, resolve)
   }
   preps
 }
 
-fn prep_get(preps: Dict<Int, BlockPrep>, blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+fn prep_get(
+  preps: Dict<Int, BlockPrep>,
+  blk: CfgBlock,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+) BlockPrep {
   case preps.get(blk.id.id) {
     .Some(p) => p,
-    .None => block_prep(blk, sem, []),
+    .None => block_prep(blk, sem, [], resolve),
   }
 }
 
@@ -6663,7 +6732,7 @@ fn run_fixpoint(
 
   // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
   // fixpoint visit (keeps the O(n^2) quartet recognizer off the iteration path).
-  preps := prep_blocks(blocks, sem)
+  preps := prep_blocks(blocks, sem, resolve)
   t_prep := if timed {
     date.now()
   } else {
@@ -6735,7 +6804,7 @@ fn run_fixpoint(
         st = forward_block(
           blk,
           st,
-          prep_get(preps, blk, sem),
+          prep_get(preps, blk, sem, resolve),
           table,
           b,
           sem,
@@ -7518,7 +7587,7 @@ fn call_uniques_sited_with_live(
     } else {
       st
     }
-    prep := block_prep(blk, sem, [])
+    prep := block_prep(blk, sem, [], resolve)
     scan := prep.scan
     for inst, i in blk.instructions {
       last := last_use_at(inst.op, scan.live_after[i])
@@ -7895,7 +7964,7 @@ fn ownership_stage(
     } else {
       st
     }
-    prep := block_prep(blk, sem, blocks)
+    prep := block_prep(blk, sem, blocks, resolve)
     verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve, blocks)
     st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress, resolve)
     blk.entry.ownership = entry_own.inner
@@ -8508,7 +8577,7 @@ fn transfer_flow(
     .ARecordUpdate(base, fld, value, _, tid) => {
       bf := flow_get(st, base)
       vf := flow_get(st, value)
-      bf.fields[fld.id] = case vf.source_field {
+      new_field := case vf.source_field {
         .Some(field) => FieldOrigin.{
           param: if vf.exact {
             vf.origin
@@ -8519,6 +8588,7 @@ fn transfer_flow(
         },
         .None => FieldOrigin.{ param: 0 - 1, field: 0 - 1 },
       }
+      bf.fields[fld.id] = new_field
       st[result] = if bf.origin >= 0 {
         // Every returned record update consumes the record shell. Only a
         // reference-typed field backing (separate GC heap object) adds a
@@ -8537,7 +8607,18 @@ fn transfer_flow(
         bf.dirty = new_dirty
         bf
       } else {
-        ff_none()
+        // Fresh carrier (a `.{...}` reconstruction has whole-value origin < 0 but
+        // valid per-field lineage). Mirror the ARecord arm, which never gates on
+        // the whole-value origin: preserve the field origins so a downstream return
+        // still hands the updated reference field back, and dirty that field when
+        // the written value carries a param-field origin. There is no owned param
+        // shell here, so no shell dirty is added. This is a requirements readout;
+        // the seeded field_own re-analysis still proves the field's uniqueness
+        // before any owned route is published.
+        if !sem_field_is_primitive(sem, tid, fld) and new_field.param >= 0 {
+          bf.dirty = .add(vid.field(fld.id))
+        }
+        bf
       }
       st
     },
@@ -8757,7 +8838,7 @@ fn collect_move_recovered_params(
     } else {
       st
     }
-    prep := block_prep(blk, sem, [])
+    prep := block_prep(blk, sem, [], resolve)
     scan := prep.scan
     for inst, i in blk.instructions {
       last := last_use_at(inst.op, scan.live_after[i])
@@ -9283,7 +9364,7 @@ fn summarize_seeded(
         body := forward_block_body(
           blk,
           st,
-          block_prep(blk, sem, []),
+          block_prep(blk, sem, [], resolve),
           table,
           b,
           sem,

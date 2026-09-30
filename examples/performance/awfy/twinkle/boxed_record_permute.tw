@@ -19,13 +19,12 @@ fn permute(state: State, n: Int) State {
     next = .permute(n - 1)
     i := n - 1
     for i >= 0 {
-      // Full record reconstruction (ARecord), which the boxed recursive-aggregate
-      // route recognizes. The idiomatic `next.people = swap(...)` field-rebind
-      // sugar (ARecordUpdate) stays persistent today — tracked as a follow-up in
-      // docs/plans/2026-09-29-boxed-mutvec-field-rebind-sugar.md.
-      next = State.{ people: swap(next.people, n - 1, i), count: next.count }
+      // Idiomatic field-rebind sugar (ARecordUpdate). The boxed recursive-aggregate
+      // route recognizes it as well as the full record reconstruction form, so no
+      // source rewrite is needed to earn the optimization.
+      next.people = swap(next.people, n - 1, i)
       next = .permute(n - 1)
-      next = State.{ people: swap(next.people, n - 1, i), count: next.count }
+      next.people = swap(next.people, n - 1, i)
       i = .dec()
     }
     next

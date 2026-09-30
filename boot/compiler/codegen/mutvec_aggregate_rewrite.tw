@@ -272,6 +272,25 @@ fn emit_carrier_binder(
     } else {
       .None
     },
+    // Field-rebind sugar (`carrier.f = value`) lowers to a record update, not a
+    // full reconstruction. Decompose it exactly like the ARecord arm: the updated
+    // field takes its new (ordinary) value and the untouched field carries over
+    // from the base carrier's matching component.
+    .ARecordUpdate(base, field, value, _, tid) => if tid.id == ctx.carrier_tid {
+      src := try carrier_components(base, ctx)
+      cond {
+        atom_is_carrier(value, ctx.explode) => .None,
+        field.id == ctx.vector_field => .Some(
+          .Let(vecl, .AInit(value), sp, .Let(scl, .AInit(.ALocal(.{ id: src.scalar })), sp, cont)),
+        ),
+        field.id == ctx.scalar_field => .Some(
+          .Let(vecl, .AInit(.ALocal(.{ id: src.vec })), sp, .Let(scl, .AInit(value), sp, cont)),
+        ),
+        _ => .None,
+      }
+    } else {
+      .None
+    },
     .AInit(a) => case carrier_components(a, ctx) {
       .Some(src) => .Some(
         .Let(
