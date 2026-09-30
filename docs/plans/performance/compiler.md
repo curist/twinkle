@@ -94,20 +94,28 @@ subphase with the boxed/projected-borrow classification paths bypassed on
 identical source to confirm the ~4s delta is the MutVec ownership work rather than
 program growth, before treating it as a lever.
 
-**Concrete candidate lever (measure first).** `compute_variants` runs the
-ownership fixpoint once per candidate variant per SCC, and the projected-borrow
-state (`ForwardState.projected_shell`, added by the MutVec Task 1 foundation) is
-threaded and join-merged **unconditionally** through every one of those runs — yet
-`projected_shell` only ever becomes non-empty for a function that reads a
-GC-reference vector element (`xs[i]`). For the overwhelming majority of functions
-it is an always-empty `LocalMap` merged at every CFG join for nothing. This is the
-same shape as the landed `prepare_backend` typed-vector and `run_mutvec_call`
-route-caller filters: gate the projected-borrow maintenance to the functions that
-can actually produce a borrow (a cheap pre-scan for GC-ref index reads), skipping
-it everywhere else. Acceptance is byte-identical output (empty projected state is a
-no-op for those functions by construction) plus the `make stage2` fixed point;
-gate on the measured `variants` delta, since the fixpoint is also amplified by
-per-variant reruns.
+**What the `variants` subphase is, and where the cost is NOT.** `variants` is
+`summary.compute_variants` (variant_specialize.tw:500), which runs an ownership
+fixpoint (`run_scc_variants`) once per candidate variant per SCC. A first guess was
+that the projected-borrow state (`ForwardState.projected_shell`, added by the MutVec
+Task 1 foundation) threaded through every such run was the overhead. **Reading the
+code rules that out as the primary cost:** `merge_projected_exit`
+(ownership.tw:6155) iterates only `old.keys()`, and `projected_shell` is non-empty
+only for a function that reads a GC-reference vector element (`xs[i]`). For the
+~99% of functions that never do, the map is empty and the per-join merge is an
+empty loop already — gating it would recover ~nothing. Do **not** start with a
+"gate `projected_shell`" change; it is very likely a null result.
+
+**The actual next probe (measure first, no plan doc needed).** The ~6× jump is
+more likely *more work of the same kind*: the boxed/owned-variant eligibility
+producing **more candidate variants** (so the per-variant fixpoint runs more
+times), or heavier per-run summaries, amplified across `4155` wanted functions.
+Instrument `compute_variants`/`run_scc_variants` to report the candidate-variant
+count, the number of SCC-variant fixpoint runs, and per-part timing, and compare
+against the pre-MutVec compiler on identical source (build both CLIs, or bisect the
+recursive-mutvec-abi range). Only once the dominant term is identified does a lever
+follow — and acceptance is byte-identical output + the `make stage2` fixed point
+regardless of which lever it turns out to be.
 
 ### The dominant redundancy: the whole-program summary is computed ~twice
 
