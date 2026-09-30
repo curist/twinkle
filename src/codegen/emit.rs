@@ -4971,6 +4971,8 @@ fn emit_prelude_call(
         LoweringKind::ByteFromInt => emit_byte_from_int_intrinsic(args, ctx),
         LoweringKind::ByteToString => emit_byte_to_string_intrinsic(args, ctx),
         LoweringKind::FloatBits => emit_float_bits_intrinsic(args, ctx),
+        LoweringKind::IntToFloat => emit_int_to_float_intrinsic(args, ctx),
+        LoweringKind::FloatToInt => emit_float_to_int_intrinsic(args, ctx),
         LoweringKind::IntCompare => emit_int_compare_intrinsic(args, bind_ty, ctx),
         LoweringKind::FloatCompare => emit_float_compare_intrinsic(args, bind_ty, ctx),
         LoweringKind::StringCompare => emit_string_compare_intrinsic(args, bind_ty, ctx),
@@ -7875,6 +7877,22 @@ fn emit_float_bits_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr>
     // Float is f64, Int is i64
     let mut instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
     instrs.push(Instr::I64ReinterpretF64);
+    instrs
+}
+
+fn emit_int_to_float_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Int.to_float(n: Int) -> Float
+    // Int is i64, Float is f64 — signed convert
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::F64ConvertI64S);
+    instrs
+}
+
+fn emit_float_to_int_intrinsic(args: &[Atom], ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    // Float.to_int(f: Float) -> Int
+    // Float is f64, Int is i64 — truncate toward zero
+    let mut instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
+    instrs.push(Instr::I64TruncF64S);
     instrs
 }
 

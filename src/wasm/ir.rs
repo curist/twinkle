@@ -171,6 +171,8 @@ pub enum Instr {
     I64ExtendI32U,
     I32WrapI64,
     I64ReinterpretF64,
+    F64ConvertI64S,
+    I64TruncF64S,
 
     // Select (ternary: select picks one of two values based on i32 condition)
     Select,

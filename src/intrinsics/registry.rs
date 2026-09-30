@@ -105,6 +105,10 @@ pub enum LoweringKind {
     IntFromString,
     /// Float.from_string: runtime-assisted parse with f64 result.
     FloatFromString,
+    /// Int.to_float: i64 → f64 signed convert (single Wasm instruction).
+    IntToFloat,
+    /// Float.to_int: f64 → i64 truncate toward zero (single Wasm instruction).
+    FloatToInt,
     /// Byte.to_int: i32 → i64 extend (trivial instruction).
     ByteToInt,
     /// Byte.from_int: i64 → i32 wrap with range check.
@@ -444,6 +448,8 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         StringFromMem
     ),
     spec!(FLOAT_BITS, "Float.bits", Intrinsic, true, true, FloatBits),
+    spec!(INT_TO_FLOAT, "Int.to_float", Intrinsic, true, true, IntToFloat),
+    spec!(FLOAT_TO_INT, "Float.to_int", Intrinsic, true, true, FloatToInt),
     spec!(
         INT_COMPARE,
         "Int.compare",

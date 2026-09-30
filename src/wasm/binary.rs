@@ -246,6 +246,8 @@ fn encode_instr(instr: &Instr, ctx: &Ctx, labels: &mut Vec<String>, bytes: &mut 
         I64ExtendI32U => we::Instruction::I64ExtendI32U,
         I32WrapI64 => we::Instruction::I32WrapI64,
         I64ReinterpretF64 => we::Instruction::I64ReinterpretF64,
+        F64ConvertI64S => we::Instruction::F64ConvertI64S,
+        I64TruncF64S => we::Instruction::I64TruncF64S,
         Select => we::Instruction::Select,
         RefNull(h) => we::Instruction::RefNull(enc_heap_type(h, ctx)),
         RefIsNull => we::Instruction::RefIsNull,

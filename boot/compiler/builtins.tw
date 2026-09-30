@@ -426,6 +426,8 @@ fn builtin_abi(name: String) AbiContract {
     "byte$to_string" => abi([.I32], [str_()]),
     // Float intrinsics
     "float$bits" => abi([.F64], [.I64]),
+    "int$to_float" => abi([.I64], [.F64]),
+    "float$to_int" => abi([.F64], [.I64]),
     // Range intrinsics
     "range" => abi([.I64], [.Anyref]),
     "range_from" => abi([.I64, .I64], [.Anyref]),
@@ -853,6 +855,9 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
       rt("dict$build_dense_test", "rt.dict", "build_dense_test", .Some("Dict.build_dense_test")),
     )
     .append(rt("dict$get_by_hash", "rt.dict", "get_by_hash", .Some("Dict.get_by_hash")))
+    // Appended at the very end so all earlier builtin FuncIds stay unchanged.
+    .append(intr("int$to_float", .Some("Int.to_float")))
+    .append(intr("float$to_int", .Some("Float.to_int")))
 }
 
 // ── Full registry ──

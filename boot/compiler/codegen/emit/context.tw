@@ -58,6 +58,8 @@ pub type IntrinsicTag = {
   ByteToInt,
   ByteFromInt,
   ByteToString,
+  IntToFloat,
+  FloatToInt,
   FloatBits,
   FloatSqrt,
   FloatAbs,

@@ -49,6 +49,13 @@ pub fn from_bits(n: Int) Float {
   0.0
 }
 
+/// Truncate a Float toward zero to an Int, compiled to the native
+/// `i64.trunc_f64_s` instruction. Traps on NaN, ±∞, or values outside the
+/// Int (i64) range.
+pub fn to_int(f: Float) Int {
+  0
+}
+
 /// Lesser of a and b, compiled to the native `f64.min` instruction
 /// (NaN-propagating, -0 < +0 — matches JS `Math.min`).
 pub fn min(a: Float, b: Float) Float {

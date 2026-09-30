@@ -2372,6 +2372,8 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Byte", "to_int").id] = .ByteToInt
   t[b.method_id("Byte", "from_int").id] = .ByteFromInt
   t[b.method_id("Byte", "to_string").id] = .ByteToString
+  t[b.method_id("Int", "to_float").id] = .IntToFloat
+  t[b.method_id("Float", "to_int").id] = .FloatToInt
   t[b.method_id("Float", "bits").id] = .FloatBits
   t[b.method_id("Float", "sqrt").id] = .FloatSqrt
   t[b.method_id("Float", "abs").id] = .FloatAbs
@@ -2449,6 +2451,14 @@ fn emit_intrinsic_call(
     .ByteToInt => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ExtendI32U).append(.LocalSet(result_idx))
+    },
+    .IntToFloat => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64ConvertI64S).append(.LocalSet(result_idx))
+    },
+    .FloatToInt => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.I64TruncF64S).append(.LocalSet(result_idx))
     },
     .FloatBits => {
       buf2 := emit_atom(args[0], ctx, buf)

@@ -143,6 +143,8 @@ pub mod prelude {
     pub const FLOAT_COMPARE: FuncId = FuncId(1041); // Float.compare(a, b) -> Order
     pub const STRING_COMPARE: FuncId = FuncId(1042); // String.compare(a, b) -> Order
     pub const BYTE_COMPARE: FuncId = FuncId(1043); // Byte.compare(a, b) -> Order
+    pub const INT_TO_FLOAT: FuncId = FuncId(1048); // Int.to_float(n: Int) -> Float  (f64.convert_i64_s)
+    pub const FLOAT_TO_INT: FuncId = FuncId(1049); // Float.to_int(f: Float) -> Int  (i64.trunc_f64_s)
 
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>

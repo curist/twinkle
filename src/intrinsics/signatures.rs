@@ -125,6 +125,24 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: MonoType::Int,
             abi_result: Some(IntrinsicAbiResult::I64),
         }),
+        id if id == prelude_ids::INT_TO_FLOAT => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Int.to_float",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: MonoType::Float,
+            abi_result: None,
+        }),
+        id if id == prelude_ids::FLOAT_TO_INT => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Float.to_int",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Float],
+            ret: MonoType::Int,
+            abi_result: Some(IntrinsicAbiResult::I64),
+        }),
         id if id == prelude_ids::INT_COMPARE => Some(IntrinsicContract {
             func_id,
             twinkle_name: "Int.compare",
@@ -933,6 +951,12 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         }
         "String.from_byte" => "Create a string from a byte value (ASCII range). Returns `String?`.",
         "String.from_code_point" => "Create a string from a Unicode code point. Returns `String?`.",
+
+        // Int
+        "Int.to_float" => "Convert an integer to a float (`f64.convert_i64_s`).",
+
+        // Float
+        "Float.to_int" => "Truncate a float toward zero to an integer (`i64.trunc_f64_s`).",
 
         // Byte
         "Byte.to_int" => "Convert a byte to its integer value (0–255).",

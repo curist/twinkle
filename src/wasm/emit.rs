@@ -441,6 +441,8 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I64ExtendI32U => format!("{pad}i64.extend_i32_u"),
         Instr::I32WrapI64 => format!("{pad}i32.wrap_i64"),
         Instr::I64ReinterpretF64 => format!("{pad}i64.reinterpret_f64"),
+        Instr::F64ConvertI64S => format!("{pad}f64.convert_i64_s"),
+        Instr::I64TruncF64S => format!("{pad}i64.trunc_f64_s"),
         Instr::Select => format!("{pad}select"),
 
         Instr::RefNull(ht) => format!("{pad}ref.null {}", emit_heap_type(ht)),

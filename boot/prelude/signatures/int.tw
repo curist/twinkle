@@ -12,3 +12,9 @@ pub fn compare(a: Int, b: Int) Order {
 pub fn from_string(s: String) Option<Int> {
   .None
 }
+
+/// Convert an Int to a Float, compiled to the native `f64.convert_i64_s`
+/// instruction.
+pub fn to_float(n: Int) Float {
+  0.0
+}

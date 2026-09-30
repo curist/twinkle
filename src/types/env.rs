@@ -455,9 +455,11 @@ impl TypeEnv {
             // Primitives
             (BUILTIN_INT_TYPE_ID, "to_string", "Int.to_string"),
             (BUILTIN_INT_TYPE_ID, "compare", "Int.compare"),
+            (BUILTIN_INT_TYPE_ID, "to_float", "Int.to_float"),
             (BUILTIN_FLOAT_TYPE_ID, "to_string", "Float.to_string"),
             (BUILTIN_FLOAT_TYPE_ID, "compare", "Float.compare"),
             (BUILTIN_FLOAT_TYPE_ID, "bits", "Float.bits"),
+            (BUILTIN_FLOAT_TYPE_ID, "to_int", "Float.to_int"),
             (BUILTIN_BOOL_TYPE_ID, "to_string", "Bool.to_string"),
             (BUILTIN_STRING_TYPE_ID, "compare", "String.compare"),
             // Byte
