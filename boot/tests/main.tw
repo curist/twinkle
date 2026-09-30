@@ -95,6 +95,7 @@ use .suites.module_loader_suite
 use .suites.multi_module_suite
 use .suites.mutable_produce_suite
 use .suites.mutable_select_suite
+use .suites.mutvec_boxed_runtime_suite
 use .suites.mutvec_call_suite
 use .suites.mutvec_region_suite
 use .suites.occurrence_build_suite
@@ -342,6 +343,7 @@ runner.run_all([
   mutvec_region_suite.suite(),
   variant_specialize_suite.suite(),
   mutvec_call_suite.suite(),
+  mutvec_boxed_runtime_suite.suite(),
   field_backed_collection_suite.suite(),
   return_field_ownership_suite.suite(),
 ])

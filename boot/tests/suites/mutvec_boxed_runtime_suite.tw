@@ -1,0 +1,142 @@
+// Runtime-correctness coverage for the compiler-private boxed MutVec family
+// (docs/plans/2026-09-28-boxed-reference-mutvec.md, Task 4/7).
+//
+// The other boxed suites (mutvec_call, backend_repr) assert the *structure* of
+// the generated code — that the boxed get/set/freeze ops appear and the
+// persistent ops do not. This suite closes the complementary gap: it actually
+// *executes* the boxed route and checks the element values that come back.
+//
+// It works because boot test suites are compiled by the same `target/twk` whose
+// boxed route is under test and then run via `proc.run_wasm` (see
+// boot/commands/test.tw). Each `run_*` below carries a producer-built
+// `Vector<T>` through a recursive `Box<T>` carrier and permutes it with a
+// helper-based read-before-write swap — the exact shape that activates the boxed
+// aggregate route for concrete GC-reference element types (records, strings,
+// nested vectors, closures). Swaps only permute elements, so every element
+// weight is preserved and each `run_*` reproduces its pre-permute sum (21). A
+// boxed get/set/freeze round-trip that dropped, duplicated, or corrupted an
+// element would change the sum and fail here even though the WAT stayed
+// structurally valid.
+use @std.testing.assert as assert
+use @std.testing as runner
+
+type Box<T> = .{ items: Vector<T>, count: Int }
+
+fn swap<T>(xs: Vector<T>, i: Int, j: Int) Vector<T> {
+  a := xs[i]
+  b := xs[j]
+  xs.set_at(i, b).set_at(j, a)
+}
+
+fn permute<T>(state: Box<T>, n: Int) Box<T> {
+  next := Box.{ items: state.items, count: state.count + 1 }
+  if n == 0 {
+    next
+  } else {
+    next = .permute(n - 1)
+    i := n - 1
+    for i >= 0 {
+      next = Box.{ items: swap(next.items, n - 1, i), count: next.count }
+      next = .permute(n - 1)
+      next = Box.{ items: swap(next.items, n - 1, i), count: next.count }
+      i = .dec()
+    }
+    next
+  }
+}
+
+type Person = .{ id: Int, score: Int }
+
+// Records: weight = score (1..6), sum 21, preserved across swaps.
+fn run_records() Int {
+  people: Vector<Person> = collect i in range(6) {
+    Person.{ id: i, score: i + 1 }
+  }
+  out := permute(Box.{ items: people, count: 0 }, 4).items
+  total := 0
+  for p in out {
+    total = total + p.score
+  }
+  total
+}
+
+// Strings: weight = length (1..6), sum 21, preserved across swaps.
+fn run_strings() Int {
+  words: Vector<String> = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
+  out := permute(Box.{ items: words, count: 0 }, 4).items
+  total := 0
+  for w in out {
+    total = total + w.len()
+  }
+  total
+}
+
+// Nested vectors: weight = sum of the inner vector; inner j = [j+1] for j in
+// 0..5, so the inner sums are 1..6, total 21, preserved across swaps.
+fn run_nested() Int {
+  rows: Vector<Vector<Int>> = collect j in range(6) {
+    single: Vector<Int> = [j + 1]
+    single
+  }
+  out := permute(Box.{ items: rows, count: 0 }, 4).items
+  total := 0
+  for row in out {
+    for v in row {
+      total = total + v
+    }
+  }
+  total
+}
+
+// Closures: weight = f(0) where f adds a captured k (1..6), sum 21, preserved.
+fn run_closures() Int {
+  fns: Vector<fn(Int) Int> = collect k in range(6) {
+    fn(x: Int) Int { x + k + 1 }
+  }
+  out := permute(Box.{ items: fns, count: 0 }, 4).items
+  total := 0
+  for f in out {
+    total = total + f(0)
+  }
+  total
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("boxed mutvec runtime execution")
+    .test(
+      "record vector permute round-trips through boxed get/set/freeze",
+      fn() {
+        try assert.equal(run_records(), 21)
+        .Ok({})
+      },
+    )
+    .test(
+      "string vector permute preserves every element",
+      fn() {
+        try assert.equal(run_strings(), 21)
+        .Ok({})
+      },
+    )
+    .test(
+      "nested vector permute preserves inner vectors",
+      fn() {
+        try assert.equal(run_nested(), 21)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure vector permute preserves captured environments",
+      fn() {
+        try assert.equal(run_closures(), 21)
+        .Ok({})
+      },
+    )
+    .test(
+      "all element kinds together reproduce the aggregate checksum",
+      fn() {
+        try assert.equal(run_records() + run_strings() + run_nested() + run_closures(), 84)
+        .Ok({})
+      },
+    )
+}
