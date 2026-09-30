@@ -29,50 +29,85 @@ justifies a change on its own. For codegen/ownership work, gate every change on
 **byte-identical output** (A/B diff) plus the `make stage2` fixed point
 (stage3 == stage4).
 
-## Current baseline (2026-08-29, sound-uniqueness on by default)
+## Current baseline (2026-09-30, after recursive-aggregate + boxed-reference MutVec)
 
-Compiling `boot/main.tw` (265 modules / 4481 emitted functions) with the bundled
-CLI, sound-uniqueness codegen enabled (the default). Three timing-disabled
-wall-clock samples were **20.25–20.87s, median 20.38s**. A forced full
-`make -B stage2` self-host loop took **69.37s** and reached the stage3 == stage4
-fixed point. The two sound-uniqueness ownership phases still dominate the
-single build — **~14.5s of the ~20.4s median**:
+Compiling `boot/main.tw` (277 modules / ~4752 functions, `wanted` 4155) with the
+bundled CLI, sound-uniqueness codegen enabled (the default). Three timing-disabled
+wall-clock samples were **29.65–31.69s, median ~30.85s**. The two sound-uniqueness
+ownership phases dominate even harder than before — **~20.8s of the ~30.9s
+median**:
 
 ```text
-variant_specialize         9.52–10.18s  median 9.99s
-produce_mutable_decisions  4.48–4.58s   median 4.53s
-compile_modules            2.67–2.81s   median 2.69s
-emit_module                1.12–1.15s   median 1.12s
-verify                     0.58–0.59s   median 0.59s
-prepare_backend            0.47–0.48s   median 0.48s
-core_link                  0.34–0.35s   median 0.35s
-link                       0.30–0.34s   median 0.31s
-emit_wasm_binary           0.28–0.32s   median 0.30s
-run_mutvec_call            ~0.18s
-plan_wasm_types            ~0.18s
-lower_anf                  0.15–0.16s   median 0.15s
-monomorphize               ~0.09s
-wasm_dce                   0.07–0.08s   median 0.08s
-optimize                   0.05–0.05s   median 0.05s
+variant_specialize         15.30–15.62s median ~15.4s
+produce_mutable_decisions  5.31–5.62s   median ~5.4s
+compile_modules            3.23–3.38s   median ~3.3s
+emit_module                1.47–1.53s   median ~1.5s
+emit_wasm_binary           0.74–0.76s   median ~0.75s
+verify                     ~0.68s
+prepare_backend            ~0.56s
+core_link                  ~0.42s
+link                       ~0.32s
+run_mutvec_call            ~0.28s
+plan_wasm_types            ~0.20s
+lower_anf                  ~0.17s
+monomorphize               ~0.12s
+wasm_dce                   ~0.10s
+optimize                   ~0.05s
+builder_region_rewrite     ~0.05s
+closure_convert            ~0.03s
 ```
 
 Sub-breakdown of the two dominant phases:
 
 ```text
-variant_specialize:        table 6884–7680ms (median 7388ms)
-                           groups 1639–1778ms (median 1695ms)
-                           variants 813–866ms (median 821ms)
-produce_mutable_decisions: summary 3397–3515ms (median 3463ms)
-                           summary:reuse 1629–1666ms (median 1651ms)
-                           cfg 114–115ms; ownership 799–821ms
+variant_specialize:        table ~8.1s
+                           variants ~5.1s
+                           groups ~1.9s; filter ~0.06s
+produce_mutable_decisions: summary ~4.2s
+                           summary:reuse ~2.0s
+                           cfg ~0.15s; ownership ~0.97s
 ```
 
-The current frontend medians remain a secondary cost: `typecheck` is ~0.51s
-(`bodies` ~0.36s), `import_merge` ~0.32s, and `lower` ~0.29s. Older frontend
-phase/sub-timing tables were measured with sound-uniqueness codegen off
-(`TWINKLE_VARIANT_SPECIALIZE=0`) and so omit the two dominant ownership phases;
-their broad shape still holds for the front half, but their absolute numbers are
-not the current baseline.
+Frontend medians remain a secondary cost, up slightly with the larger module
+graph: `typecheck` ~0.58s (`bodies` ~0.41s), `import_merge` ~0.36s, `lower`
+~0.36s, `resolve` ~0.30s.
+
+### What changed since the 2026-08-29 baseline
+
+The build is ~51% slower wall (20.4s → ~30.9s). Two things moved together: the
+module graph grew (265 → 277 modules, ~4123 → ~4752 functions, ~15%), and the
+recursive-aggregate + boxed-reference MutVec features landed
+(`docs/plans/archive/2026-09-28-boxed-reference-mutvec.md` and siblings), which
+thread projected-borrow facts through the whole-program ownership summary and add
+boxed-family classification + owned-variant eligibility into variant
+specialization. The regression is concentrated exactly there: `variant_specialize`
+grew 9.99s → ~15.4s, and within it the **`variants` subphase jumped ~813–866ms →
+~5.1s (~6×)** — far more than the ~15% function growth alone explains, so the new
+per-variant ownership/classification work is the primary driver.
+`produce_mutable_decisions` grew more modestly (4.53s → ~5.4s; `summary` ~3.5 →
+~4.2s, `summary:reuse` ~1.65 → ~2.0s), tracking the larger program.
+
+This is a coincidence-of-timing attribution, not an isolated A/B: the numbers
+were not re-measured against the pre-MutVec compiler on identical source, and the
+module-graph growth is confounded in. The next probe should A/B the `variants`
+subphase with the boxed/projected-borrow classification paths bypassed on
+identical source to confirm the ~4s delta is the MutVec ownership work rather than
+program growth, before treating it as a lever.
+
+**Concrete candidate lever (measure first).** `compute_variants` runs the
+ownership fixpoint once per candidate variant per SCC, and the projected-borrow
+state (`ForwardState.projected_shell`, added by the MutVec Task 1 foundation) is
+threaded and join-merged **unconditionally** through every one of those runs — yet
+`projected_shell` only ever becomes non-empty for a function that reads a
+GC-reference vector element (`xs[i]`). For the overwhelming majority of functions
+it is an always-empty `LocalMap` merged at every CFG join for nothing. This is the
+same shape as the landed `prepare_backend` typed-vector and `run_mutvec_call`
+route-caller filters: gate the projected-borrow maintenance to the functions that
+can actually produce a borrow (a cheap pre-scan for GC-ref index reads), skipping
+it everywhere else. Acceptance is byte-identical output (empty projected state is a
+no-op for those functions by construction) plus the `make stage2` fixed point;
+gate on the measured `variants` delta, since the fixpoint is also amplified by
+per-variant reruns.
 
 ### The dominant redundancy: the whole-program summary is computed ~twice
 
